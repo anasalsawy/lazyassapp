@@ -2,11 +2,28 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useResumes } from "@/hooks/useResumes";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 import { 
   FileText, Upload, Trash2, Star, Loader2, 
-  Sparkles, CheckCircle2, AlertCircle 
+  Sparkles, CheckCircle2, AlertCircle, Wand2,
+  Download, Eye, Palette
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const Resume = () => {
   const { 
@@ -15,11 +32,16 @@ const Resume = () => {
     uploadResume, 
     deleteResume, 
     analyzeResume, 
-    updateResume 
+    updateResume,
+    refetch
   } = useResumes();
   const [analyzing, setAnalyzing] = useState<string | null>(null);
+  const [redesigning, setRedesigning] = useState<string | null>(null);
   const [resumeText, setResumeText] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [selectedStyle, setSelectedStyle] = useState("modern_professional");
+  const { toast } = useToast();
 
   const handleFileUpload = async (file: File) => {
     await uploadResume(file);
@@ -37,7 +59,6 @@ const Resume = () => {
   const handleAnalyze = async (resumeId: string) => {
     setAnalyzing(resumeId);
     try {
-      // Use the pasted text or a placeholder
       const textToAnalyze = resumeText || `
         Experienced software engineer with 5+ years in web development.
         Skills: React, TypeScript, Node.js, Python, AWS, PostgreSQL
@@ -51,15 +72,63 @@ const Resume = () => {
     }
   };
 
+  const handleRedesign = async (resumeId: string) => {
+    setRedesigning(resumeId);
+    try {
+      const { data, error } = await supabase.functions.invoke("redesign-resume", {
+        body: { 
+          resumeId,
+          style: selectedStyle,
+          optimizeFor: "ats"
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.error) {
+        toast({
+          title: "Redesign Failed",
+          description: data.error,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Resume Redesigned! 🎨",
+          description: `ATS Score improved to ${data.stats.atsScore}%. ${data.stats.improvementsMade} improvements made.`,
+        });
+        setPreviewHtml(data.htmlPreview);
+        await refetch();
+      }
+    } catch (error: any) {
+      console.error("Redesign error:", error);
+      toast({
+        title: "Redesign Failed",
+        description: error.message || "Failed to redesign resume",
+        variant: "destructive",
+      });
+    } finally {
+      setRedesigning(null);
+    }
+  };
+
   const handleSetPrimary = async (resumeId: string) => {
-    // First, unset all as primary
     for (const resume of resumes) {
       if (resume.is_primary) {
         await updateResume(resume.id, { is_primary: false });
       }
     }
-    // Then set the selected one as primary
     await updateResume(resumeId, { is_primary: true });
+  };
+
+  const handleDownloadHtml = () => {
+    if (!previewHtml) return;
+    const blob = new Blob([previewHtml], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "resume.html";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   if (loading) {
@@ -75,7 +144,7 @@ const Resume = () => {
       <div className="mb-8">
         <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Resume Manager</h1>
         <p className="text-muted-foreground mt-1">
-          Upload, optimize, and manage your resumes
+          Upload, analyze, and redesign your resumes with AI
         </p>
       </div>
 
@@ -124,6 +193,27 @@ const Resume = () => {
             />
             <p className="text-xs text-muted-foreground">
               Paste your resume text to get AI-powered analysis and optimization suggestions.
+            </p>
+          </div>
+
+          {/* Style Selector */}
+          <div className="glass-card rounded-2xl p-6">
+            <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
+              <Palette className="w-5 h-5 text-primary" />
+              Resume Style
+            </h3>
+            <Select value={selectedStyle} onValueChange={setSelectedStyle}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select style" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="modern_professional">Modern Professional</SelectItem>
+                <SelectItem value="minimal">Minimal</SelectItem>
+                <SelectItem value="executive">Executive</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground mt-2">
+              Choose a style for your AI-redesigned resume
             </p>
           </div>
         </div>
@@ -245,29 +335,85 @@ const Resume = () => {
                   </div>
                 )}
 
-                <Button
-                  className="w-full"
-                  variant={resume.ats_score ? "outline" : "default"}
-                  onClick={() => handleAnalyze(resume.id)}
-                  disabled={analyzing === resume.id}
-                >
-                  {analyzing === resume.id ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      {resume.ats_score ? "Re-analyze" : "Analyze with AI"}
-                    </>
-                  )}
-                </Button>
+                {/* Action Buttons */}
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant={resume.ats_score ? "outline" : "default"}
+                    onClick={() => handleAnalyze(resume.id)}
+                    disabled={analyzing === resume.id}
+                  >
+                    {analyzing === resume.id ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        {resume.ats_score ? "Re-analyze" : "Analyze"}
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => handleRedesign(resume.id)}
+                    disabled={redesigning === resume.id}
+                    className="bg-gradient-to-r from-primary to-accent hover:opacity-90"
+                  >
+                    {redesigning === resume.id ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Redesigning...
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 className="w-4 h-4 mr-2" />
+                        AI Redesign
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {/* View Redesigned Resume */}
+                {resume.parsed_content?.redesigned && (
+                  <Button
+                    variant="ghost"
+                    className="w-full mt-2"
+                    onClick={() => setPreviewHtml(resume.parsed_content?.htmlPreview)}
+                  >
+                    <Eye className="w-4 h-4 mr-2" />
+                    View Redesigned Resume
+                  </Button>
+                )}
               </div>
             ))
           )}
         </div>
       </div>
+
+      {/* Preview Dialog */}
+      <Dialog open={!!previewHtml} onOpenChange={() => setPreviewHtml(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Redesigned Resume Preview</DialogTitle>
+            <DialogDescription>
+              Your AI-optimized resume with improved formatting and keywords
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mb-4">
+            <Button variant="outline" onClick={handleDownloadHtml}>
+              <Download className="w-4 h-4 mr-2" />
+              Download HTML
+            </Button>
+          </div>
+          <div className="overflow-auto max-h-[60vh] border rounded-lg bg-white">
+            <iframe
+              srcDoc={previewHtml || ""}
+              className="w-full min-h-[800px] border-0"
+              title="Resume Preview"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

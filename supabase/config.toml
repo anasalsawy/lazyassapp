@@ -1,1 +1,28 @@
 project_id = "zbbfcxsqfeqnthducdxs"
+
+[functions.analyze-resume]
+verify_jwt = false
+
+[functions.generate-cover-letter]
+verify_jwt = false
+
+[functions.match-jobs]
+verify_jwt = false
+
+[functions.calculate-analytics]
+verify_jwt = false
+
+[functions.agent-orchestrator]
+verify_jwt = false
+
+[functions.scrape-jobs]
+verify_jwt = false
+
+[functions.submit-application]
+verify_jwt = false
+
+[functions.email-webhook]
+verify_jwt = false
+
+[functions.redesign-resume]
+verify_jwt = false

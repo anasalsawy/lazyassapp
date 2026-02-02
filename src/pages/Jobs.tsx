@@ -5,21 +5,29 @@ import { useJobs } from "@/hooks/useJobs";
 import { useJobPreferences } from "@/hooks/useJobPreferences";
 import { useResumes } from "@/hooks/useResumes";
 import { useApplications } from "@/hooks/useApplications";
+import { useJobScraper } from "@/hooks/useJobScraper";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 import { 
   Building2, MapPin, DollarSign, Heart, Search, 
-  Loader2, ExternalLink, Trash2, Filter 
+  Loader2, ExternalLink, Trash2, Filter, Zap, Globe,
+  CheckCircle, Sparkles
 } from "lucide-react";
 import { useState } from "react";
 
 const Jobs = () => {
-  const { jobs, loading, searching, searchJobs, toggleSaved, deleteJob } = useJobs();
+  const { jobs, loading, searching, searchJobs, toggleSaved, deleteJob, refetch } = useJobs();
   const { preferences } = useJobPreferences();
   const { primaryResume } = useResumes();
   const { createApplication, applications } = useApplications();
+  const { loading: scraping, scrapeJobs, stats: scrapeStats } = useJobScraper();
   const [searchQuery, setSearchQuery] = useState("");
   const [showSavedOnly, setShowSavedOnly] = useState(false);
+  const [applyingTo, setApplyingTo] = useState<string | null>(null);
+  const { toast } = useToast();
 
-  const handleSearch = () => {
+  // AI-powered search using mock data
+  const handleAISearch = () => {
     if (preferences) {
       searchJobs({
         jobTitles: preferences.job_titles,
@@ -32,8 +40,48 @@ const Jobs = () => {
     }
   };
 
-  const handleApply = async (jobId: string) => {
-    await createApplication(jobId, primaryResume?.id);
+  // Real job board scraping using Firecrawl
+  const handleRealScrape = async () => {
+    await scrapeJobs();
+    await refetch(); // Refresh the jobs list
+  };
+
+  // Smart apply with cover letter generation
+  const handleSmartApply = async (jobId: string, generateCoverLetter: boolean = true) => {
+    setApplyingTo(jobId);
+    try {
+      const { data, error } = await supabase.functions.invoke("submit-application", {
+        body: { 
+          jobId, 
+          generateCoverLetter,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data.error) {
+        toast({
+          title: "Application Error",
+          description: data.error,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Application Submitted! 🎉",
+          description: data.message,
+        });
+        await refetch();
+      }
+    } catch (error: any) {
+      console.error("Apply error:", error);
+      toast({
+        title: "Application Failed",
+        description: error.message || "Failed to submit application",
+        variant: "destructive",
+      });
+    } finally {
+      setApplyingTo(null);
+    }
   };
 
   const appliedJobIds = applications.map(a => a.job_id);
@@ -57,23 +105,57 @@ const Jobs = () => {
         <div>
           <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Job Search</h1>
           <p className="text-muted-foreground mt-1">
-            Find and apply to jobs that match your profile
+            Find and apply to jobs from real job boards with AI assistance
           </p>
         </div>
-        <Button onClick={handleSearch} disabled={searching}>
-          {searching ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Searching...
-            </>
-          ) : (
-            <>
-              <Search className="w-4 h-4 mr-2" />
-              Find New Jobs
-            </>
-          )}
-        </Button>
+        <div className="flex gap-2">
+          <Button 
+            onClick={handleRealScrape} 
+            disabled={scraping}
+            className="bg-gradient-to-r from-primary to-accent hover:opacity-90"
+          >
+            {scraping ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Scraping Real Jobs...
+              </>
+            ) : (
+              <>
+                <Globe className="w-4 h-4 mr-2" />
+                Scrape Real Jobs
+              </>
+            )}
+          </Button>
+          <Button variant="outline" onClick={handleAISearch} disabled={searching}>
+            {searching ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Searching...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4 mr-2" />
+                AI Match
+              </>
+            )}
+          </Button>
+        </div>
       </div>
+
+      {/* Scrape Stats */}
+      {scrapeStats && (
+        <div className="glass-card rounded-2xl p-4 mb-6 flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-success" />
+            <span className="text-sm text-muted-foreground">
+              <strong>{scrapeStats.saved}</strong> jobs saved from <strong>{scrapeStats.scraped}</strong> scraped
+            </span>
+          </div>
+          <Badge variant="secondary" className="bg-success/10 text-success">
+            Live Data
+          </Badge>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="glass-card rounded-2xl p-4 mb-6 flex flex-wrap items-center gap-4">
@@ -100,7 +182,7 @@ const Jobs = () => {
       </div>
 
       {/* Jobs List */}
-      {loading ? (
+      {loading || scraping ? (
         <div className="space-y-4">
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="glass-card rounded-2xl p-6 animate-pulse">
@@ -112,12 +194,17 @@ const Jobs = () => {
         </div>
       ) : filteredJobs.length === 0 ? (
         <div className="glass-card rounded-2xl p-12 text-center">
-          <p className="text-muted-foreground mb-4">
-            {showSavedOnly ? "No saved jobs yet." : "No jobs found. Try searching for new opportunities!"}
+          <Globe className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+          <h3 className="text-lg font-semibold mb-2">No jobs found</h3>
+          <p className="text-muted-foreground mb-6">
+            {showSavedOnly 
+              ? "No saved jobs yet." 
+              : "Click 'Scrape Real Jobs' to search LinkedIn, Indeed, and Glassdoor for real job listings."}
           </p>
           {!showSavedOnly && (
-            <Button onClick={handleSearch} disabled={searching}>
-              Search for Jobs
+            <Button onClick={handleRealScrape} disabled={scraping}>
+              <Globe className="w-4 h-4 mr-2" />
+              Scrape Real Jobs
             </Button>
           )}
         </div>
@@ -125,6 +212,8 @@ const Jobs = () => {
         <div className="space-y-4">
           {filteredJobs.map((job) => {
             const isApplied = appliedJobIds.includes(job.id);
+            const isApplying = applyingTo === job.id;
+            
             return (
               <div
                 key={job.id}
@@ -136,7 +225,14 @@ const Jobs = () => {
                       <Building2 className="w-7 h-7 text-muted-foreground" />
                     </div>
                     <div>
-                      <h3 className="text-lg font-semibold text-foreground">{job.title}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold text-foreground">{job.title}</h3>
+                        {job.source && job.source !== "ai_generated" && (
+                          <Badge variant="outline" className="text-xs bg-primary/5">
+                            {job.source}
+                          </Badge>
+                        )}
+                      </div>
                       <p className="text-muted-foreground">{job.company}</p>
                       <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-muted-foreground">
                         {job.location && (
@@ -163,8 +259,16 @@ const Jobs = () => {
                   </div>
                   <div className="flex items-center gap-2">
                     {job.match_score && (
-                      <div className="px-3 py-1 rounded-full bg-success/10">
-                        <span className="text-sm font-bold text-success">{job.match_score}% match</span>
+                      <div className={`px-3 py-1 rounded-full ${
+                        job.match_score >= 80 ? "bg-success/10" : 
+                        job.match_score >= 60 ? "bg-warning/10" : "bg-muted"
+                      }`}>
+                        <span className={`text-sm font-bold ${
+                          job.match_score >= 80 ? "text-success" : 
+                          job.match_score >= 60 ? "text-warning" : "text-muted-foreground"
+                        }`}>
+                          {job.match_score}% match
+                        </span>
                       </div>
                     )}
                     <button
@@ -191,6 +295,11 @@ const Jobs = () => {
                         {req}
                       </Badge>
                     ))}
+                    {job.requirements.length > 5 && (
+                      <Badge variant="outline" className="text-xs">
+                        +{job.requirements.length - 5} more
+                      </Badge>
+                    )}
                   </div>
                 )}
 
@@ -213,13 +322,42 @@ const Jobs = () => {
                       </a>
                     )}
                   </div>
-                  <Button
-                    onClick={() => handleApply(job.id)}
-                    disabled={isApplied}
-                    variant={isApplied ? "outline" : "default"}
-                  >
-                    {isApplied ? "Applied" : "Apply Now"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {isApplied ? (
+                      <Badge variant="secondary" className="bg-success/10 text-success">
+                        <CheckCircle className="w-3 h-3 mr-1" />
+                        Applied
+                      </Badge>
+                    ) : (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleSmartApply(job.id, false)}
+                          disabled={isApplying}
+                        >
+                          Quick Apply
+                        </Button>
+                        <Button
+                          onClick={() => handleSmartApply(job.id, true)}
+                          disabled={isApplying}
+                          className="bg-gradient-to-r from-primary to-accent"
+                        >
+                          {isApplying ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Applying...
+                            </>
+                          ) : (
+                            <>
+                              <Zap className="w-4 h-4 mr-2" />
+                              Smart Apply
+                            </>
+                          )}
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             );
