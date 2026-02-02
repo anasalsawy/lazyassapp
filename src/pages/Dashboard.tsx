@@ -5,15 +5,23 @@ import { ResumeUpload } from "@/components/dashboard/ResumeUpload";
 import { Send, Eye, MessageSquare, Calendar, Bell, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useProfile } from "@/hooks/useProfile";
+import { useApplications } from "@/hooks/useApplications";
+import { Link } from "react-router-dom";
 
 const Dashboard = () => {
+  const { profile } = useProfile();
+  const { stats } = useApplications();
+
+  const firstName = profile?.first_name || "there";
+
   return (
     <div className="p-6 lg:p-8">
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl lg:text-3xl font-bold text-foreground">
-            Welcome back, John! 👋
+            Welcome back, {firstName}! 👋
           </h1>
           <p className="text-muted-foreground mt-1">
             Here's what's happening with your job search today.
@@ -37,37 +45,37 @@ const Dashboard = () => {
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatsCard
           title="Applications Sent"
-          value={127}
-          change="+12 today"
-          changeType="positive"
+          value={stats.total}
+          change={stats.total > 0 ? `${stats.applied} pending` : undefined}
+          changeType="neutral"
           icon={Send}
           iconColor="text-primary"
           iconBg="bg-primary/10"
         />
         <StatsCard
-          title="Profile Views"
-          value={89}
-          change="+23%"
+          title="Under Review"
+          value={stats.underReview}
+          change={stats.underReview > 0 ? "In progress" : undefined}
           changeType="positive"
           icon={Eye}
           iconColor="text-accent"
           iconBg="bg-accent/10"
         />
         <StatsCard
-          title="Responses"
-          value={34}
-          change="27% rate"
-          changeType="neutral"
-          icon={MessageSquare}
+          title="Interviews"
+          value={stats.interviews}
+          change={stats.interviews > 0 ? "Great progress!" : undefined}
+          changeType="positive"
+          icon={Calendar}
           iconColor="text-success"
           iconBg="bg-success/10"
         />
         <StatsCard
-          title="Interviews"
-          value={8}
-          change="3 this week"
+          title="Offers"
+          value={stats.offers}
+          change={stats.offers > 0 ? "Congratulations!" : undefined}
           changeType="positive"
-          icon={Calendar}
+          icon={MessageSquare}
           iconColor="text-warning"
           iconBg="bg-warning/10"
         />
@@ -89,18 +97,24 @@ const Dashboard = () => {
           <div className="glass-card rounded-2xl p-6">
             <h2 className="text-lg font-semibold text-foreground mb-4">Quick Actions</h2>
             <div className="space-y-3">
-              <Button variant="outline" className="w-full justify-start">
-                <Send className="w-4 h-4 mr-2" />
-                Start Auto-Apply
-              </Button>
-              <Button variant="outline" className="w-full justify-start">
-                <Search className="w-4 h-4 mr-2" />
-                Browse Jobs
-              </Button>
-              <Button variant="outline" className="w-full justify-start">
-                <MessageSquare className="w-4 h-4 mr-2" />
-                Check Messages
-              </Button>
+              <Link to="/dashboard/jobs">
+                <Button variant="outline" className="w-full justify-start">
+                  <Search className="w-4 h-4 mr-2" />
+                  Browse Jobs
+                </Button>
+              </Link>
+              <Link to="/dashboard/applications">
+                <Button variant="outline" className="w-full justify-start">
+                  <Send className="w-4 h-4 mr-2" />
+                  View Applications
+                </Button>
+              </Link>
+              <Link to="/dashboard/settings">
+                <Button variant="outline" className="w-full justify-start">
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Update Preferences
+                </Button>
+              </Link>
             </div>
           </div>
         </div>
