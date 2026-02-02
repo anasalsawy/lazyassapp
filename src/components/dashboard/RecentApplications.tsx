@@ -1,88 +1,94 @@
 import { Badge } from "@/components/ui/badge";
 import { Building2, MapPin, Clock } from "lucide-react";
+import { useApplications } from "@/hooks/useApplications";
+import { formatDistanceToNow } from "date-fns";
+import { Link } from "react-router-dom";
 
-const applications = [
-  {
-    id: 1,
-    company: "Google",
-    position: "Senior Frontend Developer",
-    location: "Mountain View, CA",
-    status: "Interview",
-    statusColor: "bg-success/10 text-success",
-    appliedAt: "2 hours ago",
-  },
-  {
-    id: 2,
-    company: "Meta",
-    position: "React Engineer",
-    location: "Menlo Park, CA",
-    status: "Under Review",
-    statusColor: "bg-warning/10 text-warning",
-    appliedAt: "5 hours ago",
-  },
-  {
-    id: 3,
-    company: "Stripe",
-    position: "Full Stack Developer",
-    location: "San Francisco, CA",
-    status: "Applied",
-    statusColor: "bg-primary/10 text-primary",
-    appliedAt: "1 day ago",
-  },
-  {
-    id: 4,
-    company: "Airbnb",
-    position: "Software Engineer",
-    location: "Remote",
-    status: "Applied",
-    statusColor: "bg-primary/10 text-primary",
-    appliedAt: "2 days ago",
-  },
-];
+const statusColors: Record<string, string> = {
+  applied: "bg-primary/10 text-primary",
+  under_review: "bg-warning/10 text-warning",
+  interview: "bg-success/10 text-success",
+  offer: "bg-accent/10 text-accent",
+  rejected: "bg-destructive/10 text-destructive",
+  withdrawn: "bg-muted text-muted-foreground",
+};
+
+const statusLabels: Record<string, string> = {
+  applied: "Applied",
+  under_review: "Under Review",
+  interview: "Interview",
+  offer: "Offer",
+  rejected: "Rejected",
+  withdrawn: "Withdrawn",
+};
 
 export const RecentApplications = () => {
+  const { applications, loading } = useApplications();
+  const recentApplications = applications.slice(0, 5);
+
+  if (loading) {
+    return (
+      <div className="glass-card rounded-2xl p-6">
+        <div className="animate-pulse space-y-4">
+          <div className="h-6 bg-secondary rounded w-1/3" />
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-20 bg-secondary rounded-xl" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="glass-card rounded-2xl p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-semibold text-foreground">Recent Applications</h2>
-        <a href="/dashboard/applications" className="text-sm text-primary hover:underline">
+        <Link to="/dashboard/applications" className="text-sm text-primary hover:underline">
           View all
-        </a>
+        </Link>
       </div>
 
-      <div className="space-y-4">
-        {applications.map((app) => (
-          <div
-            key={app.id}
-            className="flex items-center justify-between p-4 rounded-xl bg-secondary/50 hover:bg-secondary transition-colors"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-card flex items-center justify-center shadow-sm">
-                <Building2 className="w-6 h-6 text-muted-foreground" />
-              </div>
-              <div>
-                <h3 className="font-medium text-foreground">{app.position}</h3>
-                <div className="flex items-center gap-3 mt-1">
-                  <span className="text-sm text-muted-foreground">{app.company}</span>
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <MapPin className="w-3 h-3" />
-                    {app.location}
-                  </span>
+      {recentApplications.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground">
+          <p>No applications yet. Start applying to jobs!</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {recentApplications.map((app) => (
+            <div
+              key={app.id}
+              className="flex items-center justify-between p-4 rounded-xl bg-secondary/50 hover:bg-secondary transition-colors"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-card flex items-center justify-center shadow-sm">
+                  <Building2 className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <div>
+                  <h3 className="font-medium text-foreground">{app.job?.title || "Unknown Position"}</h3>
+                  <div className="flex items-center gap-3 mt-1">
+                    <span className="text-sm text-muted-foreground">{app.job?.company || "Unknown Company"}</span>
+                    {app.job?.location && (
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <MapPin className="w-3 h-3" />
+                        {app.job.location}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
+              <div className="flex items-center gap-4">
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Clock className="w-3 h-3" />
+                  {formatDistanceToNow(new Date(app.applied_at), { addSuffix: true })}
+                </span>
+                <Badge className={statusColors[app.status]} variant="secondary">
+                  {statusLabels[app.status]}
+                </Badge>
+              </div>
             </div>
-            <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Clock className="w-3 h-3" />
-                {app.appliedAt}
-              </span>
-              <Badge className={app.statusColor} variant="secondary">
-                {app.status}
-              </Badge>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

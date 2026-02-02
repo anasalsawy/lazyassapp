@@ -12,9 +12,11 @@ import {
   LogOut,
   User
 } from "lucide-react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
+import { useProfile } from "@/hooks/useProfile";
 
 const menuItems = [
   { icon: BarChart3, label: "Dashboard", path: "/dashboard" },
@@ -28,10 +30,22 @@ const menuItems = [
 export const Sidebar = () => {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
+  const { signOut } = useAuth();
+  const { profile } = useProfile();
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/");
+  };
+
+  const displayName = profile?.first_name 
+    ? `${profile.first_name} ${profile.last_name || ''}`.trim()
+    : profile?.email || 'User';
 
   return (
     <aside className={cn(
-      "h-screen bg-card border-r border-border flex flex-col transition-all duration-300",
+      "h-screen bg-card border-r border-border flex flex-col transition-all duration-300 relative",
       collapsed ? "w-20" : "w-64"
     )}>
       {/* Logo */}
@@ -82,14 +96,18 @@ export const Sidebar = () => {
           </div>
           {!collapsed && (
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">John Doe</p>
-              <p className="text-xs text-muted-foreground truncate">john@example.com</p>
+              <p className="text-sm font-medium text-foreground truncate">{displayName}</p>
+              <p className="text-xs text-muted-foreground truncate">{profile?.email}</p>
             </div>
           )}
         </div>
         
         {!collapsed && (
-          <Button variant="ghost" className="w-full justify-start text-muted-foreground">
+          <Button 
+            variant="ghost" 
+            className="w-full justify-start text-muted-foreground"
+            onClick={handleSignOut}
+          >
             <LogOut className="w-4 h-4 mr-2" />
             Sign Out
           </Button>
