@@ -11,6 +11,7 @@ import Jobs from "./pages/Jobs";
 import Applications from "./pages/Applications";
 import Messages from "./pages/Messages";
 import Settings from "./pages/Settings";
+import Automation from "./pages/Automation";
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import NotFound from "./pages/NotFound";
@@ -38,6 +39,7 @@ const App = () => (
             <Route path="resume" element={<Resume />} />
             <Route path="jobs" element={<Jobs />} />
             <Route path="applications" element={<Applications />} />
+            <Route path="automation" element={<Automation />} />
             <Route path="messages" element={<Messages />} />
             <Route path="settings" element={<Settings />} />
           </Route>

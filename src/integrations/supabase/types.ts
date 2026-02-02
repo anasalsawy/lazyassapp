@@ -14,6 +14,101 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_logs: {
+        Row: {
+          agent_name: string
+          created_at: string | null
+          id: string
+          log_level: string
+          message: string
+          metadata: Json | null
+          task_id: string | null
+          user_id: string
+        }
+        Insert: {
+          agent_name: string
+          created_at?: string | null
+          id?: string
+          log_level?: string
+          message: string
+          metadata?: Json | null
+          task_id?: string | null
+          user_id: string
+        }
+        Update: {
+          agent_name?: string
+          created_at?: string | null
+          id?: string
+          log_level?: string
+          message?: string
+          metadata?: Json | null
+          task_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_logs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_tasks: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          max_retries: number | null
+          payload: Json | null
+          priority: number | null
+          result: Json | null
+          retry_count: number | null
+          scheduled_at: string | null
+          started_at: string | null
+          status: string
+          task_type: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          max_retries?: number | null
+          payload?: Json | null
+          priority?: number | null
+          result?: Json | null
+          retry_count?: number | null
+          scheduled_at?: string | null
+          started_at?: string | null
+          status?: string
+          task_type: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          max_retries?: number | null
+          payload?: Json | null
+          priority?: number | null
+          result?: Json | null
+          retry_count?: number | null
+          scheduled_at?: string | null
+          started_at?: string | null
+          status?: string
+          task_type?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       application_status_history: {
         Row: {
           application_id: string
@@ -103,6 +198,57 @@ export type Database = {
           },
         ]
       }
+      automation_settings: {
+        Row: {
+          applications_today: number | null
+          apply_hours_end: number | null
+          apply_hours_start: number | null
+          auto_apply_enabled: boolean | null
+          created_at: string | null
+          daily_apply_limit: number | null
+          excluded_companies: string[] | null
+          id: string
+          last_auto_apply_at: string | null
+          min_match_score: number | null
+          preferred_job_boards: string[] | null
+          require_cover_letter: boolean | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          applications_today?: number | null
+          apply_hours_end?: number | null
+          apply_hours_start?: number | null
+          auto_apply_enabled?: boolean | null
+          created_at?: string | null
+          daily_apply_limit?: number | null
+          excluded_companies?: string[] | null
+          id?: string
+          last_auto_apply_at?: string | null
+          min_match_score?: number | null
+          preferred_job_boards?: string[] | null
+          require_cover_letter?: boolean | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          applications_today?: number | null
+          apply_hours_end?: number | null
+          apply_hours_start?: number | null
+          auto_apply_enabled?: boolean | null
+          created_at?: string | null
+          daily_apply_limit?: number | null
+          excluded_companies?: string[] | null
+          id?: string
+          last_auto_apply_at?: string | null
+          min_match_score?: number | null
+          preferred_job_boards?: string[] | null
+          require_cover_letter?: boolean | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       communications: {
         Row: {
           application_id: string | null
@@ -152,6 +298,144 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      email_accounts: {
+        Row: {
+          created_at: string | null
+          email_address: string
+          email_provider: string
+          id: string
+          is_active: boolean | null
+          last_synced_at: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          email_address: string
+          email_provider?: string
+          id?: string
+          is_active?: boolean | null
+          last_synced_at?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          email_address?: string
+          email_provider?: string
+          id?: string
+          is_active?: boolean | null
+          last_synced_at?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      incoming_emails: {
+        Row: {
+          ai_sentiment: string | null
+          ai_suggested_reply: string | null
+          ai_summary: string | null
+          application_id: string | null
+          body_html: string | null
+          body_text: string | null
+          created_at: string | null
+          email_account_id: string | null
+          from_email: string
+          from_name: string | null
+          id: string
+          is_read: boolean | null
+          is_replied: boolean | null
+          received_at: string
+          subject: string
+          user_id: string
+        }
+        Insert: {
+          ai_sentiment?: string | null
+          ai_suggested_reply?: string | null
+          ai_summary?: string | null
+          application_id?: string | null
+          body_html?: string | null
+          body_text?: string | null
+          created_at?: string | null
+          email_account_id?: string | null
+          from_email: string
+          from_name?: string | null
+          id?: string
+          is_read?: boolean | null
+          is_replied?: boolean | null
+          received_at: string
+          subject: string
+          user_id: string
+        }
+        Update: {
+          ai_sentiment?: string | null
+          ai_suggested_reply?: string | null
+          ai_summary?: string | null
+          application_id?: string | null
+          body_html?: string | null
+          body_text?: string | null
+          created_at?: string | null
+          email_account_id?: string | null
+          from_email?: string
+          from_name?: string | null
+          id?: string
+          is_read?: boolean | null
+          is_replied?: boolean | null
+          received_at?: string
+          subject?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incoming_emails_application_id_fkey"
+            columns: ["application_id"]
+            isOneToOne: false
+            referencedRelation: "applications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "incoming_emails_email_account_id_fkey"
+            columns: ["email_account_id"]
+            isOneToOne: false
+            referencedRelation: "email_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      job_board_credentials: {
+        Row: {
+          created_at: string | null
+          credentials_encrypted: Json
+          id: string
+          is_active: boolean | null
+          job_board: string
+          last_verified_at: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          credentials_encrypted: Json
+          id?: string
+          is_active?: boolean | null
+          job_board: string
+          last_verified_at?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          credentials_encrypted?: Json
+          id?: string
+          is_active?: boolean | null
+          job_board?: string
+          last_verified_at?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       job_preferences: {
         Row: {
