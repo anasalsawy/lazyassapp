@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/collapsible";
 
 const mainItems = [
-  { icon: ShoppingCart, label: "Auto-Shop", path: "/auto-shop" },
+  { icon: ShoppingCart, label: "Shop", path: "/shop" },
   { icon: Settings, label: "Settings", path: "/dashboard/settings" },
 ];
 

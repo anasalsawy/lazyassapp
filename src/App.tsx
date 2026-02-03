@@ -26,8 +26,21 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Index />} />
+          <Route path="/" element={<Navigate to="/shop" replace />} />
+          <Route path="/landing" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
+          {/* Main Auto-Shop route */}
+          <Route
+            path="/shop"
+            element={
+              <ProtectedRoute>
+                <AutoShop />
+              </ProtectedRoute>
+            }
+          />
+          {/* Legacy route redirect */}
+          <Route path="/auto-shop" element={<Navigate to="/shop" replace />} />
+          {/* Hidden job dashboard - still accessible */}
           <Route
             path="/dashboard"
             element={
@@ -44,15 +57,6 @@ const App = () => (
             <Route path="messages" element={<Messages />} />
             <Route path="settings" element={<Settings />} />
           </Route>
-          {/* Standalone Auto-Shop page (not in dashboard) */}
-          <Route
-            path="/auto-shop"
-            element={
-              <ProtectedRoute>
-                <AutoShop />
-              </ProtectedRoute>
-            }
-          />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
