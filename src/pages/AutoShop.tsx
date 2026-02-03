@@ -32,29 +32,16 @@ const AutoShop = () => {
   const [showAddCard, setShowAddCard] = useState(false);
   const [showAddAddress, setShowAddAddress] = useState(false);
   
-  // Form states
+  // Form states - simplified to single text blocks
   const [cardForm, setCardForm] = useState({
     card_name: "",
-    card_number: "",
-    expiry: "",
-    cvv: "",
-    cardholder_name: "",
-    billing_address: "",
-    billing_city: "",
-    billing_state: "",
-    billing_zip: "",
+    card_details: "", // Single block: "4111111111111111, 12/25, 123, John Doe"
+    billing_details: "", // Single block: "123 Main St, City, ST 12345"
   });
 
   const [addressForm, setAddressForm] = useState({
     address_name: "",
-    full_name: "",
-    address_line1: "",
-    address_line2: "",
-    city: "",
-    state: "",
-    zip_code: "",
-    country: "US",
-    phone: "",
+    shipping_details: "", // Single block: "John Doe, 123 Main St, Apt 4, City, ST 12345, +1-555-1234"
   });
 
   const [orderForm, setOrderForm] = useState({
