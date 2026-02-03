@@ -118,13 +118,15 @@ serve(async (req) => {
       metadata: { orderId, productQuery, maxPrice, quantity },
     });
 
-    // Build the agent instruction
+    // Build the agent instruction with email alias
     const agentInstruction = buildShoppingAgentInstruction(
       productQuery,
       maxPrice,
       quantity,
       shippingAddress,
-      paymentCards
+      paymentCards,
+      emailAlias,
+      supabaseUrl
     );
 
     console.log(`[AutoShop] Sending task to Browser Use...`);
