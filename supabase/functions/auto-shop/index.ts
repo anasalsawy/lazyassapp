@@ -99,6 +99,10 @@ serve(async (req) => {
     console.log(`[AutoShop] Starting search for: "${productQuery}"`);
     console.log(`[AutoShop] Max price: $${maxPrice || "no limit"}, Quantity: ${quantity}`);
 
+    // Generate email alias for account creation
+    const emailAlias = await generateEmailAlias(supabase, user.id, orderId, productQuery);
+    console.log(`[AutoShop] Email for account creation: ${emailAlias}`);
+
     // Update order status to searching
     await supabase
       .from("auto_shop_orders")
