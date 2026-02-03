@@ -1,12 +1,16 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
 import { useJobs } from "@/hooks/useJobs";
 import { useJobPreferences } from "@/hooks/useJobPreferences";
 import { useResumes } from "@/hooks/useResumes";
 import { useApplications } from "@/hooks/useApplications";
 import { useJobScraper } from "@/hooks/useJobScraper";
 import { useWebAgentApply } from "@/hooks/useWebAgentApply";
+import { useAutomationSettings } from "@/hooks/useAutomationSettings";
 import { useProfile } from "@/hooks/useProfile";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -15,7 +19,7 @@ import {
   Loader2, ExternalLink, Trash2, Filter, Zap, Globe,
   CheckCircle, Sparkles, Bot, Send
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,10 +36,41 @@ const Jobs = () => {
   const { createApplication, applications } = useApplications();
   const { loading: scraping, scrapeJobs, stats: scrapeStats } = useJobScraper();
   const { loading: webAgentLoading, activeJobs, startApplication: startWebAgent, hasActiveJobs } = useWebAgentApply();
+  const { settings: automationSettings, updateSettings } = useAutomationSettings();
   const [searchQuery, setSearchQuery] = useState("");
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [applyingTo, setApplyingTo] = useState<string | null>(null);
+  const [autoApplyEnabled, setAutoApplyEnabled] = useState(false);
+  const [matchThreshold, setMatchThreshold] = useState(70);
   const { toast } = useToast();
+
+  // Sync with automation settings
+  useEffect(() => {
+    if (automationSettings) {
+      setAutoApplyEnabled(automationSettings.auto_apply_enabled);
+      setMatchThreshold(automationSettings.min_match_score);
+    }
+  }, [automationSettings]);
+
+  // Handle auto-apply toggle
+  const handleAutoApplyToggle = async (enabled: boolean) => {
+    setAutoApplyEnabled(enabled);
+    await updateSettings({ auto_apply_enabled: enabled });
+    
+    if (enabled) {
+      toast({
+        title: "Auto-Apply Enabled",
+        description: `Jobs with ${matchThreshold}%+ match will be applied to automatically`,
+      });
+    }
+  };
+
+  // Handle threshold change
+  const handleThresholdChange = async (value: number[]) => {
+    const threshold = value[0];
+    setMatchThreshold(threshold);
+    await updateSettings({ min_match_score: threshold });
+  };
 
   // AI-powered search using mock data
   const handleAISearch = () => {
@@ -267,6 +302,52 @@ const Jobs = () => {
         </div>
       )}
 
+      {/* Auto-Apply Toggle */}
+      <div className="glass-card rounded-2xl p-4 mb-6 border-2 border-accent/20">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <Switch
+                id="auto-apply"
+                checked={autoApplyEnabled}
+                onCheckedChange={handleAutoApplyToggle}
+              />
+              <Label htmlFor="auto-apply" className="flex items-center gap-2 cursor-pointer">
+                <Bot className="w-5 h-5 text-accent" />
+                <span className="font-semibold">Auto-Apply</span>
+              </Label>
+            </div>
+            {autoApplyEnabled && (
+              <Badge variant="secondary" className="bg-accent/10 text-accent animate-pulse">
+                Active
+              </Badge>
+            )}
+          </div>
+          
+          {autoApplyEnabled && (
+            <div className="flex items-center gap-4 flex-1 max-w-md">
+              <Label className="text-sm text-muted-foreground whitespace-nowrap">
+                Min Match: <span className="font-bold text-foreground">{matchThreshold}%</span>
+              </Label>
+              <Slider
+                value={[matchThreshold]}
+                onValueChange={handleThresholdChange}
+                min={50}
+                max={95}
+                step={5}
+                className="flex-1"
+              />
+            </div>
+          )}
+        </div>
+        
+        {autoApplyEnabled && (
+          <p className="text-sm text-muted-foreground mt-3">
+            Jobs with {matchThreshold}%+ match score will be automatically applied via AI Agent
+          </p>
+        )}
+      </div>
+
       {/* Filters */}
       <div className="glass-card rounded-2xl p-4 mb-6 flex flex-wrap items-center gap-4">
         <div className="relative flex-1 min-w-[200px]">
@@ -464,20 +545,12 @@ const Jobs = () => {
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
+                              variant="outline"
+                              size="sm"
                               disabled={isApplying || webAgentLoading}
-                              className="bg-gradient-to-r from-primary to-accent"
                             >
-                              {isApplying ? (
-                                <>
-                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                  Applying...
-                                </>
-                              ) : (
-                                <>
-                                  <Zap className="w-4 h-4 mr-2" />
-                                  Apply
-                                </>
-                              )}
+                              <Zap className="w-4 h-4 mr-1" />
+                              Quick Apply
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-64">
@@ -493,28 +566,43 @@ const Jobs = () => {
                                 </div>
                               </div>
                             </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem 
-                              onClick={() => handleWebAgentApply(job)}
-                              disabled={!job.url}
-                              className="cursor-pointer"
-                            >
-                              <Bot className="w-4 h-4 mr-2 text-accent" />
-                              <div>
-                                <div className="font-medium">AI Agent Submit</div>
-                                <div className="text-xs text-muted-foreground">
-                                  {job.url 
-                                    ? "Auto-fill & submit on site" 
-                                    : "Requires external URL"}
-                                </div>
-                              </div>
-                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </>
                     )}
                   </div>
                 </div>
+
+                {/* AI Agent Apply Button - Prominent placement */}
+                {!isApplied && !hasActiveAgent && job.url && (
+                  <div className="mt-4 pt-4 border-t border-border">
+                    <Button
+                      onClick={() => handleWebAgentApply(job)}
+                      disabled={isApplying || webAgentLoading}
+                      className="w-full bg-gradient-to-r from-accent to-primary hover:opacity-90"
+                    >
+                      {isApplying ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Starting AI Agent...
+                        </>
+                      ) : (
+                        <>
+                          <Bot className="w-4 h-4 mr-2" />
+                          Apply with AI Agent
+                          {job.match_score && job.match_score >= matchThreshold && autoApplyEnabled && (
+                            <Badge variant="secondary" className="ml-2 bg-background/20">
+                              Auto
+                            </Badge>
+                          )}
+                        </>
+                      )}
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center mt-2">
+                      Browser Use will auto-fill and submit your application
+                    </p>
+                  </div>
+                )}
               </div>
             );
           })}
