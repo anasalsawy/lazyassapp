@@ -321,8 +321,8 @@ IMPORTANT GUIDELINES:
 - Report any errors or issues encountered`;
 
         try {
-          // Call Browser Use Cloud API
-          const browserUseResponse = await fetch("https://api.browser-use.com/tasks", {
+          // Call Browser Use Cloud API v2
+          const browserUseResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
             method: "POST",
             headers: {
               "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,

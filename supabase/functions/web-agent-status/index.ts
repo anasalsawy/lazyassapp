@@ -39,8 +39,8 @@ serve(async (req) => {
 
     console.log(`[WebAgentStatus] Checking status for task: ${taskId}`);
 
-    // Poll Browser Use for status
-    const statusResponse = await fetch(`https://api.browser-use.com/tasks/${taskId}`, {
+    // Poll Browser Use Cloud API v2 for status
+    const statusResponse = await fetch(`https://api.browser-use.com/api/v2/tasks/${taskId}`, {
       method: "GET",
       headers: {
         "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,
