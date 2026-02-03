@@ -39,6 +39,8 @@ interface EmailPayload {
 async function sendMailgunEmail(to: string, subject: string, html: string): Promise<{ success: boolean; error?: string; id?: string }> {
   const MAILGUN_API_KEY = Deno.env.get("MAILGUN_API_KEY");
   const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
+  // Check if EU region - set MAILGUN_REGION=eu in secrets if using EU
+  const MAILGUN_REGION = Deno.env.get("MAILGUN_REGION") || "us";
 
   if (!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
     throw new Error("Mailgun credentials not configured");
@@ -50,7 +52,14 @@ async function sendMailgunEmail(to: string, subject: string, html: string): Prom
   formData.append("subject", subject);
   formData.append("html", html);
 
-  const response = await fetch(`https://api.mailgun.net/v3/${MAILGUN_DOMAIN}/messages`, {
+  // Use EU API endpoint if region is EU
+  const apiBase = MAILGUN_REGION.toLowerCase() === "eu" 
+    ? "https://api.eu.mailgun.net" 
+    : "https://api.mailgun.net";
+  
+  console.log(`Sending email via Mailgun (${MAILGUN_REGION.toUpperCase()} region) to ${to}`);
+
+  const response = await fetch(`${apiBase}/v3/${MAILGUN_DOMAIN}/messages`, {
     method: "POST",
     headers: {
       Authorization: `Basic ${btoa(`api:${MAILGUN_API_KEY}`)}`,
