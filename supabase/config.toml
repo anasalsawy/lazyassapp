@@ -26,3 +26,9 @@ verify_jwt = false
 
 [functions.redesign-resume]
 verify_jwt = false
+
+[functions.web-agent-apply]
+verify_jwt = false
+
+[functions.web-agent-status]
+verify_jwt = false

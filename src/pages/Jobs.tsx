@@ -6,21 +6,32 @@ import { useJobPreferences } from "@/hooks/useJobPreferences";
 import { useResumes } from "@/hooks/useResumes";
 import { useApplications } from "@/hooks/useApplications";
 import { useJobScraper } from "@/hooks/useJobScraper";
+import { useWebAgentApply } from "@/hooks/useWebAgentApply";
+import { useProfile } from "@/hooks/useProfile";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Building2, MapPin, DollarSign, Heart, Search, 
   Loader2, ExternalLink, Trash2, Filter, Zap, Globe,
-  CheckCircle, Sparkles
+  CheckCircle, Sparkles, Bot, Send
 } from "lucide-react";
 import { useState } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const Jobs = () => {
   const { jobs, loading, searching, searchJobs, toggleSaved, deleteJob, refetch } = useJobs();
   const { preferences } = useJobPreferences();
   const { primaryResume } = useResumes();
+  const { profile } = useProfile();
   const { createApplication, applications } = useApplications();
   const { loading: scraping, scrapeJobs, stats: scrapeStats } = useJobScraper();
+  const { loading: webAgentLoading, activeJobs, startApplication: startWebAgent, hasActiveJobs } = useWebAgentApply();
   const [searchQuery, setSearchQuery] = useState("");
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [applyingTo, setApplyingTo] = useState<string | null>(null);
@@ -43,18 +54,15 @@ const Jobs = () => {
   // Real job board scraping using Firecrawl
   const handleRealScrape = async () => {
     await scrapeJobs();
-    await refetch(); // Refresh the jobs list
+    await refetch();
   };
 
-  // Smart apply with cover letter generation
-  const handleSmartApply = async (jobId: string, generateCoverLetter: boolean = true) => {
+  // Quick Apply - internal tracking only (existing functionality)
+  const handleQuickApply = async (jobId: string, generateCoverLetter: boolean = false) => {
     setApplyingTo(jobId);
     try {
       const { data, error } = await supabase.functions.invoke("submit-application", {
-        body: { 
-          jobId, 
-          generateCoverLetter,
-        },
+        body: { jobId, generateCoverLetter },
       });
 
       if (error) throw error;
@@ -67,8 +75,8 @@ const Jobs = () => {
         });
       } else {
         toast({
-          title: "Application Submitted! 🎉",
-          description: data.message,
+          title: "Application Tracked! 📋",
+          description: `Recorded your interest in this position. ${data.nextSteps?.[1] || ""}`,
         });
         await refetch();
       }
@@ -76,7 +84,77 @@ const Jobs = () => {
       console.error("Apply error:", error);
       toast({
         title: "Application Failed",
-        description: error.message || "Failed to submit application",
+        description: error.message || "Failed to track application",
+        variant: "destructive",
+      });
+    } finally {
+      setApplyingTo(null);
+    }
+  };
+
+  // AI Web Agent Apply - actually submits to external sites
+  const handleWebAgentApply = async (job: typeof jobs[0]) => {
+    if (!job.url) {
+      toast({
+        title: "Cannot use AI Agent",
+        description: "This job doesn't have an external URL. Use Quick Apply to track it internally.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!profile) {
+      toast({
+        title: "Profile Required",
+        description: "Please complete your profile in Settings before using AI Agent.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setApplyingTo(job.id);
+    try {
+      // First generate a cover letter
+      let coverLetter: string | undefined;
+      if (primaryResume) {
+        const { data: clData } = await supabase.functions.invoke("generate-cover-letter", {
+          body: {
+            resumeText: primaryResume.parsed_content?.text || "",
+            jobDescription: job.description || "",
+            jobTitle: job.title,
+            company: job.company,
+          },
+        });
+        coverLetter = clData?.coverLetter;
+      }
+
+      // Start the AI Web Agent
+      await startWebAgent({
+        jobId: job.id,
+        jobUrl: job.url,
+        jobTitle: job.title,
+        company: job.company,
+        resumeData: primaryResume ? {
+          skills: primaryResume.skills || [],
+          experience_years: primaryResume.experience_years || 0,
+          parsed_content: primaryResume.parsed_content,
+        } : undefined,
+        coverLetter,
+        userProfile: {
+          firstName: profile.first_name || "",
+          lastName: profile.last_name || "",
+          email: profile.email || "",
+          phone: profile.phone || undefined,
+          linkedin: profile.linkedin_url || undefined,
+        },
+      });
+
+      await refetch();
+    } catch (error: any) {
+      console.error("Web agent error:", error);
+      toast({
+        title: "AI Agent Failed",
+        description: error.message || "Failed to start automated application",
         variant: "destructive",
       });
     } finally {
@@ -85,6 +163,7 @@ const Jobs = () => {
   };
 
   const appliedJobIds = applications.map(a => a.job_id);
+  const pendingAgentJobs = activeJobs.filter(j => j.status === "running" || j.status === "starting");
 
   const filteredJobs = jobs.filter(job => {
     if (showSavedOnly && !job.is_saved) return false;
@@ -141,6 +220,37 @@ const Jobs = () => {
           </Button>
         </div>
       </div>
+
+      {/* Active AI Agent Jobs */}
+      {pendingAgentJobs.length > 0 && (
+        <div className="glass-card rounded-2xl p-4 mb-6 border-2 border-primary/20 bg-primary/5">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+              <Bot className="w-4 h-4 text-primary animate-pulse" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-foreground">AI Agents Working</h3>
+              <p className="text-sm text-muted-foreground">
+                {pendingAgentJobs.length} application{pendingAgentJobs.length > 1 ? "s" : ""} in progress
+              </p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {pendingAgentJobs.map(job => (
+              <div key={job.sessionId} className="flex items-center justify-between p-2 bg-background rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                  <span className="text-sm font-medium">{job.jobTitle}</span>
+                  <span className="text-sm text-muted-foreground">at {job.company}</span>
+                </div>
+                <Badge variant="secondary" className="bg-primary/10 text-primary">
+                  {job.status === "starting" ? "Starting..." : "Submitting..."}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Scrape Stats */}
       {scrapeStats && (
@@ -213,6 +323,10 @@ const Jobs = () => {
           {filteredJobs.map((job) => {
             const isApplied = appliedJobIds.includes(job.id);
             const isApplying = applyingTo === job.id;
+            const hasActiveAgent = activeJobs.some(
+              aj => aj.jobTitle === job.title && aj.company === job.company && 
+              (aj.status === "running" || aj.status === "starting")
+            );
             
             return (
               <div
@@ -328,33 +442,75 @@ const Jobs = () => {
                         <CheckCircle className="w-3 h-3 mr-1" />
                         Applied
                       </Badge>
+                    ) : hasActiveAgent ? (
+                      <Badge variant="secondary" className="bg-primary/10 text-primary">
+                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        AI Submitting...
+                      </Badge>
                     ) : (
                       <>
+                        {/* Quick Apply - just tracks internally */}
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleSmartApply(job.id, false)}
+                          onClick={() => handleQuickApply(job.id, false)}
                           disabled={isApplying}
                         >
-                          Quick Apply
+                          <Send className="w-4 h-4 mr-1" />
+                          Track
                         </Button>
-                        <Button
-                          onClick={() => handleSmartApply(job.id, true)}
-                          disabled={isApplying}
-                          className="bg-gradient-to-r from-primary to-accent"
-                        >
-                          {isApplying ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Applying...
-                            </>
-                          ) : (
-                            <>
-                              <Zap className="w-4 h-4 mr-2" />
-                              Smart Apply
-                            </>
-                          )}
-                        </Button>
+
+                        {/* Dropdown with apply options */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              disabled={isApplying || webAgentLoading}
+                              className="bg-gradient-to-r from-primary to-accent"
+                            >
+                              {isApplying ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                  Applying...
+                                </>
+                              ) : (
+                                <>
+                                  <Zap className="w-4 h-4 mr-2" />
+                                  Apply
+                                </>
+                              )}
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-64">
+                            <DropdownMenuItem 
+                              onClick={() => handleQuickApply(job.id, true)}
+                              className="cursor-pointer"
+                            >
+                              <Sparkles className="w-4 h-4 mr-2 text-primary" />
+                              <div>
+                                <div className="font-medium">Smart Apply</div>
+                                <div className="text-xs text-muted-foreground">
+                                  Generate cover letter & track
+                                </div>
+                              </div>
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={() => handleWebAgentApply(job)}
+                              disabled={!job.url}
+                              className="cursor-pointer"
+                            >
+                              <Bot className="w-4 h-4 mr-2 text-accent" />
+                              <div>
+                                <div className="font-medium">AI Agent Submit</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {job.url 
+                                    ? "Auto-fill & submit on site" 
+                                    : "Requires external URL"}
+                                </div>
+                              </div>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </>
                     )}
                   </div>
