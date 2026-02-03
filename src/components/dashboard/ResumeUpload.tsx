@@ -1,13 +1,15 @@
 import { Button } from "@/components/ui/button";
-import { Upload, FileText, CheckCircle2, AlertCircle, Trash2, Loader2 } from "lucide-react";
+import { Upload, FileText, CheckCircle2, AlertCircle, Trash2, Loader2, Rocket, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useResumes } from "@/hooks/useResumes";
+import { useAutoPipeline } from "@/hooks/useAutoPipeline";
+import { Progress } from "@/components/ui/progress";
 
 export const ResumeUpload = () => {
   const [isDragging, setIsDragging] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const { resumes, primaryResume, uploadResume, deleteResume, analyzeResume, loading } = useResumes();
+  const { resumes, primaryResume, uploadResume, deleteResume, loading } = useResumes();
+  const { status: pipelineStatus, triggerPipeline, isRunning } = useAutoPipeline();
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -23,32 +25,44 @@ export const ResumeUpload = () => {
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
     if (file && (file.type === "application/pdf" || file.type.includes("word"))) {
-      await uploadResume(file);
+      const uploaded = await uploadResume(file);
+      if (uploaded) {
+        // Auto-trigger the full pipeline
+        triggerFullPipeline(uploaded.id);
+      }
     }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      await uploadResume(file);
+      const uploaded = await uploadResume(file);
+      if (uploaded) {
+        // Auto-trigger the full pipeline
+        triggerFullPipeline(uploaded.id);
+      }
     }
   };
 
-  const handleAnalyze = async () => {
-    if (!primaryResume) return;
-    setAnalyzing(true);
-    try {
-      // For demo, use placeholder text. In production, you'd extract text from the file
-      const mockResumeText = `
-        John Doe - Software Engineer
-        5 years of experience in React, TypeScript, Node.js
-        Led team of 5 developers at TechCorp
-        Increased performance by 40%
-        Bachelor's in Computer Science
+  const triggerFullPipeline = async (resumeId: string) => {
+    // Use placeholder resume text for now - in production, extract from file
+    const resumeText = `
+      Experienced professional seeking new opportunities.
+      Skills: JavaScript, TypeScript, React, Node.js, Python, SQL
+      5+ years of software development experience
+      Led cross-functional teams and delivered projects on time
+      Strong problem-solving and communication skills
+    `;
+    await triggerPipeline(resumeId, resumeText);
+  };
+
+  const handleRerunPipeline = async () => {
+    if (primaryResume) {
+      const resumeText = primaryResume.parsed_content?.text || `
+        Skills: ${primaryResume.skills?.join(", ") || "General skills"}
+        Experience: ${primaryResume.experience_years || 3} years
       `;
-      await analyzeResume(primaryResume.id, mockResumeText);
-    } finally {
-      setAnalyzing(false);
+      await triggerPipeline(primaryResume.id, resumeText);
     }
   };
 
@@ -176,35 +190,57 @@ export const ResumeUpload = () => {
             </div>
           )}
 
-          {/* Suggestions */}
-          {!primaryResume.ats_score && (
-            <div className="p-4 rounded-xl border border-warning/20 bg-warning/5">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-foreground mb-1">
-                    Analyze your resume with AI
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Get ATS score, skill detection, and optimization suggestions.
-                  </p>
-                </div>
+          {/* Pipeline Status */}
+          {isRunning && (
+            <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 space-y-3">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                <span className="text-sm font-medium text-foreground">{pipelineStatus.step}</span>
+              </div>
+              <Progress value={pipelineStatus.progress} className="h-2" />
+              <p className="text-xs text-muted-foreground">
+                Finding jobs and auto-applying... This may take a few minutes.
+              </p>
+            </div>
+          )}
+
+          {/* Pipeline Result */}
+          {!isRunning && pipelineStatus.result && (
+            <div className="p-4 rounded-xl border border-success/20 bg-success/5 space-y-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-success" />
+                <span className="text-sm font-medium text-foreground">Auto-Apply Complete!</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="text-muted-foreground">ATS Score: <span className="text-foreground font-medium">{pipelineStatus.result.atsScore}%</span></div>
+                <div className="text-muted-foreground">Jobs Found: <span className="text-foreground font-medium">{pipelineStatus.result.jobsFound}</span></div>
+                <div className="text-muted-foreground">Applications: <span className="text-foreground font-medium">{pipelineStatus.result.applications}</span></div>
               </div>
             </div>
           )}
 
-          <Button className="w-full" onClick={handleAnalyze} disabled={analyzing}>
-            {analyzing ? (
+          {/* Auto-Apply Button */}
+          <Button 
+            className="w-full bg-gradient-to-r from-primary to-accent hover:opacity-90" 
+            onClick={handleRerunPipeline} 
+            disabled={isRunning}
+          >
+            {isRunning ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Analyzing...
+                Pipeline Running...
               </>
-            ) : primaryResume.ats_score ? (
-              "Re-analyze Resume"
             ) : (
-              "Optimize with AI"
+              <>
+                <Rocket className="w-4 h-4 mr-2" />
+                🚀 Run Auto-Apply Pipeline
+              </>
             )}
           </Button>
+          
+          <p className="text-xs text-center text-muted-foreground">
+            Finds matching jobs and applies automatically
+          </p>
         </div>
       )}
     </div>
