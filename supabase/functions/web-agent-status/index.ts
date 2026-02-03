@@ -12,12 +12,12 @@ serve(async (req) => {
   }
 
   try {
-    const HYPERBROWSER_API_KEY = Deno.env.get("HYPERBROWSER_API_KEY");
+    const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    if (!HYPERBROWSER_API_KEY) {
-      throw new Error("HYPERBROWSER_API_KEY is not configured");
+    if (!BROWSER_USE_API_KEY) {
+      throw new Error("BROWSER_USE_API_KEY is not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -31,19 +31,19 @@ serve(async (req) => {
     );
     if (authError || !user) throw new Error("Unauthorized");
 
-    const { sessionId, taskId, applicationId } = await req.json();
+    const { taskId, internalTaskId, applicationId } = await req.json();
 
-    if (!sessionId) {
-      throw new Error("Session ID is required");
+    if (!taskId) {
+      throw new Error("Task ID is required");
     }
 
-    console.log(`[WebAgentStatus] Checking status for session: ${sessionId}`);
+    console.log(`[WebAgentStatus] Checking status for task: ${taskId}`);
 
-    // Poll Hyperbrowser for status
-    const statusResponse = await fetch(`https://app.hyperbrowser.ai/api/v1/agent/session/${sessionId}`, {
+    // Poll Browser Use for status
+    const statusResponse = await fetch(`https://api.browser-use.com/tasks/${taskId}`, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${HYPERBROWSER_API_KEY}`,
+        "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,
         "Content-Type": "application/json",
       },
     });
@@ -57,27 +57,27 @@ serve(async (req) => {
     const statusData = await statusResponse.json();
     console.log("[WebAgentStatus] Status data:", JSON.stringify(statusData, null, 2));
 
-    // Parse the status
+    // Parse Browser Use status
     const agentStatus = statusData.status || statusData.state || "unknown";
-    const isComplete = ["completed", "finished", "success"].includes(agentStatus.toLowerCase());
-    const isFailed = ["failed", "error", "timeout"].includes(agentStatus.toLowerCase());
-    const isRunning = ["running", "in_progress", "pending"].includes(agentStatus.toLowerCase());
+    const isComplete = ["completed", "finished", "success", "done"].includes(agentStatus.toLowerCase());
+    const isFailed = ["failed", "error", "timeout", "cancelled"].includes(agentStatus.toLowerCase());
+    const isRunning = ["running", "in_progress", "pending", "created", "queued"].includes(agentStatus.toLowerCase());
 
     // Extract relevant info
     const result = {
-      sessionId,
+      taskId,
       status: isComplete ? "completed" : isFailed ? "failed" : isRunning ? "running" : agentStatus,
-      steps: statusData.steps || [],
+      steps: statusData.steps || statusData.actions || [],
       screenshots: statusData.screenshots || [],
-      finalMessage: statusData.result?.message || statusData.message || null,
+      finalMessage: statusData.output || statusData.result?.message || statusData.message || null,
       error: statusData.error || null,
-      completedAt: statusData.completedAt || null,
+      completedAt: statusData.completed_at || statusData.completedAt || null,
     };
 
     // Update our database records if complete or failed
     if (isComplete || isFailed) {
       // Update task
-      if (taskId) {
+      if (internalTaskId) {
         await supabase
           .from("agent_tasks")
           .update({
@@ -86,7 +86,7 @@ serve(async (req) => {
             error_message: isFailed ? (statusData.error || "Agent failed") : null,
             completed_at: new Date().toISOString(),
           })
-          .eq("id", taskId);
+          .eq("id", internalTaskId);
       }
 
       // Update application
@@ -96,8 +96,8 @@ serve(async (req) => {
           .update({
             status: isComplete ? "applied" : "failed",
             notes: isComplete 
-              ? `Successfully submitted via AI Web Agent. ${statusData.result?.message || ""}`
-              : `AI Web Agent failed: ${statusData.error || "Unknown error"}`,
+              ? `Successfully submitted via Browser Use. ${statusData.output || ""}`
+              : `Browser Use failed: ${statusData.error || "Unknown error"}`,
             applied_at: isComplete ? new Date().toISOString() : undefined,
           })
           .eq("id", applicationId);
@@ -109,10 +109,10 @@ serve(async (req) => {
         agent_name: "web_agent",
         log_level: isComplete ? "info" : "error",
         message: isComplete 
-          ? `Application submitted successfully via AI Web Agent`
-          : `AI Web Agent failed: ${statusData.error || "Unknown error"}`,
-        task_id: taskId,
-        metadata: { sessionId, result: statusData },
+          ? `Application submitted successfully via Browser Use`
+          : `Browser Use failed: ${statusData.error || "Unknown error"}`,
+        task_id: internalTaskId,
+        metadata: { taskId, result: statusData },
       });
     }
 

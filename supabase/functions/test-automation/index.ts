@@ -16,7 +16,7 @@ interface JobRecord {
   description?: string;
 }
 
-// Full automation pipeline with REAL web apply via Hyperbrowser
+// Full automation pipeline with REAL web apply via Browser Use
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -28,7 +28,7 @@ serve(async (req) => {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const MAILGUN_API_KEY = Deno.env.get("MAILGUN_API_KEY");
   const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
-  const HYPERBROWSER_API_KEY = Deno.env.get("HYPERBROWSER_API_KEY");
+  const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -76,7 +76,7 @@ serve(async (req) => {
       firecrawl: !!FIRECRAWL_API_KEY,
       lovable: !!LOVABLE_API_KEY,
       mailgun: !!MAILGUN_API_KEY && !!MAILGUN_DOMAIN,
-      hyperbrowser: !!HYPERBROWSER_API_KEY,
+      browserUse: !!BROWSER_USE_API_KEY,
     };
 
     // ============ STEP 1: Get user data ============
@@ -267,9 +267,9 @@ IMPORTANT: Only include jobs with a valid apply URL. The URL should link directl
       },
     });
 
-    // ============ STEP 5: REAL WEB APPLY via Hyperbrowser ============
-    if ((action === "full" || action === "apply") && HYPERBROWSER_API_KEY && jobsToApply.length > 0) {
-      console.log(`Step 5: Submitting ${jobsToApply.length} applications via Hyperbrowser...`);
+    // ============ STEP 5: REAL WEB APPLY via Browser Use ============
+    if ((action === "full" || action === "apply") && BROWSER_USE_API_KEY && jobsToApply.length > 0) {
+      console.log(`Step 5: Submitting ${jobsToApply.length} applications via Browser Use...`);
 
       const applicationResults: unknown[] = [];
 
@@ -321,41 +321,36 @@ IMPORTANT GUIDELINES:
 - Report any errors or issues encountered`;
 
         try {
-          // Call Hyperbrowser
-          const hyperResponse = await fetch("https://app.hyperbrowser.ai/api/v1/agent/run", {
+          // Call Browser Use Cloud API
+          const browserUseResponse = await fetch("https://api.browser-use.com/tasks", {
             method: "POST",
             headers: {
-              "Authorization": `Bearer ${HYPERBROWSER_API_KEY}`,
+              "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              url: job.url,
               task: agentInstruction,
-              options: {
-                waitForCompletion: false,
-                maxSteps: 50,
-                timeout: 300000,
-                captureScreenshots: true,
-                humanLikeInteraction: true,
-                solveCaptchas: true,
-              },
+              startUrl: job.url,
+              llm: "browser-use-llm",
+              maxSteps: 50,
+              highlightElements: true,
             }),
           });
 
-          if (!hyperResponse.ok) {
-            const errorText = await hyperResponse.text();
-            console.error(`[WebAgent] Hyperbrowser error: ${hyperResponse.status}`, errorText);
+          if (!browserUseResponse.ok) {
+            const errorText = await browserUseResponse.text();
+            console.error(`[WebAgent] Browser Use error: ${browserUseResponse.status}`, errorText);
             applicationResults.push({
               job: { title: job.title, company: job.company },
               success: false,
-              error: `Hyperbrowser error: ${hyperResponse.status}`,
+              error: `Browser Use error: ${browserUseResponse.status} - ${errorText}`,
             });
             continue;
           }
 
-          const agentResult = await hyperResponse.json();
-          const sessionId = agentResult.sessionId || agentResult.id;
-          console.log(`[WebAgent] Task submitted. Session: ${sessionId}`);
+          const agentResult = await browserUseResponse.json();
+          const taskId = agentResult.id || agentResult.task_id;
+          console.log(`[WebAgent] Task submitted. Task ID: ${taskId}`);
 
           // Store email alias for tracking replies
           if (MAILGUN_DOMAIN) {
@@ -374,7 +369,7 @@ IMPORTANT GUIDELINES:
               user_id: testUserId,
               job_id: job.id,
               status: "applied",
-              notes: `AI Web Agent submission. Session: ${sessionId}. Email: ${applicationEmail}`,
+              notes: `Browser Use submission. Task: ${taskId}. Email: ${applicationEmail}`,
             })
             .select()
             .single();
@@ -391,7 +386,7 @@ IMPORTANT GUIDELINES:
             message: `Application submitted: ${job.title} at ${job.company}`,
             metadata: { 
               jobId: job.id,
-              sessionId,
+              taskId,
               applicationId: application?.id,
               applicationEmail,
             },
@@ -400,7 +395,7 @@ IMPORTANT GUIDELINES:
           applicationResults.push({
             job: { title: job.title, company: job.company, url: job.url },
             success: true,
-            sessionId,
+            taskId,
             applicationId: application?.id,
             applicationEmail,
             status: "submitted",
@@ -443,12 +438,12 @@ IMPORTANT GUIDELINES:
           })
           .eq("user_id", testUserId);
       }
-    } else if (!HYPERBROWSER_API_KEY) {
+    } else if (!BROWSER_USE_API_KEY) {
       (results.steps as unknown[]).push({
         step: 5,
         name: "Submit applications via Web Agent",
         success: false,
-        data: { error: "HYPERBROWSER_API_KEY not configured" },
+        data: { error: "BROWSER_USE_API_KEY not configured" },
       });
     }
 
@@ -500,7 +495,7 @@ IMPORTANT GUIDELINES:
           
           <p style="color: #71717a; font-size: 12px; margin-top: 24px;">
             Run at: ${new Date().toISOString()}<br/>
-            Hyperbrowser enabled: ${!!HYPERBROWSER_API_KEY}
+            Browser Use enabled: ${!!BROWSER_USE_API_KEY}
           </p>
         </div>
       `);

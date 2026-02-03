@@ -237,7 +237,7 @@ const Jobs = () => {
           </div>
           <div className="space-y-2">
             {pendingAgentJobs.map(job => (
-              <div key={job.sessionId} className="flex items-center justify-between p-2 bg-background rounded-lg">
+              <div key={job.taskId} className="flex items-center justify-between p-2 bg-background rounded-lg">
                 <div className="flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin text-primary" />
                   <span className="text-sm font-medium">{job.jobTitle}</span>

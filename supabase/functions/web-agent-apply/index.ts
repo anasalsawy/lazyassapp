@@ -32,12 +32,12 @@ serve(async (req) => {
   }
 
   try {
-    const HYPERBROWSER_API_KEY = Deno.env.get("HYPERBROWSER_API_KEY");
+    const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    if (!HYPERBROWSER_API_KEY) {
-      throw new Error("HYPERBROWSER_API_KEY is not configured. Please add your Hyperbrowser API key.");
+    if (!BROWSER_USE_API_KEY) {
+      throw new Error("BROWSER_USE_API_KEY is not configured. Please add your Browser Use API key.");
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -58,7 +58,7 @@ serve(async (req) => {
       throw new Error("Job URL is required for AI web agent application");
     }
 
-    console.log(`[WebAgent] Starting AI-powered application for: ${jobTitle} at ${company}`);
+    console.log(`[WebAgent] Starting Browser Use application for: ${jobTitle} at ${company}`);
     console.log(`[WebAgent] Target URL: ${jobUrl}`);
 
     // Generate a unique email alias for this application using Mailgun
@@ -89,7 +89,7 @@ serve(async (req) => {
       user_id: user.id,
       agent_name: "web_agent",
       log_level: "info",
-      message: `Starting AI web agent application: ${jobTitle} at ${company}`,
+      message: `Starting Browser Use application: ${jobTitle} at ${company}`,
       metadata: { jobId, jobUrl, jobTitle, company },
     });
 
@@ -118,39 +118,32 @@ serve(async (req) => {
     }
 
     // Build the natural language instruction for the AI agent
-    // Use the generated email alias for the application
     const agentInstruction = buildAgentInstruction({ 
       ...payload, 
       userProfile: { ...userProfile, email: applicationEmail } 
     });
 
-    console.log(`[WebAgent] Sending task to Hyperbrowser...`);
+    console.log(`[WebAgent] Sending task to Browser Use Cloud...`);
 
-    // Call Hyperbrowser's HyperAgent API
-    const hyperbrowserResponse = await fetch("https://app.hyperbrowser.ai/api/v1/agent/run", {
+    // Call Browser Use Cloud API
+    const browserUseResponse = await fetch("https://api.browser-use.com/tasks", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${HYPERBROWSER_API_KEY}`,
+        "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        url: jobUrl,
         task: agentInstruction,
-        // Configuration for better job application handling
-        options: {
-          waitForCompletion: false, // Async mode - we'll poll for status
-          maxSteps: 50,
-          timeout: 300000, // 5 minutes max
-          captureScreenshots: true,
-          humanLikeInteraction: true,
-          solveCaptchas: true,
-        },
+        startUrl: jobUrl,
+        llm: "browser-use-llm",
+        maxSteps: 50,
+        highlightElements: true,
       }),
     });
 
-    if (!hyperbrowserResponse.ok) {
-      const errorData = await hyperbrowserResponse.text();
-      console.error("[WebAgent] Hyperbrowser API error:", errorData);
+    if (!browserUseResponse.ok) {
+      const errorData = await browserUseResponse.text();
+      console.error("[WebAgent] Browser Use API error:", errorData);
       
       // Update task status
       if (task) {
@@ -158,29 +151,29 @@ serve(async (req) => {
           .from("agent_tasks")
           .update({
             status: "failed",
-            error_message: `Hyperbrowser API error: ${hyperbrowserResponse.status}`,
+            error_message: `Browser Use API error: ${browserUseResponse.status} - ${errorData}`,
             completed_at: new Date().toISOString(),
           })
           .eq("id", task.id);
       }
 
-      throw new Error(`Web agent service error: ${hyperbrowserResponse.status}`);
+      throw new Error(`Web agent service error: ${browserUseResponse.status}`);
     }
 
-    const agentResult = await hyperbrowserResponse.json();
+    const agentResult = await browserUseResponse.json();
     console.log("[WebAgent] Task submitted successfully:", agentResult);
 
-    // Store the session ID for status polling
-    const sessionId = agentResult.sessionId || agentResult.id;
+    // Store the task ID for status polling
+    const taskId = agentResult.id || agentResult.task_id;
 
-    // Update task with session ID
+    // Update task with Browser Use task ID
     if (task) {
       await supabase
         .from("agent_tasks")
         .update({
           payload: {
             ...task.payload,
-            hyperbrowser_session_id: sessionId,
+            browser_use_task_id: taskId,
           },
         })
         .eq("id", task.id);
@@ -192,9 +185,9 @@ serve(async (req) => {
       .insert({
         user_id: user.id,
         job_id: jobId,
-        status: "pending", // Will be updated when agent completes
+        status: "pending",
         cover_letter: coverLetter,
-        notes: `AI Web Agent submission in progress. Session: ${sessionId}`,
+        notes: `Browser Use submission in progress. Task: ${taskId}`,
       })
       .select()
       .single();
@@ -208,10 +201,10 @@ serve(async (req) => {
       user_id: user.id,
       agent_name: "web_agent",
       log_level: "info",
-      message: `Web agent task submitted. Session ID: ${sessionId}`,
+      message: `Browser Use task submitted. Task ID: ${taskId}`,
       metadata: { 
-        sessionId, 
-        taskId: task?.id,
+        taskId, 
+        internalTaskId: task?.id,
         applicationId: application?.id,
         status: "submitted" 
       },
@@ -220,9 +213,9 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        message: "AI web agent is submitting your application",
-        sessionId,
-        taskId: task?.id,
+        message: "Browser Use agent is submitting your application",
+        taskId,
+        internalTaskId: task?.id,
         applicationId: application?.id,
         status: "in_progress",
         estimatedTime: "1-3 minutes",
@@ -273,7 +266,6 @@ CANDIDATE INFORMATION:
 - Skills: ${resumeData.skills?.join(", ") || 'Not specified'}`;
     
     if (resumeData.parsed_content?.text) {
-      // Include first 2000 chars of resume for context
       instruction += `\n- Resume Summary: ${resumeData.parsed_content.text.substring(0, 2000)}...`;
     }
   }

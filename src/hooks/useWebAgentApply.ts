@@ -6,8 +6,8 @@ import { useToast } from "@/hooks/use-toast";
 export type WebAgentStatus = "idle" | "starting" | "running" | "completed" | "failed";
 
 interface WebAgentJob {
-  sessionId: string;
   taskId: string;
+  internalTaskId: string;
   applicationId: string;
   jobTitle: string;
   company: string;
@@ -63,7 +63,7 @@ export const useWebAgentApply = () => {
 
     try {
       toast({
-        title: "🤖 AI Web Agent Starting",
+        title: "🤖 Browser Use Agent Starting",
         description: `Navigating to ${options.company} to submit your application...`,
       });
 
@@ -78,8 +78,8 @@ export const useWebAgentApply = () => {
       }
 
       const newJob: WebAgentJob = {
-        sessionId: data.sessionId,
         taskId: data.taskId,
+        internalTaskId: data.internalTaskId,
         applicationId: data.applicationId,
         jobTitle: options.jobTitle,
         company: options.company,
@@ -91,7 +91,7 @@ export const useWebAgentApply = () => {
 
       toast({
         title: "🚀 Application In Progress",
-        description: `AI agent is filling out your application at ${options.company}. This takes 1-3 minutes.`,
+        description: `Browser Use agent is filling out your application at ${options.company}. This takes 1-3 minutes.`,
       });
 
       // Start polling for status
@@ -101,7 +101,7 @@ export const useWebAgentApply = () => {
     } catch (error: any) {
       console.error("Web agent error:", error);
       toast({
-        title: "AI Agent Failed",
+        title: "Browser Use Agent Failed",
         description: error.message || "Failed to start automated application",
         variant: "destructive",
       });
@@ -117,15 +117,15 @@ export const useWebAgentApply = () => {
 
     const poll = async () => {
       if (attempts >= maxAttempts) {
-        updateJobStatus(job.sessionId, "failed", "Timeout: Application took too long");
+        updateJobStatus(job.taskId, "failed", "Timeout: Application took too long");
         return;
       }
 
       try {
         const { data, error } = await supabase.functions.invoke("web-agent-status", {
           body: {
-            sessionId: job.sessionId,
             taskId: job.taskId,
+            internalTaskId: job.internalTaskId,
             applicationId: job.applicationId,
           },
         });
@@ -133,8 +133,9 @@ export const useWebAgentApply = () => {
         if (error) throw error;
 
         const status = data.status as WebAgentStatus;
-        
-        updateJobStatus(job.sessionId, status, data.finalMessage, data.error, data.steps, data.screenshots);
+
+
+        updateJobStatus(job.taskId, status, data.finalMessage, data.error, data.steps, data.screenshots);
 
         if (status === "completed") {
           toast({
@@ -168,7 +169,7 @@ export const useWebAgentApply = () => {
   }, [toast]);
 
   const updateJobStatus = useCallback((
-    sessionId: string, 
+    taskId: string, 
     status: WebAgentStatus, 
     message?: string,
     error?: string,
@@ -176,7 +177,7 @@ export const useWebAgentApply = () => {
     screenshots?: string[]
   ) => {
     setActiveJobs(prev => prev.map(job => 
-      job.sessionId === sessionId 
+      job.taskId === taskId 
         ? { ...job, status, message, error, steps, screenshots }
         : job
     ));
@@ -186,8 +187,8 @@ export const useWebAgentApply = () => {
     setActiveJobs(prev => prev.filter(job => job.status === "running" || job.status === "starting"));
   }, []);
 
-  const getJobBySessionId = useCallback((sessionId: string) => {
-    return activeJobs.find(job => job.sessionId === sessionId);
+  const getJobByTaskId = useCallback((taskId: string) => {
+    return activeJobs.find(job => job.taskId === taskId);
   }, [activeJobs]);
 
   return {
@@ -195,7 +196,7 @@ export const useWebAgentApply = () => {
     activeJobs,
     startApplication,
     clearCompletedJobs,
-    getJobBySessionId,
+    getJobByTaskId,
     hasActiveJobs: activeJobs.some(job => job.status === "running" || job.status === "starting"),
   };
 };
