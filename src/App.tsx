@@ -12,6 +12,7 @@ import Applications from "./pages/Applications";
 import Messages from "./pages/Messages";
 import Settings from "./pages/Settings";
 import Automation from "./pages/Automation";
+import AutoShop from "./pages/AutoShop";
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import NotFound from "./pages/NotFound";
