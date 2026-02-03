@@ -8,6 +8,8 @@ interface ShopProfile {
   sitesLoggedIn: string[];
   lastLoginAt: string | null;
   status: string;
+  proxyServer: string | null;
+  proxyUsername: string | null;
 }
 
 interface OrderTracking {
@@ -151,6 +153,26 @@ export function useShopProfile() {
     return data;
   }, [callAgent, fetchStatus]);
 
+  // Set custom proxy
+  const setProxy = useCallback(async (proxyServer: string, proxyUsername?: string, proxyPassword?: string) => {
+    toast.info("Configuring proxy...");
+    const data = await callAgent("set_proxy", { 
+      proxyServer: proxyServer || null, 
+      proxyUsername: proxyUsername || null,
+      proxyPassword: proxyPassword || null 
+    });
+    if (data?.success) {
+      toast.success(proxyServer ? "Proxy configured!" : "Proxy cleared");
+      fetchStatus();
+    }
+    return data;
+  }, [callAgent, fetchStatus]);
+
+  // Clear proxy
+  const clearProxy = useCallback(async () => {
+    return setProxy("", "", "");
+  }, [setProxy]);
+
   return {
     profile,
     tracking,
@@ -161,6 +183,8 @@ export function useShopProfile() {
     startLogin,
     confirmLogin,
     syncOrders,
+    setProxy,
+    clearProxy,
     refetch: fetchStatus,
   };
 }
