@@ -305,6 +305,80 @@ export type Database = {
           },
         ]
       }
+      auto_shop_orders: {
+        Row: {
+          browser_use_task_id: string | null
+          cards_tried: string[] | null
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          id: string
+          max_price: number | null
+          notes: string | null
+          order_confirmation: string | null
+          product_query: string
+          quantity: number | null
+          selected_deal_price: number | null
+          selected_deal_site: string | null
+          selected_deal_url: string | null
+          shipping_address_id: string | null
+          sites_tried: string[] | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          browser_use_task_id?: string | null
+          cards_tried?: string[] | null
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          max_price?: number | null
+          notes?: string | null
+          order_confirmation?: string | null
+          product_query: string
+          quantity?: number | null
+          selected_deal_price?: number | null
+          selected_deal_site?: string | null
+          selected_deal_url?: string | null
+          shipping_address_id?: string | null
+          sites_tried?: string[] | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          browser_use_task_id?: string | null
+          cards_tried?: string[] | null
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          max_price?: number | null
+          notes?: string | null
+          order_confirmation?: string | null
+          product_query?: string
+          quantity?: number | null
+          selected_deal_price?: number | null
+          selected_deal_site?: string | null
+          selected_deal_url?: string | null
+          shipping_address_id?: string | null
+          sites_tried?: string[] | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "auto_shop_orders_shipping_address_id_fkey"
+            columns: ["shipping_address_id"]
+            isOneToOne: false
+            referencedRelation: "shipping_addresses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       automation_settings: {
         Row: {
           applications_today: number | null
@@ -904,6 +978,60 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_cards: {
+        Row: {
+          billing_address: string | null
+          billing_city: string | null
+          billing_country: string | null
+          billing_state: string | null
+          billing_zip: string | null
+          card_name: string
+          card_number_enc: string
+          cardholder_name: string
+          created_at: string
+          cvv_enc: string
+          expiry_enc: string
+          id: string
+          is_default: boolean | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          billing_address?: string | null
+          billing_city?: string | null
+          billing_country?: string | null
+          billing_state?: string | null
+          billing_zip?: string | null
+          card_name: string
+          card_number_enc: string
+          cardholder_name: string
+          created_at?: string
+          cvv_enc: string
+          expiry_enc: string
+          id?: string
+          is_default?: boolean | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          billing_address?: string | null
+          billing_city?: string | null
+          billing_country?: string | null
+          billing_state?: string | null
+          billing_zip?: string | null
+          card_name?: string
+          card_number_enc?: string
+          cardholder_name?: string
+          created_at?: string
+          cvv_enc?: string
+          expiry_enc?: string
+          id?: string
+          is_default?: boolean | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -991,6 +1119,57 @@ export type Database = {
           title?: string
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      shipping_addresses: {
+        Row: {
+          address_line1: string
+          address_line2: string | null
+          address_name: string
+          city: string
+          country: string | null
+          created_at: string
+          full_name: string
+          id: string
+          is_default: boolean | null
+          phone: string | null
+          state: string
+          updated_at: string
+          user_id: string
+          zip_code: string
+        }
+        Insert: {
+          address_line1: string
+          address_line2?: string | null
+          address_name: string
+          city: string
+          country?: string | null
+          created_at?: string
+          full_name: string
+          id?: string
+          is_default?: boolean | null
+          phone?: string | null
+          state: string
+          updated_at?: string
+          user_id: string
+          zip_code: string
+        }
+        Update: {
+          address_line1?: string
+          address_line2?: string | null
+          address_name?: string
+          city?: string
+          country?: string | null
+          created_at?: string
+          full_name?: string
+          id?: string
+          is_default?: boolean | null
+          phone?: string | null
+          state?: string
+          updated_at?: string
+          user_id?: string
+          zip_code?: string
         }
         Relationships: []
       }
