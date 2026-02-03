@@ -6,8 +6,35 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// This webhook receives incoming emails from email providers (Mailgun, SendGrid, etc.)
+// This webhook receives incoming emails from Mailgun
 // and stores them in the database with AI analysis
+
+// Verify Mailgun webhook signature (optional but recommended for production)
+async function verifyMailgunSignature(
+  timestamp: string,
+  token: string,
+  signature: string,
+  apiKey: string
+): Promise<boolean> {
+  try {
+    const data = timestamp + token;
+    const encoder = new TextEncoder();
+    const key = await globalThis.crypto.subtle.importKey(
+      "raw",
+      encoder.encode(apiKey),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const sig = await globalThis.crypto.subtle.sign("HMAC", key, encoder.encode(data));
+    const hexSig = Array.from(new Uint8Array(sig))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+    return hexSig === signature;
+  } catch {
+    return false;
+  }
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -17,26 +44,40 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const MAILGUN_API_KEY = Deno.env.get("MAILGUN_API_KEY");
+  const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
     let emailData: any;
 
-    // Handle different content types
+    // Handle different content types (Mailgun sends multipart/form-data)
     const contentType = req.headers.get("content-type") || "";
     
     if (contentType.includes("application/json")) {
       emailData = await req.json();
     } else if (contentType.includes("multipart/form-data") || contentType.includes("application/x-www-form-urlencoded")) {
-      // Handle form data (common for email webhooks)
+      // Handle form data (Mailgun webhook format)
       const formData = await req.formData();
       emailData = Object.fromEntries(formData.entries());
     } else {
       throw new Error("Unsupported content type");
     }
 
-    console.log("Received email webhook:", JSON.stringify(emailData).substring(0, 500));
+    console.log("[EmailWebhook] Received Mailgun webhook:", JSON.stringify(emailData).substring(0, 500));
+
+    // Optional: Verify Mailgun signature for security
+    if (MAILGUN_API_KEY && emailData.signature) {
+      const { timestamp, token, signature } = emailData.signature || {};
+      if (timestamp && token && signature) {
+        const isValid = await verifyMailgunSignature(timestamp, token, signature, MAILGUN_API_KEY);
+        if (!isValid) {
+          console.warn("[EmailWebhook] Invalid Mailgun signature");
+          // In production, you might want to reject invalid signatures
+        }
+      }
+    }
 
     // Extract email fields (adapt based on provider)
     // This handles Mailgun, SendGrid, and generic formats
