@@ -6,6 +6,21 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// Extract domain from URL for credential lookup
+function extractDomain(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.replace(/^www\./, '');
+  } catch {
+    return 'unknown';
+  }
+}
+
+interface SiteCredentials {
+  email_used: string;
+  password_enc: string;
+}
+
 interface ApplicationPayload {
   jobId: string;
   jobUrl: string;
@@ -54,18 +69,36 @@ serve(async (req) => {
     const payload: ApplicationPayload = await req.json();
     const { jobId, jobUrl, jobTitle, company, resumeData, coverLetter, userProfile } = payload;
 
+    // Extract domain from job URL for credential lookup/storage
+    const siteDomain = extractDomain(jobUrl);
+
     if (!jobUrl) {
       throw new Error("Job URL is required for AI web agent application");
     }
 
     console.log(`[WebAgent] Starting Browser Use application for: ${jobTitle} at ${company}`);
-    console.log(`[WebAgent] Target URL: ${jobUrl}`);
+    console.log(`[WebAgent] Target URL: ${jobUrl}, Domain: ${siteDomain}`);
+
+    // Check if we already have credentials for this site
+    let existingCreds: SiteCredentials | null = null;
+    const { data: credsData } = await supabase
+      .from("site_credentials")
+      .select("email_used, password_enc")
+      .eq("user_id", user.id)
+      .eq("site_domain", siteDomain)
+      .single();
+    
+    if (credsData) {
+      existingCreds = credsData as SiteCredentials;
+      console.log(`[WebAgent] Found existing credentials for ${siteDomain}`);
+    }
 
     // Generate a unique email alias for this application using Mailgun
     let applicationEmail = userProfile.email;
     const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
     
-    if (MAILGUN_DOMAIN) {
+    if (MAILGUN_DOMAIN && !existingCreds) {
+      // Only create a new alias if we don't have existing credentials
       const shortId = jobId.substring(0, 8);
       const timestamp = Date.now().toString(36);
       const companySlug = company 
@@ -73,7 +106,7 @@ serve(async (req) => {
         : 'app';
       applicationEmail = `apply-${companySlug}-${shortId}-${timestamp}@${MAILGUN_DOMAIN}`;
       
-      console.log(`[WebAgent] Using Mailgun email alias: ${applicationEmail}`);
+      console.log(`[WebAgent] Using new Mailgun email alias: ${applicationEmail}`);
       
       // Store the email alias for tracking
       await supabase.from("email_accounts").upsert({
@@ -82,6 +115,32 @@ serve(async (req) => {
         email_provider: "mailgun",
         is_active: true,
       }, { onConflict: "user_id,email_address" }).select();
+    } else if (existingCreds) {
+      // Reuse the existing email for this site
+      applicationEmail = existingCreds.email_used;
+      console.log(`[WebAgent] Reusing existing email for ${siteDomain}: ${applicationEmail}`);
+    }
+
+    // Generate password (will only be used if creating new account)
+    const generatedPassword = existingCreds?.password_enc || 
+      `Apply${Date.now().toString(36)}!${Math.random().toString(36).substring(2, 8)}`;
+
+    // If new credentials, store them for future use
+    if (!existingCreds && siteDomain !== 'unknown') {
+      await supabase.from("site_credentials").insert({
+        user_id: user.id,
+        site_domain: siteDomain,
+        email_used: applicationEmail,
+        password_enc: generatedPassword,
+        notes: `Auto-created for ${company}`,
+      });
+      console.log(`[WebAgent] Stored new credentials for ${siteDomain}`);
+    } else if (existingCreds) {
+      // Update last_used_at
+      await supabase.from("site_credentials")
+        .update({ last_used_at: new Date().toISOString() })
+        .eq("user_id", user.id)
+        .eq("site_domain", siteDomain);
     }
 
     // Log the start of the web agent task
@@ -90,7 +149,7 @@ serve(async (req) => {
       agent_name: "web_agent",
       log_level: "info",
       message: `Starting Browser Use application: ${jobTitle} at ${company}`,
-      metadata: { jobId, jobUrl, jobTitle, company },
+      metadata: { jobId, jobUrl, jobTitle, company, siteDomain, hasExistingCreds: !!existingCreds },
     });
 
     // Create an agent task to track progress
@@ -105,9 +164,11 @@ serve(async (req) => {
           jobUrl,
           jobTitle,
           company,
+          siteDomain,
           userProfile,
           hasResume: !!resumeData,
           hasCoverLetter: !!coverLetter,
+          hasExistingCreds: !!existingCreds,
         },
       })
       .select()
@@ -121,7 +182,7 @@ serve(async (req) => {
     const agentInstruction = buildAgentInstruction({ 
       ...payload, 
       userProfile: { ...userProfile, email: applicationEmail } 
-    });
+    }, generatedPassword, !!existingCreds);
 
     console.log(`[WebAgent] Sending task to Browser Use Cloud...`);
 
@@ -237,26 +298,32 @@ serve(async (req) => {
   }
 });
 
-function buildAgentInstruction(payload: ApplicationPayload): string {
+function buildAgentInstruction(payload: ApplicationPayload, password: string, hasExistingAccount: boolean): string {
   const { jobTitle, company, resumeData, coverLetter, userProfile } = payload;
   
-  // Generate a secure password for any account creation
-  const generatedPassword = `Apply${Date.now().toString(36)}!${Math.random().toString(36).substring(2, 8)}`;
-  
+  const authInstructions = hasExistingAccount 
+    ? `AUTHENTICATION HANDLING (YOU HAVE AN EXISTING ACCOUNT):
+- You already have an account on this site. LOG IN using:
+  - Email: ${userProfile.email}
+  - Password: ${password}
+- If login fails, try "Forgot Password" or create a new account with the same email
+- NEVER stop or ask for user help - figure it out yourself`
+    : `AUTHENTICATION HANDLING (CREATE NEW ACCOUNT IF NEEDED):
+- If the site requires login/signup to apply, CREATE A NEW ACCOUNT using these credentials:
+  - Email: ${userProfile.email}
+  - Password: ${password}
+  - First Name: ${userProfile.firstName}
+  - Last Name: ${userProfile.lastName}
+- If you see a login page, first try signing in with the email/password above
+- If signup requires email verification, check if there's a "continue without verification" option or proceed anyway
+- Handle any OAuth prompts by choosing email/password signup instead
+- NEVER stop or ask for user help - figure it out yourself`;
+
   let instruction = `Apply for the job "${jobTitle}" at "${company}".
 
 YOUR MISSION: Complete the job application 100% autonomously. The user will NOT intervene.
 
-AUTHENTICATION HANDLING (CRITICAL):
-- If the site requires login/signup to apply, CREATE A NEW ACCOUNT using these credentials:
-  - Email: ${userProfile.email}
-  - Password: ${generatedPassword}
-  - First Name: ${userProfile.firstName}
-  - Last Name: ${userProfile.lastName}
-- If you see a login page and already have an account, try signing in with the email above
-- If signup requires email verification, check if there's a "continue without verification" option or proceed anyway
-- Handle any OAuth prompts by choosing email/password signup instead
-- NEVER stop or ask for user help - figure it out yourself
+${authInstructions}
 
 APPLICATION STEPS:
 1. Navigate to the job listing and find the "Apply" button
@@ -269,7 +336,7 @@ APPLICATION STEPS:
 CANDIDATE INFORMATION:
 - Full Name: ${userProfile.firstName} ${userProfile.lastName}
 - Email: ${userProfile.email}
-- Password (for new accounts): ${generatedPassword}`;
+- Password: ${password}`;
 
   if (userProfile.phone) {
     instruction += `\n- Phone: ${userProfile.phone}`;

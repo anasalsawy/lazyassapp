@@ -988,6 +988,39 @@ export type Database = {
         }
         Relationships: []
       }
+      site_credentials: {
+        Row: {
+          created_at: string
+          email_used: string
+          id: string
+          last_used_at: string | null
+          notes: string | null
+          password_enc: string
+          site_domain: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email_used: string
+          id?: string
+          last_used_at?: string | null
+          notes?: string | null
+          password_enc: string
+          site_domain: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email_used?: string
+          id?: string
+          last_used_at?: string | null
+          notes?: string | null
+          password_enc?: string
+          site_domain?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_analytics: {
         Row: {
           avg_response_days: number | null
