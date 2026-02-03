@@ -59,31 +59,44 @@ serve(async (req) => {
 
     // Parse Browser Use status
     const agentStatus = statusData.status || statusData.state || "unknown";
-    const isComplete = ["completed", "finished", "success", "done"].includes(agentStatus.toLowerCase());
-    const isFailed = ["failed", "error", "timeout", "cancelled"].includes(agentStatus.toLowerCase());
+    const finalMessage = statusData.output || statusData.result?.message || statusData.message || "";
+    
+    // Check if the agent completed but was actually blocked
+    const isBlocked = /blocked|cannot|unable to|verification required|could not complete/i.test(finalMessage);
+    const isSuccessMessage = /success|submitted|application complete|thank you for applying/i.test(finalMessage);
+    
+    const rawComplete = ["completed", "finished", "success", "done"].includes(agentStatus.toLowerCase());
+    const isFailed = ["failed", "error", "timeout", "cancelled", "stopped"].includes(agentStatus.toLowerCase());
     const isRunning = ["running", "in_progress", "pending", "created", "queued"].includes(agentStatus.toLowerCase());
+    
+    // Determine actual success: completed + success message, not blocked
+    const isActualSuccess = rawComplete && isSuccessMessage && !isBlocked;
+    const isActualFailure = isFailed || (rawComplete && (isBlocked || !isSuccessMessage));
 
     // Extract relevant info
     const result = {
       taskId,
-      status: isComplete ? "completed" : isFailed ? "failed" : isRunning ? "running" : agentStatus,
+      status: isActualSuccess ? "completed" : isActualFailure ? "failed" : isRunning ? "running" : agentStatus,
       steps: statusData.steps || statusData.actions || [],
       screenshots: statusData.screenshots || [],
-      finalMessage: statusData.output || statusData.result?.message || statusData.message || null,
-      error: statusData.error || null,
+      finalMessage: finalMessage || null,
+      error: statusData.error || (isBlocked ? finalMessage : null),
       completedAt: statusData.completed_at || statusData.completedAt || null,
+      wasBlocked: isBlocked,
     };
 
+    console.log(`[WebAgentStatus] Task ${taskId}: rawStatus=${agentStatus}, isActualSuccess=${isActualSuccess}, isActualFailure=${isActualFailure}, isBlocked=${isBlocked}`);
+
     // Update our database records if complete or failed
-    if (isComplete || isFailed) {
+    if (isActualSuccess || isActualFailure) {
       // Update task
       if (internalTaskId) {
         await supabase
           .from("agent_tasks")
           .update({
-            status: isComplete ? "completed" : "failed",
+            status: isActualSuccess ? "completed" : "failed",
             result: statusData,
-            error_message: isFailed ? (statusData.error || "Agent failed") : null,
+            error_message: isActualFailure ? (statusData.error || finalMessage || "Agent failed") : null,
             completed_at: new Date().toISOString(),
           })
           .eq("id", internalTaskId);
@@ -91,28 +104,33 @@ serve(async (req) => {
 
       // Update application
       if (applicationId) {
+        const appStatus = isActualSuccess ? "applied" : "failed";
+        const appNotes = isActualSuccess 
+          ? `Successfully submitted via Browser Use. ${finalMessage}`
+          : `Browser Use ${isBlocked ? 'blocked' : 'failed'}: ${statusData.error || finalMessage || "Unknown error"}`;
+        
         await supabase
           .from("applications")
           .update({
-            status: isComplete ? "applied" : "failed",
-            notes: isComplete 
-              ? `Successfully submitted via Browser Use. ${statusData.output || ""}`
-              : `Browser Use failed: ${statusData.error || "Unknown error"}`,
-            applied_at: isComplete ? new Date().toISOString() : undefined,
+            status: appStatus,
+            notes: appNotes,
+            applied_at: isActualSuccess ? new Date().toISOString() : undefined,
           })
           .eq("id", applicationId);
+        
+        console.log(`[WebAgentStatus] Updated application ${applicationId} to status: ${appStatus}`);
       }
 
       // Log completion
       await supabase.from("agent_logs").insert({
         user_id: user.id,
         agent_name: "web_agent",
-        log_level: isComplete ? "info" : "error",
-        message: isComplete 
+        log_level: isActualSuccess ? "info" : "error",
+        message: isActualSuccess 
           ? `Application submitted successfully via Browser Use`
-          : `Browser Use failed: ${statusData.error || "Unknown error"}`,
+          : `Browser Use ${isBlocked ? 'blocked' : 'failed'}: ${statusData.error || finalMessage || "Unknown error"}`,
         task_id: internalTaskId,
-        metadata: { taskId, result: statusData },
+        metadata: { taskId, result: statusData, wasBlocked: isBlocked },
       });
     }
 
