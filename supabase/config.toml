@@ -35,3 +35,6 @@ verify_jwt = false
 
 [functions.email-agent]
 verify_jwt = false
+
+[functions.test-automation]
+verify_jwt = false
