@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -9,6 +9,7 @@ interface WebAgentJob {
   taskId: string;
   internalTaskId: string;
   applicationId: string;
+  jobId?: string;
   jobTitle: string;
   company: string;
   status: WebAgentStatus;
@@ -39,10 +40,52 @@ interface ApplyOptions {
 }
 
 export const useWebAgentApply = () => {
-  const { session } = useAuth();
+  const { session, user } = useAuth();
   const { toast } = useToast();
   const [activeJobs, setActiveJobs] = useState<WebAgentJob[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Load in-progress applications from DB on mount
+  useEffect(() => {
+    if (!user) return;
+
+    const loadInProgressJobs = async () => {
+      // Get agent tasks that are still running
+      const { data: tasks } = await supabase
+        .from("agent_tasks")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("task_type", "web_apply")
+        .in("status", ["pending", "running", "in_progress"])
+        .order("created_at", { ascending: false });
+
+      if (tasks && tasks.length > 0) {
+        const jobs: WebAgentJob[] = tasks.map(task => {
+          const payload = task.payload as any;
+          return {
+            taskId: payload?.browserUseTaskId || "",
+            internalTaskId: task.id,
+            applicationId: payload?.applicationId || "",
+            jobId: payload?.jobId || "",
+            jobTitle: payload?.jobTitle || "Unknown",
+            company: payload?.company || "Unknown",
+            status: task.status === "pending" ? "starting" : "running",
+            message: task.error_message || undefined,
+          };
+        });
+        setActiveJobs(jobs);
+        
+        // Resume polling for each
+        jobs.forEach(job => {
+          if (job.taskId) {
+            pollStatus(job);
+          }
+        });
+      }
+    };
+
+    loadInProgressJobs();
+  }, [user]);
 
   const startApplication = useCallback(async (options: ApplyOptions): Promise<WebAgentJob | null> => {
     if (!session?.access_token) {
@@ -81,6 +124,7 @@ export const useWebAgentApply = () => {
         taskId: data.taskId,
         internalTaskId: data.internalTaskId,
         applicationId: data.applicationId,
+        jobId: options.jobId,
         jobTitle: options.jobTitle,
         company: options.company,
         status: "running",

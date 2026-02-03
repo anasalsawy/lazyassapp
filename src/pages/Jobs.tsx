@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { 
   Building2, MapPin, DollarSign, Heart, Search, 
   Loader2, ExternalLink, Trash2, Filter, Globe,
-  CheckCircle, Bot, Sparkles
+  CheckCircle, Bot, Sparkles, XCircle, Clock
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -190,8 +190,22 @@ const Jobs = () => {
     }
   };
 
+  // Create a map of job ID to application status for quick lookup
+  const applicationStatusMap = new Map(
+    applications.map(a => [a.job_id, { status: a.status, notes: a.notes }])
+  );
   const appliedJobIds = applications.map(a => a.job_id);
   const pendingAgentJobs = activeJobs.filter(j => j.status === "running" || j.status === "starting");
+
+  // Helper to get application status for a job
+  const getJobApplicationStatus = (jobId: string) => {
+    // Check if there's an active agent job for this job ID
+    const activeAgentJob = activeJobs.find(aj => aj.jobId === jobId && (aj.status === "running" || aj.status === "starting"));
+    if (activeAgentJob) {
+      return { status: "in_progress", notes: "AI Agent submitting..." };
+    }
+    return applicationStatusMap.get(jobId);
+  };
 
   const filteredJobs = jobs.filter(job => {
     if (showSavedOnly && !job.is_saved) return false;
@@ -395,10 +409,13 @@ const Jobs = () => {
       ) : (
         <div className="space-y-4">
           {filteredJobs.map((job) => {
-            const isApplied = appliedJobIds.includes(job.id);
+            const appStatus = getJobApplicationStatus(job.id);
+            const isApplied = appStatus?.status === "applied";
+            const isFailed = appStatus?.status === "failed";
+            const isInProgress = appStatus?.status === "in_progress" || appStatus?.status === "pending";
             const isApplying = applyingTo === job.id;
             const hasActiveAgent = activeJobs.some(
-              aj => aj.jobTitle === job.title && aj.company === job.company && 
+              aj => (aj.jobId === job.id || (aj.jobTitle === job.title && aj.company === job.company)) && 
               (aj.status === "running" || aj.status === "starting")
             );
             
@@ -512,13 +529,28 @@ const Jobs = () => {
                     )}
                   </div>
                   
-                  {/* Single AI Apply Button */}
+                  {/* Application Status / Apply Button */}
                   {isApplied ? (
                     <Badge variant="secondary" className="bg-success/10 text-success">
                       <CheckCircle className="w-3 h-3 mr-1" />
                       Applied
                     </Badge>
-                  ) : hasActiveAgent ? (
+                  ) : isFailed ? (
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="bg-destructive/10 text-destructive">
+                        <XCircle className="w-3 h-3 mr-1" />
+                        Failed
+                      </Badge>
+                      <Button
+                        onClick={() => handleWebAgentApply(job)}
+                        disabled={isApplying || webAgentLoading || !job.url}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  ) : isInProgress || hasActiveAgent ? (
                     <Badge variant="secondary" className="bg-primary/10 text-primary">
                       <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                       AI Submitting...
