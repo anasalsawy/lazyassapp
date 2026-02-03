@@ -160,11 +160,40 @@ const AutoShop = () => {
     });
     setOrderForm({
       product_query: "",
+      product_image: null,
+      product_image_preview: "",
+      reference_url: "",
       max_price: "",
       quantity: "1",
       shipping_address_id: orderForm.shipping_address_id,
     });
     setSubmitting(false);
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setOrderForm({
+          ...orderForm,
+          product_image: file,
+          product_image_preview: reader.result as string,
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const clearImage = () => {
+    setOrderForm({
+      ...orderForm,
+      product_image: null,
+      product_image_preview: "",
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const getStatusBadge = (status: string) => {
