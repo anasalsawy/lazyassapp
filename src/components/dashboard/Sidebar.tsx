@@ -72,9 +72,10 @@ export const Sidebar = () => {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-4">
-        <ul className="space-y-2">
-          {menuItems.map((item) => {
+      <nav className="flex-1 p-4 overflow-y-auto">
+        {/* Main Items */}
+        <ul className="space-y-2 mb-4">
+          {mainItems.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <li key={item.path}>
@@ -94,6 +95,70 @@ export const Sidebar = () => {
             );
           })}
         </ul>
+
+        {/* Job Features - Collapsible */}
+        {!collapsed && (
+          <Collapsible open={jobsExpanded} onOpenChange={setJobsExpanded}>
+            <CollapsibleTrigger className="flex items-center justify-between w-full px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors">
+              <span className="flex items-center gap-2">
+                <Briefcase className="w-4 h-4" />
+                Job Tools
+              </span>
+              <ChevronDown className={cn(
+                "w-4 h-4 transition-transform",
+                jobsExpanded && "rotate-180"
+              )} />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <ul className="space-y-1 mt-2">
+                {jobItems.map((item) => {
+                  const isActive = location.pathname === item.path;
+                  return (
+                    <li key={item.path}>
+                      <Link
+                        to={item.path}
+                        className={cn(
+                          "flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 text-sm",
+                          isActive 
+                            ? "bg-secondary text-foreground" 
+                            : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                        )}
+                      >
+                        <item.icon className="w-4 h-4 shrink-0" />
+                        <span>{item.label}</span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {/* Collapsed view - just show icons for job items */}
+        {collapsed && (
+          <ul className="space-y-2 border-t border-border pt-4 mt-4">
+            {jobItems.slice(0, 3).map((item) => {
+              const isActive = location.pathname === item.path;
+              return (
+                <li key={item.path}>
+                  <Link
+                    to={item.path}
+                    className={cn(
+                      "flex items-center justify-center p-2 rounded-lg transition-all duration-200",
+                      isActive 
+                        ? "bg-secondary text-foreground" 
+                        : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                    )}
+                    title={item.label}
+                  >
+                    <item.icon className="w-4 h-4" />
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </nav>
 
       {/* User section */}
