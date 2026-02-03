@@ -88,6 +88,12 @@ serve(async (req) => {
       case "start_order": {
         return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, supabaseUrl);
       }
+      case "check_order_status": {
+        return await handleCheckOrderStatus(supabase, user.id, payload.orderId!, BROWSER_USE_API_KEY);
+      }
+      case "sync_all_orders": {
+        return await handleSyncAllOrders(supabase, user.id, BROWSER_USE_API_KEY);
+      }
       default:
         throw new Error(`Unknown action: ${action}`);
     }
@@ -567,4 +573,176 @@ Report final status as one of:
 - "SUCCESS: Order placed at [site] for $[price]. Confirmation: [number]"
 - "FAILED: Could not complete purchase. Reason: [details]"
 - "BLOCKED: [specific blocker like MFA, unsolvable CAPTCHA, etc.]"`;
+}
+
+// Check order status from Browser Use API
+// deno-lint-ignore no-explicit-any
+async function handleCheckOrderStatus(
+  supabase: any,
+  userId: string,
+  orderId: string,
+  apiKey: string
+) {
+  // Get the order
+  const { data: order, error } = await supabase
+    .from("auto_shop_orders")
+    .select("*")
+    .eq("id", orderId)
+    .eq("user_id", userId)
+    .single();
+
+  if (error || !order) {
+    throw new Error("Order not found");
+  }
+
+  if (!order.browser_use_task_id) {
+    return new Response(
+      JSON.stringify({ success: true, order, taskStatus: null }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Check Browser Use task status
+  const taskRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${order.browser_use_task_id}`, {
+    headers: { "X-Browser-Use-API-Key": apiKey },
+  });
+
+  if (!taskRes.ok) {
+    console.error("[AutoShop] Failed to fetch task status:", await taskRes.text());
+    return new Response(
+      JSON.stringify({ success: true, order, taskStatus: "unknown" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  const taskData = await taskRes.json();
+  console.log(`[AutoShop] Task ${order.browser_use_task_id} status:`, taskData.status);
+
+  // Parse result and update order status
+  const updatedOrder = await updateOrderFromTask(supabase, order, taskData);
+
+  return new Response(
+    JSON.stringify({ 
+      success: true, 
+      order: updatedOrder,
+      taskStatus: taskData.status,
+      taskOutput: taskData.output,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+// Sync all pending orders for a user
+// deno-lint-ignore no-explicit-any
+async function handleSyncAllOrders(
+  supabase: any,
+  userId: string,
+  apiKey: string
+) {
+  // Get all orders with browser_use_task_id that aren't completed/failed
+  const { data: orders } = await supabase
+    .from("auto_shop_orders")
+    .select("*")
+    .eq("user_id", userId)
+    .not("browser_use_task_id", "is", null)
+    .in("status", ["pending", "searching", "found_deals", "ordering"]);
+
+  if (!orders || orders.length === 0) {
+    return new Response(
+      JSON.stringify({ success: true, synced: 0, orders: [] }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  const updatedOrders = [];
+  for (const order of orders) {
+    try {
+      const taskRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${order.browser_use_task_id}`, {
+        headers: { "X-Browser-Use-API-Key": apiKey },
+      });
+
+      if (taskRes.ok) {
+        const taskData = await taskRes.json();
+        const updated = await updateOrderFromTask(supabase, order, taskData);
+        updatedOrders.push(updated);
+      }
+    } catch (e) {
+      console.error(`[AutoShop] Failed to sync order ${order.id}:`, e);
+    }
+  }
+
+  return new Response(
+    JSON.stringify({ success: true, synced: updatedOrders.length, orders: updatedOrders }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+// Update order from Browser Use task data
+// deno-lint-ignore no-explicit-any
+async function updateOrderFromTask(supabase: any, order: any, taskData: any) {
+  const taskStatus = taskData.status; // "pending", "running", "finished", "failed", "stopped"
+  const output = taskData.output || "";
+
+  let newStatus = order.status;
+  let errorMessage = order.error_message;
+  let orderConfirmation = order.order_confirmation;
+  let selectedDealSite = order.selected_deal_site;
+  let selectedDealPrice = order.selected_deal_price;
+
+  if (taskStatus === "finished") {
+    // Parse the output to determine success/failure
+    const outputLower = output.toLowerCase();
+    
+    if (outputLower.includes("success") && outputLower.includes("order placed")) {
+      newStatus = "completed";
+      // Try to extract confirmation number
+      const confMatch = output.match(/confirmation[:\s]*([A-Z0-9-]+)/i);
+      if (confMatch) orderConfirmation = confMatch[1];
+      // Try to extract site
+      const siteMatch = output.match(/at\s+(\w+)/i);
+      if (siteMatch) selectedDealSite = siteMatch[1];
+      // Try to extract price
+      const priceMatch = output.match(/\$([0-9,.]+)/);
+      if (priceMatch) selectedDealPrice = parseFloat(priceMatch[1].replace(",", ""));
+    } else if (outputLower.includes("failed") || outputLower.includes("could not")) {
+      newStatus = "failed";
+      errorMessage = output.substring(0, 500);
+    } else if (outputLower.includes("blocked")) {
+      newStatus = "failed";
+      errorMessage = output.substring(0, 500);
+    } else {
+      // Task finished but unclear result - check if it found something
+      newStatus = "completed";
+    }
+  } else if (taskStatus === "failed" || taskStatus === "stopped") {
+    newStatus = "failed";
+    errorMessage = taskData.error || "Task failed or was stopped";
+  } else if (taskStatus === "running") {
+    // Keep as searching/ordering
+    if (order.status === "pending") newStatus = "searching";
+  }
+
+  // Only update if status changed
+  if (newStatus !== order.status || orderConfirmation || selectedDealSite) {
+    const updateData: Record<string, unknown> = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    };
+    if (errorMessage) updateData.error_message = errorMessage;
+    if (orderConfirmation) updateData.order_confirmation = orderConfirmation;
+    if (selectedDealSite) updateData.selected_deal_site = selectedDealSite;
+    if (selectedDealPrice) updateData.selected_deal_price = selectedDealPrice;
+    if (newStatus === "completed" || newStatus === "failed") {
+      updateData.completed_at = new Date().toISOString();
+    }
+
+    await supabase
+      .from("auto_shop_orders")
+      .update(updateData)
+      .eq("id", order.id);
+
+    return { ...order, ...updateData };
+  }
+
+  return order;
 }
