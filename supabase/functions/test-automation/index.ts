@@ -218,7 +218,7 @@ IMPORTANT: Only include jobs with a valid apply URL. The URL should link directl
             url: job.url,
             description: job.description,
             posted_at: new Date().toISOString(),
-          }, { onConflict: "external_id" });
+          }, { onConflict: "user_id,external_id" });
           if (!error) savedCount++;
           else console.log(`Upsert error for ${job.title}:`, error.message);
         }

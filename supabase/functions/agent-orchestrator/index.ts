@@ -515,7 +515,7 @@ Return a JSON array of jobs:
       match_score: job.matchScore,
       url: job.url,
       posted_at: new Date().toISOString(),
-    }, { onConflict: "external_id" });
+    }, { onConflict: "user_id,external_id" });
   }
 
   return { jobs_found: jobs.length, jobs };
