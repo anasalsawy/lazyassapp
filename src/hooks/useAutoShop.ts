@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useUserRole } from "@/hooks/useUserRole";
 import { useToast } from "@/hooks/use-toast";
 
 export interface PaymentCard {
@@ -17,6 +18,7 @@ export interface PaymentCard {
   billing_country?: string;
   is_default: boolean;
   created_at: string;
+  user_id: string;
 }
 
 export interface ShippingAddress {
@@ -32,6 +34,7 @@ export interface ShippingAddress {
   phone?: string;
   is_default: boolean;
   created_at: string;
+  user_id: string;
 }
 
 export interface AutoShopOrder {
@@ -76,6 +79,7 @@ const decryptData = (data: string): string => {
 
 export const useAutoShop = () => {
   const { user } = useAuth();
+  const { isOwner, ownerId, loading: roleLoading } = useUserRole();
   const { toast } = useToast();
   const [cards, setCards] = useState<PaymentCard[]>([]);
   const [addresses, setAddresses] = useState<ShippingAddress[]>([]);
@@ -83,21 +87,28 @@ export const useAutoShop = () => {
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
-    if (!user) return;
+    if (!user || roleLoading) return;
     setLoading(true);
 
     try {
+      // Cards: owner's cards are used for everyone
+      // The RLS policy allows family to see owner's cards
+      const effectiveOwnerId = ownerId || user.id;
+      
       const [cardsRes, addressesRes, ordersRes] = await Promise.all([
+        // Fetch cards from owner (or self if owner)
         supabase
           .from("payment_cards")
           .select("*")
-          .eq("user_id", user.id)
+          .eq("user_id", effectiveOwnerId)
           .order("is_default", { ascending: false }),
+        // Addresses can be user's own or from owner
         supabase
           .from("shipping_addresses")
           .select("*")
-          .eq("user_id", user.id)
+          .or(`user_id.eq.${user.id},user_id.eq.${effectiveOwnerId}`)
           .order("is_default", { ascending: false }),
+        // Orders are always user's own
         supabase
           .from("auto_shop_orders")
           .select("*")
@@ -113,11 +124,13 @@ export const useAutoShop = () => {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, ownerId, roleLoading]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (!roleLoading) {
+      fetchData();
+    }
+  }, [fetchData, roleLoading]);
 
   // Card operations
   const addCard = async (cardData: {
@@ -181,7 +194,7 @@ export const useAutoShop = () => {
   };
 
   // Address operations
-  const addAddress = async (addressData: Omit<ShippingAddress, "id" | "created_at">) => {
+  const addAddress = async (addressData: Omit<ShippingAddress, "id" | "created_at" | "user_id">) => {
     if (!user) return null;
 
     const { data, error } = await supabase
@@ -342,7 +355,8 @@ export const useAutoShop = () => {
     cards,
     addresses,
     orders,
-    loading,
+    loading: loading || roleLoading,
+    isOwner,
     addCard,
     deleteCard,
     addAddress,

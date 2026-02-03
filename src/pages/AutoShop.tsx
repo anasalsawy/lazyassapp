@@ -20,6 +20,7 @@ const AutoShop = () => {
     addresses,
     orders,
     loading,
+    isOwner,
     addCard,
     deleteCard,
     addAddress,
@@ -231,10 +232,12 @@ const AutoShop = () => {
               <ShoppingCart className="h-4 w-4" />
               Shop
             </TabsTrigger>
-            <TabsTrigger value="cards" className="flex items-center gap-2">
-              <CreditCard className="h-4 w-4" />
-              Cards ({cards.length})
-            </TabsTrigger>
+            {isOwner && (
+              <TabsTrigger value="cards" className="flex items-center gap-2">
+                <CreditCard className="h-4 w-4" />
+                Cards ({cards.length})
+              </TabsTrigger>
+            )}
             <TabsTrigger value="addresses" className="flex items-center gap-2">
               <MapPin className="h-4 w-4" />
               Addresses ({addresses.length})
@@ -381,9 +384,14 @@ const AutoShop = () => {
                     )}
                   </Button>
 
-                  {cards.length === 0 && (
+                  {cards.length === 0 && isOwner && (
                     <p className="text-sm text-destructive text-center">
                       ⚠️ Add at least one payment card first
+                    </p>
+                  )}
+                  {cards.length === 0 && !isOwner && (
+                    <p className="text-sm text-destructive text-center">
+                      ⚠️ No payment cards available - ask the owner to add one
                     </p>
                   )}
                   {addresses.length === 0 && (
@@ -432,7 +440,8 @@ const AutoShop = () => {
             </div>
           </TabsContent>
 
-          {/* Cards Tab */}
+          {/* Cards Tab - Owner Only */}
+          {isOwner && (
           <TabsContent value="cards">
             <div className="space-y-4">
               <div className="flex justify-between items-center">
@@ -517,6 +526,7 @@ const AutoShop = () => {
               )}
             </div>
           </TabsContent>
+          )}
 
           {/* Addresses Tab */}
           <TabsContent value="addresses">
