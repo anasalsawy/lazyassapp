@@ -9,23 +9,33 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   LogOut,
   User,
-  Bot
+  ShoppingCart
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useProfile } from "@/hooks/useProfile";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
-const menuItems = [
+const mainItems = [
+  { icon: ShoppingCart, label: "Auto-Shop", path: "/auto-shop" },
+  { icon: Settings, label: "Settings", path: "/dashboard/settings" },
+];
+
+const jobItems = [
   { icon: BarChart3, label: "Dashboard", path: "/dashboard" },
   { icon: FileText, label: "Resume", path: "/dashboard/resume" },
   { icon: Search, label: "Job Search", path: "/dashboard/jobs" },
   { icon: Send, label: "Applications", path: "/dashboard/applications" },
   { icon: Mail, label: "Inbox", path: "/dashboard/messages" },
-  { icon: Settings, label: "Settings", path: "/dashboard/settings" },
 ];
 
 export const Sidebar = () => {
