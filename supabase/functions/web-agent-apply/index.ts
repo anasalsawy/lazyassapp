@@ -240,18 +240,36 @@ serve(async (req) => {
 function buildAgentInstruction(payload: ApplicationPayload): string {
   const { jobTitle, company, resumeData, coverLetter, userProfile } = payload;
   
+  // Generate a secure password for any account creation
+  const generatedPassword = `Apply${Date.now().toString(36)}!${Math.random().toString(36).substring(2, 8)}`;
+  
   let instruction = `Apply for the job "${jobTitle}" at "${company}".
 
-YOUR TASK:
-1. Navigate to the job application form on this page
-2. Fill out ALL required fields with the candidate's information
-3. Upload or paste the resume content if there's an upload field
-4. Submit the application
-5. Confirm successful submission
+YOUR MISSION: Complete the job application 100% autonomously. The user will NOT intervene.
+
+AUTHENTICATION HANDLING (CRITICAL):
+- If the site requires login/signup to apply, CREATE A NEW ACCOUNT using these credentials:
+  - Email: ${userProfile.email}
+  - Password: ${generatedPassword}
+  - First Name: ${userProfile.firstName}
+  - Last Name: ${userProfile.lastName}
+- If you see a login page and already have an account, try signing in with the email above
+- If signup requires email verification, check if there's a "continue without verification" option or proceed anyway
+- Handle any OAuth prompts by choosing email/password signup instead
+- NEVER stop or ask for user help - figure it out yourself
+
+APPLICATION STEPS:
+1. Navigate to the job listing and find the "Apply" button
+2. If login/signup is required, handle it using the credentials above
+3. Fill out ALL form fields with the candidate's information
+4. Upload or paste resume content if there's an upload field
+5. Submit the application
+6. Confirm successful submission
 
 CANDIDATE INFORMATION:
 - Full Name: ${userProfile.firstName} ${userProfile.lastName}
-- Email: ${userProfile.email}`;
+- Email: ${userProfile.email}
+- Password (for new accounts): ${generatedPassword}`;
 
   if (userProfile.phone) {
     instruction += `\n- Phone: ${userProfile.phone}`;
@@ -266,7 +284,7 @@ CANDIDATE INFORMATION:
 - Skills: ${resumeData.skills?.join(", ") || 'Not specified'}`;
     
     if (resumeData.parsed_content?.text) {
-      instruction += `\n- Resume Summary: ${resumeData.parsed_content.text.substring(0, 2000)}...`;
+      instruction += `\n- Resume Content: ${resumeData.parsed_content.text.substring(0, 3000)}`;
     }
   }
 
@@ -277,14 +295,28 @@ ${coverLetter}`;
 
   instruction += `
 
-IMPORTANT GUIDELINES:
-- If asked about salary expectations, select "Prefer not to say" or enter a reasonable range
-- For "How did you hear about us?", select "Job Board" or "Online Search"
-- If there are screening questions, answer them honestly based on the resume data
+FORM FILLING GUIDELINES:
+- For salary expectations: Select "Prefer not to say" or enter a reasonable range based on the role
+- For "How did you hear about us?": Select "Job Board" or "Online Search"
+- For work authorization: Select "Yes" if asked (assume authorized)
+- For start date: Select "Immediately" or "2 weeks notice"
+- For screening questions: Answer based on resume data, be positive and professional
+- If a field is optional and you don't have the info, skip it
+- If a field is required and you don't have the info, make a reasonable choice
+
+PROBLEM SOLVING:
 - If CAPTCHA appears, solve it
-- If login is required, STOP and report "Login required"
-- Take a screenshot after submission for confirmation
-- Report any errors or issues encountered`;
+- If email verification is required, note it but continue with the application if possible
+- If multi-factor auth is required, report it as a blocker
+- If the application has multiple pages/steps, complete ALL of them
+- If there are errors, try to fix them and resubmit
+
+SUCCESS CRITERIA:
+- Application must be SUBMITTED, not just filled out
+- Take a screenshot of the confirmation page
+- Report the final status: "SUCCESS: Application submitted" or "BLOCKED: [reason]"
+
+DO NOT STOP. DO NOT ASK FOR HELP. COMPLETE THE APPLICATION.`;
 
   return instruction;
 }
