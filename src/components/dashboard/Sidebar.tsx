@@ -24,7 +24,6 @@ const menuItems = [
   { icon: FileText, label: "Resume", path: "/dashboard/resume" },
   { icon: Search, label: "Job Search", path: "/dashboard/jobs" },
   { icon: Send, label: "Applications", path: "/dashboard/applications" },
-  { icon: Bot, label: "Automation", path: "/dashboard/automation" },
   { icon: Mail, label: "Inbox", path: "/dashboard/messages" },
   { icon: Settings, label: "Settings", path: "/dashboard/settings" },
 ];

@@ -16,17 +16,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Building2, MapPin, DollarSign, Heart, Search, 
-  Loader2, ExternalLink, Trash2, Filter, Zap, Globe,
-  CheckCircle, Sparkles, Bot, Send
+  Loader2, ExternalLink, Trash2, Filter, Globe,
+  CheckCircle, Bot, Sparkles
 } from "lucide-react";
 import { useState, useEffect } from "react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 const Jobs = () => {
   const { jobs, loading, searching, searchJobs, toggleSaved, deleteJob, refetch } = useJobs();
@@ -498,6 +491,7 @@ const Jobs = () => {
                   </div>
                 )}
 
+                {/* Actions Row */}
                 <div className="flex items-center justify-between pt-4 border-t border-border">
                   <div className="flex items-center gap-2">
                     <button
@@ -517,92 +511,43 @@ const Jobs = () => {
                       </a>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    {isApplied ? (
-                      <Badge variant="secondary" className="bg-success/10 text-success">
-                        <CheckCircle className="w-3 h-3 mr-1" />
-                        Applied
-                      </Badge>
-                    ) : hasActiveAgent ? (
-                      <Badge variant="secondary" className="bg-primary/10 text-primary">
-                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                        AI Submitting...
-                      </Badge>
-                    ) : (
-                      <>
-                        {/* Quick Apply - just tracks internally */}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleQuickApply(job.id, false)}
-                          disabled={isApplying}
-                        >
-                          <Send className="w-4 h-4 mr-1" />
-                          Track
-                        </Button>
-
-                        {/* Dropdown with apply options */}
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={isApplying || webAgentLoading}
-                            >
-                              <Zap className="w-4 h-4 mr-1" />
-                              Quick Apply
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-64">
-                            <DropdownMenuItem 
-                              onClick={() => handleQuickApply(job.id, true)}
-                              className="cursor-pointer"
-                            >
-                              <Sparkles className="w-4 h-4 mr-2 text-primary" />
-                              <div>
-                                <div className="font-medium">Smart Apply</div>
-                                <div className="text-xs text-muted-foreground">
-                                  Generate cover letter & track
-                                </div>
-                              </div>
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* AI Agent Apply Button - Prominent placement */}
-                {!isApplied && !hasActiveAgent && job.url && (
-                  <div className="mt-4 pt-4 border-t border-border">
+                  
+                  {/* Single AI Apply Button */}
+                  {isApplied ? (
+                    <Badge variant="secondary" className="bg-success/10 text-success">
+                      <CheckCircle className="w-3 h-3 mr-1" />
+                      Applied
+                    </Badge>
+                  ) : hasActiveAgent ? (
+                    <Badge variant="secondary" className="bg-primary/10 text-primary">
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                      AI Submitting...
+                    </Badge>
+                  ) : (
                     <Button
                       onClick={() => handleWebAgentApply(job)}
-                      disabled={isApplying || webAgentLoading}
-                      className="w-full bg-gradient-to-r from-accent to-primary hover:opacity-90"
+                      disabled={isApplying || webAgentLoading || !job.url}
+                      className="bg-gradient-to-r from-accent to-primary hover:opacity-90"
                     >
                       {isApplying ? (
                         <>
                           <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Starting AI Agent...
+                          Applying...
                         </>
                       ) : (
                         <>
                           <Bot className="w-4 h-4 mr-2" />
-                          Apply with AI Agent
+                          Apply with AI
                           {job.match_score && job.match_score >= matchThreshold && autoApplyEnabled && (
-                            <Badge variant="secondary" className="ml-2 bg-background/20">
+                            <Badge variant="secondary" className="ml-2 bg-background/20 text-xs">
                               Auto
                             </Badge>
                           )}
                         </>
                       )}
                     </Button>
-                    <p className="text-xs text-muted-foreground text-center mt-2">
-                      Browser Use will auto-fill and submit your application
-                    </p>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             );
           })}
