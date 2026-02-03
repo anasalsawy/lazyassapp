@@ -39,6 +39,35 @@ interface AutoShopPayload {
   paymentCards: PaymentCard[];
 }
 
+// Generate email alias for account creation
+async function generateEmailAlias(supabase: any, userId: string, orderId: string, productQuery: string): Promise<string> {
+  const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
+  
+  if (!MAILGUN_DOMAIN) {
+    console.warn("[AutoShop] MAILGUN_DOMAIN not set, using fallback");
+    return `shop-${orderId.substring(0, 8)}@example.com`;
+  }
+
+  // Generate unique alias
+  const shortId = orderId.substring(0, 8);
+  const timestamp = Date.now().toString(36);
+  const productSlug = productQuery.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 10) || 'order';
+  const emailAlias = `shop-${productSlug}-${shortId}-${timestamp}@${MAILGUN_DOMAIN}`;
+
+  console.log(`[AutoShop] Generated email alias: ${emailAlias}`);
+
+  // Log the alias creation
+  await supabase.from("agent_logs").insert({
+    user_id: userId,
+    agent_name: "auto_shop",
+    log_level: "info",
+    message: `Generated email alias for shopping: ${emailAlias}`,
+    metadata: { emailAlias, orderId, productQuery },
+  });
+
+  return emailAlias;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -70,6 +99,10 @@ serve(async (req) => {
     console.log(`[AutoShop] Starting search for: "${productQuery}"`);
     console.log(`[AutoShop] Max price: $${maxPrice || "no limit"}, Quantity: ${quantity}`);
 
+    // Generate email alias for account creation
+    const emailAlias = await generateEmailAlias(supabase, user.id, orderId, productQuery);
+    console.log(`[AutoShop] Email for account creation: ${emailAlias}`);
+
     // Update order status to searching
     await supabase
       .from("auto_shop_orders")
@@ -85,13 +118,15 @@ serve(async (req) => {
       metadata: { orderId, productQuery, maxPrice, quantity },
     });
 
-    // Build the agent instruction
+    // Build the agent instruction with email alias
     const agentInstruction = buildShoppingAgentInstruction(
       productQuery,
       maxPrice,
       quantity,
       shippingAddress,
-      paymentCards
+      paymentCards,
+      emailAlias,
+      supabaseUrl
     );
 
     console.log(`[AutoShop] Sending task to Browser Use...`);
@@ -174,7 +209,9 @@ function buildShoppingAgentInstruction(
   maxPrice: number | undefined,
   quantity: number,
   shipping: ShippingAddress,
-  cards: PaymentCard[]
+  cards: PaymentCard[],
+  emailAlias: string,
+  supabaseUrl: string
 ): string {
   const priceConstraint = maxPrice 
     ? `\n- MAXIMUM PRICE: $${maxPrice} - DO NOT buy anything over this price` 
@@ -189,6 +226,9 @@ CARD ${index + 1}:
 - Billing: ${card.billingAddress || ""}, ${card.billingCity || ""}, ${card.billingState || ""} ${card.billingZip || ""}, ${card.billingCountry || "US"}
 `).join("\n");
 
+  // Generate a random strong password for account creation
+  const generatedPassword = `Shop${Date.now().toString(36)}!${Math.random().toString(36).substring(2, 8)}`;
+
   return `AUTONOMOUS SHOPPING AGENT - FIND AND PURCHASE PRODUCT
 
 YOUR MISSION: Find the best deal for the requested product and complete the purchase autonomously.
@@ -196,6 +236,20 @@ YOUR MISSION: Find the best deal for the requested product and complete the purc
 PRODUCT TO FIND:
 - Search query: "${productQuery}"
 - Quantity needed: ${quantity}${priceConstraint}
+
+=== ACCOUNT CREATION CREDENTIALS ===
+When you need to create an account on ANY shopping site, use THESE credentials:
+- EMAIL: ${emailAlias}
+- PASSWORD: ${generatedPassword}
+- Name: ${shipping.full_name}
+
+IMPORTANT: This email is set up to receive verification codes. If a site requires email verification:
+1. Wait 10-15 seconds after submitting
+2. Call this endpoint to get the verification code:
+   GET ${supabaseUrl}/functions/v1/get-verification-code?email=${encodeURIComponent(emailAlias)}
+3. Enter the code and continue
+
+=== END ACCOUNT CREDENTIALS ===
 
 STEP 1 - SEARCH FOR DEALS:
 1. Start at Google Shopping and search for "${productQuery}"
@@ -222,7 +276,8 @@ STEP 3 - ADD TO CART AND CHECKOUT:
 1. Select quantity: ${quantity}
 2. Add to cart
 3. Proceed to checkout
-4. Handle any account creation or guest checkout
+4. PREFER GUEST CHECKOUT if available
+5. If account required, CREATE ACCOUNT using the credentials above (EMAIL: ${emailAlias})
 
 STEP 4 - ENTER SHIPPING INFORMATION:
 Full Name: ${shipping.full_name}
@@ -255,6 +310,7 @@ ERROR HANDLING:
 - If shipping not available: Try different site
 - If CAPTCHA: Solve it
 - If price changed: Only proceed if still under max price
+- If email verification needed: Use the get-verification-code endpoint above
 
 NEVER STOP. NEVER ASK FOR HELP. COMPLETE THE PURCHASE.
 
