@@ -44,20 +44,76 @@ serve(async (req) => {
     // Build search queries
     const titles = jobTitles?.length ? jobTitles : ["Software Engineer"];
     const locs = locations?.length ? locations : ["Remote"];
-    const boards = jobBoards?.length ? jobBoards : ["linkedin", "indeed"];
+
+    // Use direct job board URLs for reliable scraping
+    const jobBoardUrls = [
+      // LinkedIn job search (public listings)
+      "https://www.linkedin.com/jobs/search?keywords={TITLE}&location={LOCATION}&f_WT=2&position=1&pageNum=0",
+      // Indeed job search
+      "https://www.indeed.com/jobs?q={TITLE}&l={LOCATION}&remotejob=1",
+      // We Work Remotely (high quality remote jobs)
+      "https://weworkremotely.com/remote-jobs/search?term={TITLE}",
+      // Greenhouse job boards (popular for tech companies)
+      "https://boards.greenhouse.io/embed/job_board?token=cloudflare",
+      "https://boards.greenhouse.io/embed/job_board?token=stripe",
+      "https://boards.greenhouse.io/embed/job_board?token=figma",
+      // Lever job boards
+      "https://jobs.lever.co/cloudflare",
+      "https://jobs.lever.co/stripe",
+    ];
 
     for (const title of titles.slice(0, 3)) {
       for (const location of locs.slice(0, 2)) {
-        // Build comprehensive search query
-        let query = `${title} ${location} jobs`;
-        if (remotePreference === "remote") query += " remote";
-        if (salaryMin) query += ` $${salaryMin}+`;
-        
-        searchQueries.push(query);
+        searchQueries.push(`${title} ${location} jobs hiring now apply`);
       }
     }
 
-    // Scrape from job boards using Firecrawl search
+    // Strategy 1: Scrape known job board listing pages directly
+    console.log("Strategy 1: Scraping job board pages directly...");
+    const directUrls = [
+      `https://www.linkedin.com/jobs/search?keywords=${encodeURIComponent(titles[0])}&location=${encodeURIComponent(locs[0] || 'Remote')}&f_WT=2`,
+      `https://www.indeed.com/jobs?q=${encodeURIComponent(titles[0])}&l=${encodeURIComponent(locs[0] || 'Remote')}&remotejob=1&fromage=7`,
+      "https://weworkremotely.com/remote-jobs/search?term=software+engineer",
+      "https://remoteok.com/remote-software-developer-jobs",
+    ];
+
+    for (const url of directUrls) {
+      try {
+        console.log(`Scraping direct URL: ${url}`);
+        const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            url,
+            formats: ["markdown"],
+            onlyMainContent: true,
+            waitFor: 3000,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.data?.markdown) {
+            allScrapedJobs.push({
+              url,
+              title: data.data.metadata?.title || "Job Listing Page",
+              description: data.data.metadata?.description,
+              markdown: data.data.markdown.substring(0, 8000),
+              source: extractSource(url),
+              searchQuery: titles[0],
+            });
+          }
+        }
+      } catch (err) {
+        console.error(`Error scraping URL: ${url}`, err);
+      }
+    }
+
+    // Strategy 2: Search-based discovery
+    console.log("Strategy 2: Search-based job discovery...");
     for (const query of searchQueries) {
       try {
         console.log(`Searching: ${query}`);
@@ -69,8 +125,8 @@ serve(async (req) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            query: query + " site:linkedin.com/jobs OR site:indeed.com OR site:glassdoor.com",
-            limit: 15,
+            query: `${query} site:greenhouse.io OR site:lever.co OR site:workday.com OR site:linkedin.com/jobs`,
+            limit: 20,
             scrapeOptions: {
               formats: ["markdown"],
               onlyMainContent: true,
@@ -88,14 +144,28 @@ serve(async (req) => {
 
         if (data.data) {
           for (const result of data.data) {
-            allScrapedJobs.push({
-              url: result.url,
-              title: result.title,
-              description: result.description,
-              markdown: result.markdown?.substring(0, 3000),
-              source: extractSource(result.url),
-              searchQuery: query,
-            });
+            // Filter to only include actual job posting URLs
+            const url = result.url || "";
+            const isJobUrl = 
+              url.includes("greenhouse.io") ||
+              url.includes("lever.co") ||
+              url.includes("workday.com") ||
+              url.includes("linkedin.com/jobs/view") ||
+              url.includes("indeed.com/viewjob") ||
+              url.includes("careers.") ||
+              url.includes("/jobs/") ||
+              url.includes("/careers/");
+            
+            if (isJobUrl) {
+              allScrapedJobs.push({
+                url: result.url,
+                title: result.title,
+                description: result.description,
+                markdown: result.markdown?.substring(0, 4000),
+                source: extractSource(result.url),
+                searchQuery: query,
+              });
+            }
           }
         }
       } catch (err) {
