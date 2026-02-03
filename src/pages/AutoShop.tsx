@@ -47,10 +47,15 @@ const AutoShop = () => {
 
   const [orderForm, setOrderForm] = useState({
     product_query: "",
+    product_image: null as File | null,
+    product_image_preview: "",
+    reference_url: "",
     max_price: "",
     quantity: "1",
     shipping_address_id: "",
   });
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [submitting, setSubmitting] = useState(false);
 
