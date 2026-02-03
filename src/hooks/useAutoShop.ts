@@ -295,6 +295,7 @@ export const useAutoShop = () => {
         "auto-shop",
         {
           body: {
+            action: "start_order",
             orderId: order.id,
             productQuery: orderData.product_query,
             maxPrice: orderData.max_price,

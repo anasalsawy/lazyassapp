@@ -439,6 +439,10 @@ export type Database = {
           pending_login_site: string | null
           pending_session_id: string | null
           pending_task_id: string | null
+          shop_pending_login_site: string | null
+          shop_pending_session_id: string | null
+          shop_pending_task_id: string | null
+          shop_sites_logged_in: string[] | null
           sites_logged_in: string[] | null
           status: string
           updated_at: string
@@ -452,6 +456,10 @@ export type Database = {
           pending_login_site?: string | null
           pending_session_id?: string | null
           pending_task_id?: string | null
+          shop_pending_login_site?: string | null
+          shop_pending_session_id?: string | null
+          shop_pending_task_id?: string | null
+          shop_sites_logged_in?: string[] | null
           sites_logged_in?: string[] | null
           status?: string
           updated_at?: string
@@ -465,6 +473,10 @@ export type Database = {
           pending_login_site?: string | null
           pending_session_id?: string | null
           pending_task_id?: string | null
+          shop_pending_login_site?: string | null
+          shop_pending_session_id?: string | null
+          shop_pending_task_id?: string | null
+          shop_sites_logged_in?: string[] | null
           sites_logged_in?: string[] | null
           status?: string
           updated_at?: string
@@ -1019,6 +1031,59 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      order_tracking: {
+        Row: {
+          carrier: string | null
+          created_at: string
+          email_source: string | null
+          estimated_delivery: string | null
+          id: string
+          last_update: string | null
+          order_id: string | null
+          status: string
+          tracking_number: string | null
+          tracking_url: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          carrier?: string | null
+          created_at?: string
+          email_source?: string | null
+          estimated_delivery?: string | null
+          id?: string
+          last_update?: string | null
+          order_id?: string | null
+          status?: string
+          tracking_number?: string | null
+          tracking_url?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          carrier?: string | null
+          created_at?: string
+          email_source?: string | null
+          estimated_delivery?: string | null
+          id?: string
+          last_update?: string | null
+          order_id?: string | null
+          status?: string
+          tracking_number?: string | null
+          tracking_url?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_tracking_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "auto_shop_orders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       payment_cards: {
         Row: {
