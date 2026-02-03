@@ -585,20 +585,71 @@ STEP 6 - COMPLETE ORDER:
 3. Take screenshot of confirmation page
 4. Report: "SUCCESS: Order placed at [site] for $[price]. Confirmation: [number]"
 
-ERROR HANDLING:
-- If card declined: Try next card, if all fail try different site
-- If out of stock: Try next best deal
-- If shipping not available: Try different site
-- If CAPTCHA: Solve it
-- If price changed: Only proceed if still under max price
-- If email verification needed: Go to Gmail, get the code/link, complete verification
+=== ADAPTIVE FAILURE RECOVERY ===
 
-NEVER STOP. NEVER ASK FOR HELP. COMPLETE THE PURCHASE.
+CRITICAL: Learn from EVERY failure and adapt your strategy. Keep a mental log of what failed and WHY.
 
-Report final status as one of:
-- "SUCCESS: Order placed at [site] for $[price]. Confirmation: [number]"
-- "FAILED: Could not complete purchase. Reason: [details]"
-- "BLOCKED: [specific blocker like MFA, unsolvable CAPTCHA, etc.]"`;
+FAILURE CAUSE ANALYSIS:
+When something fails, DIAGNOSE the root cause before taking action:
+
+1. CARD DECLINED:
+   - If "insufficient funds" → Try next card immediately
+   - If "card not supported" → This site may not accept this card type, try different site
+   - If "security block" → The site flagged the transaction, abandon this site entirely
+   - If "expired card" → Skip this card for all future attempts
+   - If "billing address mismatch" → Double-check address entered correctly, retry once, then try next card
+
+2. CHECKOUT BLOCKED:
+   - If "bot detection" / CAPTCHA loop → Slow down, wait 5 seconds, try once more. If still blocked, this site is hostile - abandon and try completely different retailer
+   - If "login required" and can't create account → Try guest checkout. If no guest option, abandon site
+   - If "region restricted" → This site won't work, immediately try next site
+   - If "session expired" → Refresh page, re-add to cart, continue
+
+3. PRODUCT ISSUES:
+   - If "out of stock" → Don't waste time, immediately search for next best deal
+   - If "price increased significantly" → Abandon if over max price, otherwise note it and continue
+   - If "item unavailable for shipping" → Try a different seller/listing on same site first, then try different site
+   - If "minimum order required" → Check if quantity adjustment helps, otherwise abandon
+
+4. SITE ISSUES:
+   - If "site loading slowly" → Wait up to 30 seconds, then abandon if unresponsive
+   - If "payment page broken" → Try refreshing once, then abandon site
+   - If "endless redirects" → Site is broken, abandon immediately
+   - If "requires phone verification via SMS" → This is a BLOCKER, abandon and try different site
+
+5. ACCOUNT CREATION ISSUES:
+   - If "email already registered" → Try password recovery? No - abandon and try guest checkout or different site
+   - If "phone number required" → Try to skip, if mandatory abandon site
+   - If "verification email not arriving" → Wait 2 minutes, check spam, if nothing then abandon
+
+=== STRATEGIC MANEUVERING ===
+
+SITE ROTATION STRATEGY:
+- If a site fails for ANY reason, remember WHY it failed
+- Don't retry the same site for the same reason
+- Prioritize sites with simpler checkouts (fewer steps = fewer failure points)
+- If 2+ sites fail with card issues, consider that cards might have fraud blocks - report this
+
+RECOVERY PRIORITY:
+1. First, try to fix the immediate issue (re-enter info, solve CAPTCHA)
+2. If fix doesn't work after ONE retry, escalate to next option (next card, different listing)
+3. If escalation fails, abandon current approach entirely (different site)
+4. Track failed sites/approaches to avoid repeating mistakes
+
+SMART RETRIES:
+- Never retry the exact same action more than ONCE
+- If same error twice, it's a pattern - change approach
+- Wait 3-5 seconds between retries to avoid rate limiting
+- Clear cart before abandoning a site (some sites track abandoned carts)
+
+=== FINAL STATUS REPORTING ===
+
+NEVER STOP. NEVER ASK FOR HELP. COMPLETE THE PURCHASE OR EXHAUST ALL OPTIONS.
+
+Report final status with DETAILED context:
+- "SUCCESS: Order placed at [site] for $[price]. Confirmation: [number]. Shipping estimate: [date if shown]"
+- "FAILED: Could not complete purchase. Sites tried: [list]. Failure reasons: [specific causes]. Recommendation: [what user should check/fix]"
+- "BLOCKED: [specific blocker]. Sites attempted: [list]. Suggestion: [e.g., 'cards may have fraud protection enabled' or 'product may be region-restricted']"`;
 }
 
 // Check order status from Browser Use API
