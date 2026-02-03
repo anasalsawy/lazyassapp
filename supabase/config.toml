@@ -32,3 +32,6 @@ verify_jwt = false
 
 [functions.web-agent-status]
 verify_jwt = false
+
+[functions.email-agent]
+verify_jwt = false
