@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 import { toast } from "sonner";
@@ -27,12 +27,14 @@ export function useShopProfile() {
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [tracking, setTracking] = useState<OrderTracking[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [loginSession, setLoginSession] = useState<{
     sessionId: string;
     taskId: string;
     liveViewUrl: string;
     site: string;
   } | null>(null);
+  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const callAgent = useCallback(async (action: string, body: Record<string, unknown> = {}) => {
     if (!session?.access_token) {
@@ -73,6 +75,43 @@ export function useShopProfile() {
       fetchStatus();
     }
   }, [user, fetchStatus]);
+
+  // Sync all pending orders with Browser Use API
+  const syncOrders = useCallback(async () => {
+    if (!user || isSyncing) return;
+    
+    setIsSyncing(true);
+    const data = await callAgent("sync_all_orders");
+    if (data?.success && data.synced > 0) {
+      console.log(`[ShopProfile] Synced ${data.synced} orders`);
+      // Refetch status to get updated orders
+      await fetchStatus();
+    }
+    setIsSyncing(false);
+    return data;
+  }, [callAgent, user, isSyncing, fetchStatus]);
+
+  // Auto-sync every 30 seconds when there are pending orders
+  useEffect(() => {
+    // Clear existing interval
+    if (syncIntervalRef.current) {
+      clearInterval(syncIntervalRef.current);
+      syncIntervalRef.current = null;
+    }
+
+    // Start auto-sync if user is logged in
+    if (user && session?.access_token) {
+      syncIntervalRef.current = setInterval(() => {
+        syncOrders();
+      }, 30000); // Every 30 seconds
+    }
+
+    return () => {
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+      }
+    };
+  }, [user, session?.access_token, syncOrders]);
 
   // Create browser profile
   const createProfile = useCallback(async () => {
@@ -116,10 +155,12 @@ export function useShopProfile() {
     profile,
     tracking,
     isLoading,
+    isSyncing,
     loginSession,
     createProfile,
     startLogin,
     confirmLogin,
+    syncOrders,
     refetch: fetchStatus,
   };
 }

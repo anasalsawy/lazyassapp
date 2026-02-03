@@ -56,16 +56,19 @@ const AutoShop = () => {
     startOrder,
     cancelOrder,
     getMaskedCardNumber,
+    refreshData: refreshOrders,
   } = useAutoShop();
   
   const {
     profile: shopProfile,
     tracking,
     isLoading: profileLoading,
+    isSyncing,
     loginSession,
     createProfile,
     startLogin,
     confirmLogin,
+    syncOrders,
   } = useShopProfile();
 
   const [activeTab, setActiveTab] = useState("shop");
@@ -803,7 +806,37 @@ const AutoShop = () => {
           {/* Orders Tab */}
           <TabsContent value="orders">
             <div className="space-y-4">
-              <h2 className="text-xl font-semibold">Order History</h2>
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl font-semibold">Order History</h2>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={async () => {
+                    await syncOrders();
+                    refreshOrders();
+                  }}
+                  disabled={isSyncing}
+                >
+                  {isSyncing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="mr-2 h-4 w-4" />
+                      Refresh Status
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {isSyncing && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3 flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Checking order status with shopping agent...
+                </div>
+              )}
 
               {loading ? (
                 <div className="flex justify-center py-8">
@@ -820,7 +853,7 @@ const AutoShop = () => {
               ) : (
                 <div className="space-y-4">
                   {orders.map((order) => (
-                    <Card key={order.id}>
+                    <Card key={order.id} className={order.status === "completed" ? "border-green-200 dark:border-green-800" : order.status === "failed" ? "border-red-200 dark:border-red-800" : ""}>
                       <CardContent className="pt-6">
                         <div className="flex justify-between items-start">
                           <div className="space-y-1">
@@ -845,6 +878,7 @@ const AutoShop = () => {
                             )}
                             <p className="text-xs text-muted-foreground">
                               {new Date(order.created_at).toLocaleString()}
+                              {order.completed_at && ` • Completed: ${new Date(order.completed_at).toLocaleString()}`}
                             </p>
                           </div>
                           {(order.status === "pending" || order.status === "searching") && (
