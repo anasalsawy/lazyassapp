@@ -31,41 +31,14 @@ interface ShippingAddress {
 }
 
 interface AutoShopPayload {
-  orderId: string;
-  productQuery: string;
+  action?: string;
+  orderId?: string;
+  productQuery?: string;
   maxPrice?: number;
-  quantity: number;
-  shippingAddress: ShippingAddress;
-  paymentCards: PaymentCard[];
-}
-
-// Generate email alias for account creation
-async function generateEmailAlias(supabase: any, userId: string, orderId: string, productQuery: string): Promise<string> {
-  const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
-  
-  if (!MAILGUN_DOMAIN) {
-    console.warn("[AutoShop] MAILGUN_DOMAIN not set, using fallback");
-    return `shop-${orderId.substring(0, 8)}@example.com`;
-  }
-
-  // Generate unique alias
-  const shortId = orderId.substring(0, 8);
-  const timestamp = Date.now().toString(36);
-  const productSlug = productQuery.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 10) || 'order';
-  const emailAlias = `shop-${productSlug}-${shortId}-${timestamp}@${MAILGUN_DOMAIN}`;
-
-  console.log(`[AutoShop] Generated email alias: ${emailAlias}`);
-
-  // Log the alias creation
-  await supabase.from("agent_logs").insert({
-    user_id: userId,
-    agent_name: "auto_shop",
-    log_level: "info",
-    message: `Generated email alias for shopping: ${emailAlias}`,
-    metadata: { emailAlias, orderId, productQuery },
-  });
-
-  return emailAlias;
+  quantity?: number;
+  shippingAddress?: ShippingAddress;
+  paymentCards?: PaymentCard[];
+  site?: string;
 }
 
 serve(async (req) => {
@@ -94,109 +67,33 @@ serve(async (req) => {
     if (authError || !user) throw new Error("Unauthorized");
 
     const payload: AutoShopPayload = await req.json();
-    const { orderId, productQuery, maxPrice, quantity, shippingAddress, paymentCards } = payload;
+    const action = payload.action || "start_order";
 
-    console.log(`[AutoShop] Starting search for: "${productQuery}"`);
-    console.log(`[AutoShop] Max price: $${maxPrice || "no limit"}, Quantity: ${quantity}`);
+    console.log(`[AutoShop] Action: ${action} for user: ${user.id}`);
 
-    // Generate email alias for account creation
-    const emailAlias = await generateEmailAlias(supabase, user.id, orderId, productQuery);
-    console.log(`[AutoShop] Email for account creation: ${emailAlias}`);
-
-    // Update order status to searching
-    await supabase
-      .from("auto_shop_orders")
-      .update({ status: "searching" })
-      .eq("id", orderId);
-
-    // Log the start
-    await supabase.from("agent_logs").insert({
-      user_id: user.id,
-      agent_name: "auto_shop",
-      log_level: "info",
-      message: `Starting product search: "${productQuery}"`,
-      metadata: { orderId, productQuery, maxPrice, quantity },
-    });
-
-    // Build the agent instruction with email alias
-    const agentInstruction = buildShoppingAgentInstruction(
-      productQuery,
-      maxPrice,
-      quantity,
-      shippingAddress,
-      paymentCards,
-      emailAlias,
-      supabaseUrl
-    );
-
-    console.log(`[AutoShop] Sending task to Browser Use...`);
-
-    // Call Browser Use Cloud API
-    const browserUseResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
-      method: "POST",
-      headers: {
-        "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        task: agentInstruction,
-        startUrl: "https://www.google.com/shopping",
-        llm: "browser-use-llm",
-        maxSteps: 100,
-        highlightElements: true,
-      }),
-    });
-
-    if (!browserUseResponse.ok) {
-      const errorData = await browserUseResponse.text();
-      console.error("[AutoShop] Browser Use API error:", errorData);
-      
-      await supabase
-        .from("auto_shop_orders")
-        .update({ 
-          status: "failed",
-          error_message: `Browser Use API error: ${browserUseResponse.status}` 
-        })
-        .eq("id", orderId);
-
-      throw new Error(`Shopping agent error: ${browserUseResponse.status}`);
+    // Handle different actions
+    switch (action) {
+      case "get_status": {
+        return await handleGetStatus(supabase, user.id);
+      }
+      case "create_profile": {
+        return await handleCreateProfile(supabase, user.id, BROWSER_USE_API_KEY);
+      }
+      case "start_login": {
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BROWSER_USE_API_KEY);
+      }
+      case "confirm_login": {
+        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail");
+      }
+      case "start_order": {
+        return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, supabaseUrl);
+      }
+      default:
+        throw new Error(`Unknown action: ${action}`);
     }
-
-    const agentResult = await browserUseResponse.json();
-    const taskId = agentResult.id || agentResult.task_id;
-    console.log("[AutoShop] Task submitted:", taskId);
-
-    // Update order with task ID
-    await supabase
-      .from("auto_shop_orders")
-      .update({ 
-        browser_use_task_id: taskId,
-        status: "searching",
-      })
-      .eq("id", orderId);
-
-    // Log success
-    await supabase.from("agent_logs").insert({
-      user_id: user.id,
-      agent_name: "auto_shop",
-      log_level: "info",
-      message: `Browser Use task submitted: ${taskId}`,
-      metadata: { orderId, taskId },
-    });
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: "Shopping agent is searching for deals",
-        orderId,
-        taskId,
-        status: "searching",
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
   } catch (error: unknown) {
     console.error("[AutoShop] Error:", error);
-    const message = error instanceof Error ? error.message : "Failed to start shopping agent";
+    const message = error instanceof Error ? error.message : "Failed to process request";
     return new Response(
       JSON.stringify({ success: false, error: message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -204,13 +101,351 @@ serve(async (req) => {
   }
 });
 
+// deno-lint-ignore no-explicit-any
+async function handleGetStatus(supabase: any, userId: string) {
+  // Get browser profile
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+
+  // Get order tracking
+  const { data: tracking } = await supabase
+    .from("order_tracking")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      profile: profile ? {
+        hasProfile: !!profile.browser_use_profile_id,
+        sitesLoggedIn: profile.shop_sites_logged_in || [],
+        lastLoginAt: profile.last_login_at,
+        status: profile.status,
+      } : null,
+      tracking: tracking || [],
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+// deno-lint-ignore no-explicit-any
+async function handleCreateProfile(
+  supabase: any,
+  userId: string,
+  apiKey: string
+) {
+  // Check if profile exists
+  const { data: existing } = await supabase
+    .from("browser_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+
+  if (existing?.browser_use_profile_id) {
+    return new Response(
+      JSON.stringify({ success: true, message: "Profile already exists" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Create Browser Use profile
+  const profileRes = await fetch("https://api.browser-use.com/api/v2/profiles", {
+    method: "POST",
+    headers: {
+      "X-Browser-Use-API-Key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: `shop-${userId.substring(0, 8)}`,
+    }),
+  });
+
+  if (!profileRes.ok) {
+    const error = await profileRes.text();
+    throw new Error(`Failed to create profile: ${error}`);
+  }
+
+  const profileData = await profileRes.json();
+  const profileId = profileData.id || profileData.profile_id;
+
+  // Upsert the profile record
+  await supabase.from("browser_profiles").upsert({
+    user_id: userId,
+    browser_use_profile_id: profileId,
+    status: "ready",
+    shop_sites_logged_in: [],
+  }, { onConflict: "user_id" });
+
+  console.log(`[AutoShop] Created profile: ${profileId}`);
+
+  return new Response(
+    JSON.stringify({ success: true, profileId }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+// deno-lint-ignore no-explicit-any
+async function handleStartLogin(
+  supabase: any,
+  userId: string,
+  site: string,
+  apiKey: string
+) {
+  // Get profile
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+
+  if (!profile?.browser_use_profile_id) {
+    throw new Error("Create a browser profile first");
+  }
+
+  const siteUrls: Record<string, string> = {
+    gmail: "https://mail.google.com",
+    amazon: "https://www.amazon.com/ap/signin",
+    ebay: "https://signin.ebay.com",
+    walmart: "https://www.walmart.com/account/login",
+  };
+
+  const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
+
+  // Start browser session with human control
+  const taskRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
+    method: "POST",
+    headers: {
+      "X-Browser-Use-API-Key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      task: `Navigate to ${loginUrl} and wait for the user to log in manually. Do not interact with the page - just wait.`,
+      startUrl: loginUrl,
+      profileId: profile.browser_use_profile_id,
+      allowHumanControl: true,
+      maxSteps: 5,
+    }),
+  });
+
+  if (!taskRes.ok) {
+    const error = await taskRes.text();
+    throw new Error(`Failed to start login: ${error}`);
+  }
+
+  const taskData = await taskRes.json();
+  const taskId = taskData.id || taskData.task_id;
+  const sessionId = taskData.session_id || taskId;
+  const liveViewUrl = taskData.live_view_url || `https://browser-use.com/live/${sessionId}`;
+
+  // Update pending login
+  await supabase
+    .from("browser_profiles")
+    .update({
+      shop_pending_login_site: site,
+      shop_pending_task_id: taskId,
+      shop_pending_session_id: sessionId,
+    })
+    .eq("user_id", userId);
+
+  console.log(`[AutoShop] Login started for ${site}: ${taskId}`);
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      taskId,
+      sessionId,
+      liveViewUrl,
+      site,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+// deno-lint-ignore no-explicit-any
+async function handleConfirmLogin(
+  supabase: any,
+  userId: string,
+  site: string
+) {
+  // Get profile
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+
+  if (!profile) throw new Error("Profile not found");
+
+  // Add site to logged in list
+  const currentSites: string[] = Array.isArray(profile.shop_sites_logged_in) 
+    ? profile.shop_sites_logged_in 
+    : [];
+  if (!currentSites.includes(site)) {
+    currentSites.push(site);
+  }
+
+  await supabase
+    .from("browser_profiles")
+    .update({
+      shop_sites_logged_in: currentSites,
+      shop_pending_login_site: null,
+      shop_pending_task_id: null,
+      shop_pending_session_id: null,
+      last_login_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId);
+
+  console.log(`[AutoShop] Login confirmed for ${site}`);
+
+  return new Response(
+    JSON.stringify({ success: true, site }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+// deno-lint-ignore no-explicit-any
+async function handleStartOrder(
+  supabase: any,
+  user: { id: string; email?: string },
+  payload: AutoShopPayload,
+  apiKey: string,
+  supabaseUrl: string
+) {
+  const { orderId, productQuery, maxPrice, quantity, shippingAddress, paymentCards } = payload;
+
+  if (!orderId || !productQuery || !shippingAddress || !paymentCards?.length) {
+    throw new Error("Missing required order data");
+  }
+
+  // Get browser profile
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("*")
+    .eq("user_id", user.id)
+    .single();
+
+  const profileId = profile?.browser_use_profile_id;
+  const sitesLoggedIn: string[] = Array.isArray(profile?.shop_sites_logged_in) 
+    ? profile.shop_sites_logged_in 
+    : [];
+  const userEmail = user.email || "";
+
+  console.log(`[AutoShop] Starting order: "${productQuery}"`);
+  console.log(`[AutoShop] Using profile: ${profileId || "none"}, Email: ${userEmail}`);
+  console.log(`[AutoShop] Sites logged in: ${sitesLoggedIn.join(", ") || "none"}`);
+
+  // Update order status
+  await supabase
+    .from("auto_shop_orders")
+    .update({ status: "searching" })
+    .eq("id", orderId);
+
+  // Log the start
+  await supabase.from("agent_logs").insert({
+    user_id: user.id,
+    agent_name: "auto_shop",
+    log_level: "info",
+    message: `Starting product search: "${productQuery}"`,
+    metadata: { orderId, productQuery, maxPrice, quantity, profileId, userEmail },
+  });
+
+  // Build the agent instruction
+  const agentInstruction = buildShoppingAgentInstruction(
+    productQuery,
+    maxPrice,
+    quantity || 1,
+    shippingAddress,
+    paymentCards,
+    userEmail,
+    sitesLoggedIn,
+    supabaseUrl
+  );
+
+  // Call Browser Use Cloud API
+  const taskPayload: Record<string, unknown> = {
+    task: agentInstruction,
+    startUrl: "https://www.google.com/shopping",
+    llm: "browser-use-llm",
+    maxSteps: 100,
+    highlightElements: true,
+  };
+
+  // Use profile if available
+  if (profileId) {
+    taskPayload.profileId = profileId;
+  }
+
+  const browserUseResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
+    method: "POST",
+    headers: {
+      "X-Browser-Use-API-Key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(taskPayload),
+  });
+
+  if (!browserUseResponse.ok) {
+    const errorData = await browserUseResponse.text();
+    console.error("[AutoShop] Browser Use API error:", errorData);
+    
+    await supabase
+      .from("auto_shop_orders")
+      .update({ 
+        status: "failed",
+        error_message: `Browser Use API error: ${browserUseResponse.status}` 
+      })
+      .eq("id", orderId);
+
+    throw new Error(`Shopping agent error: ${browserUseResponse.status}`);
+  }
+
+  const agentResult = await browserUseResponse.json();
+  const taskId = agentResult.id || agentResult.task_id;
+  console.log("[AutoShop] Task submitted:", taskId);
+
+  // Update order with task ID
+  await supabase
+    .from("auto_shop_orders")
+    .update({ 
+      browser_use_task_id: taskId,
+      status: "searching",
+    })
+    .eq("id", orderId);
+
+  // Log success
+  await supabase.from("agent_logs").insert({
+    user_id: user.id,
+    agent_name: "auto_shop",
+    log_level: "info",
+    message: `Browser Use task submitted: ${taskId}`,
+    metadata: { orderId, taskId, profileId },
+  });
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      message: "Shopping agent is searching for deals",
+      orderId,
+      taskId,
+      status: "searching",
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
 function buildShoppingAgentInstruction(
   productQuery: string,
   maxPrice: number | undefined,
   quantity: number,
   shipping: ShippingAddress,
   cards: PaymentCard[],
-  emailAlias: string,
+  userEmail: string,
+  sitesLoggedIn: string[],
   supabaseUrl: string
 ): string {
   const priceConstraint = maxPrice 
@@ -226,42 +461,53 @@ CARD ${index + 1}:
 - Billing: ${card.billingAddress || ""}, ${card.billingCity || ""}, ${card.billingState || ""} ${card.billingZip || ""}, ${card.billingCountry || "US"}
 `).join("\n");
 
-  // Generate a random strong password for account creation
-  const generatedPassword = `Shop${Date.now().toString(36)}!${Math.random().toString(36).substring(2, 8)}`;
+  const loggedInSites = sitesLoggedIn.length > 0
+    ? `\nYou are already logged into: ${sitesLoggedIn.join(", ")}. USE THESE ACCOUNTS when possible.`
+    : "";
+
+  const emailInstructions = userEmail
+    ? `
+=== USER EMAIL ACCESS ===
+The user's email is: ${userEmail}
+${sitesLoggedIn.includes("gmail") ? "You have access to their Gmail inbox." : ""}
+
+WHEN YOU NEED TO:
+1. Create an account on a shopping site - USE THIS EMAIL: ${userEmail}
+2. Retrieve a verification code - Check Gmail inbox for recent emails
+3. Click verification links - Open Gmail and click the link in the email
+4. Monitor order confirmations - The system will track emails automatically
+
+If a site requires email verification:
+1. After submitting the form, go to Gmail (mail.google.com)
+2. Look for the most recent email from the site
+3. Click the verification link OR copy the code
+4. Return to the site and complete verification
+
+=== END EMAIL ACCESS ===
+`
+    : "";
 
   return `AUTONOMOUS SHOPPING AGENT - FIND AND PURCHASE PRODUCT
 
 YOUR MISSION: Find the best deal for the requested product and complete the purchase autonomously.
-
+${loggedInSites}
+${emailInstructions}
 PRODUCT TO FIND:
 - Search query: "${productQuery}"
 - Quantity needed: ${quantity}${priceConstraint}
-
-=== ACCOUNT CREATION CREDENTIALS ===
-When you need to create an account on ANY shopping site, use THESE credentials:
-- EMAIL: ${emailAlias}
-- PASSWORD: ${generatedPassword}
-- Name: ${shipping.full_name}
-
-IMPORTANT: This email is set up to receive verification codes. If a site requires email verification:
-1. Wait 10-15 seconds after submitting
-2. Call this endpoint to get the verification code:
-   GET ${supabaseUrl}/functions/v1/get-verification-code?email=${encodeURIComponent(emailAlias)}
-3. Enter the code and continue
-
-=== END ACCOUNT CREDENTIALS ===
 
 STEP 1 - SEARCH FOR DEALS:
 1. Start at Google Shopping and search for "${productQuery}"
 2. Look at multiple results - compare prices across different sites
 3. Check these sites for deals:
-   - Amazon
-   - eBay
-   - Walmart
+   - Amazon ${sitesLoggedIn.includes("amazon") ? "(LOGGED IN)" : ""}
+   - eBay ${sitesLoggedIn.includes("ebay") ? "(LOGGED IN)" : ""}
+   - Walmart ${sitesLoggedIn.includes("walmart") ? "(LOGGED IN)" : ""}
    - Target
    - Best Buy
    - Any other reputable e-commerce site
 4. Find the BEST DEAL (lowest price with good seller rating)
+5. PRIORITIZE sites you're already logged into
 
 STEP 2 - VERIFY THE DEAL:
 1. Click through to the product page
@@ -276,8 +522,11 @@ STEP 3 - ADD TO CART AND CHECKOUT:
 1. Select quantity: ${quantity}
 2. Add to cart
 3. Proceed to checkout
-4. PREFER GUEST CHECKOUT if available
-5. If account required, CREATE ACCOUNT using the credentials above (EMAIL: ${emailAlias})
+4. If already logged in, use existing account
+5. If account required and not logged in:
+   - Try guest checkout first
+   - If must create account, use email: ${userEmail}
+   - Check Gmail for verification codes if needed
 
 STEP 4 - ENTER SHIPPING INFORMATION:
 Full Name: ${shipping.full_name}
@@ -310,7 +559,7 @@ ERROR HANDLING:
 - If shipping not available: Try different site
 - If CAPTCHA: Solve it
 - If price changed: Only proceed if still under max price
-- If email verification needed: Use the get-verification-code endpoint above
+- If email verification needed: Go to Gmail, get the code/link, complete verification
 
 NEVER STOP. NEVER ASK FOR HELP. COMPLETE THE PURCHASE.
 

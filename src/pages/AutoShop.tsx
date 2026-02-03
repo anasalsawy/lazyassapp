@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { useAutoShop } from "@/hooks/useAutoShop";
+import { useShopProfile } from "@/hooks/useShopProfile";
 import { useAuth } from "@/hooks/useAuth";
 import { Navigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,34 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CreditCard, MapPin, ShoppingCart, Plus, Trash2, Loader2, Package, CheckCircle, XCircle, Search, Image, Link as LinkIcon, X, Briefcase } from "lucide-react";
+import { 
+  CreditCard, 
+  MapPin, 
+  ShoppingCart, 
+  Plus, 
+  Trash2, 
+  Loader2, 
+  Package, 
+  CheckCircle, 
+  XCircle, 
+  Search, 
+  Image, 
+  Link as LinkIcon, 
+  X, 
+  Briefcase,
+  Mail,
+  ExternalLink,
+  Zap,
+  Truck,
+  Settings
+} from "lucide-react";
+
+const SHOP_SITES = [
+  { key: "gmail", name: "Gmail", icon: Mail, color: "bg-red-500", description: "Access inbox for codes & shipping updates" },
+  { key: "amazon", name: "Amazon", icon: ShoppingCart, color: "bg-orange-500", description: "Shop with saved account" },
+  { key: "ebay", name: "eBay", icon: Package, color: "bg-blue-500", description: "Bid and buy items" },
+  { key: "walmart", name: "Walmart", icon: ShoppingCart, color: "bg-blue-600", description: "Everyday low prices" },
+];
 
 const AutoShop = () => {
   const { user, loading: authLoading } = useAuth();
@@ -29,6 +57,16 @@ const AutoShop = () => {
     cancelOrder,
     getMaskedCardNumber,
   } = useAutoShop();
+  
+  const {
+    profile: shopProfile,
+    tracking,
+    isLoading: profileLoading,
+    loginSession,
+    createProfile,
+    startLogin,
+    confirmLogin,
+  } = useShopProfile();
 
   const [activeTab, setActiveTab] = useState("shop");
   const [showAddCard, setShowAddCard] = useState(false);
@@ -235,10 +273,14 @@ const AutoShop = () => {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6">
+          <TabsList className="mb-6 flex-wrap">
             <TabsTrigger value="shop" className="flex items-center gap-2">
               <ShoppingCart className="h-4 w-4" />
               Shop
+            </TabsTrigger>
+            <TabsTrigger value="accounts" className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Accounts
             </TabsTrigger>
             {isOwner && (
               <TabsTrigger value="cards" className="flex items-center gap-2">
@@ -253,6 +295,10 @@ const AutoShop = () => {
             <TabsTrigger value="orders" className="flex items-center gap-2">
               <Package className="h-4 w-4" />
               Orders ({orders.length})
+            </TabsTrigger>
+            <TabsTrigger value="tracking" className="flex items-center gap-2">
+              <Truck className="h-4 w-4" />
+              Tracking ({tracking.length})
             </TabsTrigger>
           </TabsList>
 
@@ -441,6 +487,147 @@ const AutoShop = () => {
                     <div>
                       <h4 className="font-medium">Order Complete</h4>
                       <p className="text-sm text-muted-foreground">Saves confirmation to order history</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          {/* Accounts Tab - Connect Email & Shopping Sites */}
+          <TabsContent value="accounts">
+            <div className="space-y-6">
+              {/* Setup Profile Section */}
+              {!shopProfile?.hasProfile && (
+                <Card className="border-dashed border-2">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Settings className="h-5 w-5" />
+                      Setup Browser Profile
+                    </CardTitle>
+                    <CardDescription>
+                      Create a browser profile to save your login sessions. You'll only need to log in once per site.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button onClick={createProfile} disabled={profileLoading}>
+                      {profileLoading ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Zap className="h-4 w-4 mr-2" />
+                      )}
+                      Create Browser Profile
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Connected Sites */}
+              {shopProfile?.hasProfile && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Connected Accounts</CardTitle>
+                    <CardDescription>
+                      Log in to your accounts once. The shopping agent will use these saved sessions for faster checkout and inbox access.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {SHOP_SITES.map((site) => {
+                        const isConnected = shopProfile.sitesLoggedIn?.includes(site.key);
+                        const Icon = site.icon;
+                        const isPending = loginSession?.site === site.key;
+
+                        return (
+                          <div
+                            key={site.key}
+                            className={`p-4 rounded-lg border-2 transition-all ${
+                              isConnected 
+                                ? "border-green-500 bg-green-500/10" 
+                                : "border-muted hover:border-primary"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 mb-2">
+                              <div className={`p-2 rounded-full ${site.color}`}>
+                                <Icon className="h-4 w-4 text-white" />
+                              </div>
+                              <span className="font-medium">{site.name}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mb-3">{site.description}</p>
+
+                            {isConnected ? (
+                              <Badge variant="outline" className="text-green-600 border-green-600">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Connected
+                              </Badge>
+                            ) : isPending ? (
+                              <div className="space-y-2">
+                                {loginSession?.liveViewUrl && (
+                                  <Button size="sm" variant="outline" asChild className="w-full">
+                                    <a href={loginSession.liveViewUrl} target="_blank" rel="noopener noreferrer">
+                                      <ExternalLink className="h-3 w-3 mr-1" />
+                                      Open Browser
+                                    </a>
+                                  </Button>
+                                )}
+                                <Button 
+                                  size="sm" 
+                                  className="w-full"
+                                  onClick={() => confirmLogin(site.key)}
+                                >
+                                  <CheckCircle className="h-3 w-3 mr-1" />
+                                  I'm Logged In
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button 
+                                size="sm" 
+                                variant="outline" 
+                                className="w-full"
+                                onClick={() => startLogin(site.key)}
+                              >
+                                Connect
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Benefits Info */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Why Connect Your Accounts?</CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-4 md:grid-cols-3">
+                  <div className="flex gap-3">
+                    <Mail className="h-8 w-8 text-red-500 flex-shrink-0" />
+                    <div>
+                      <h4 className="font-medium">Gmail Access</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Agent can read verification codes, click confirmation links, and monitor shipping updates
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <ShoppingCart className="h-8 w-8 text-orange-500 flex-shrink-0" />
+                    <div>
+                      <h4 className="font-medium">Faster Checkout</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Use saved addresses and payment methods on your accounts
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <Truck className="h-8 w-8 text-blue-500 flex-shrink-0" />
+                    <div>
+                      <h4 className="font-medium">Order Tracking</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Automatically extract tracking info from confirmation emails
+                      </p>
                     </div>
                   </div>
                 </CardContent>
@@ -663,6 +850,84 @@ const AutoShop = () => {
                           {(order.status === "pending" || order.status === "searching") && (
                             <Button variant="outline" size="sm" onClick={() => cancelOrder(order.id)}>
                               Cancel
+                            </Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* Tracking Tab */}
+          <TabsContent value="tracking">
+            <div className="space-y-4">
+              <h2 className="text-xl font-semibold">Shipment Tracking</h2>
+              <p className="text-muted-foreground">
+                Tracking information extracted from your order confirmation emails
+              </p>
+
+              {tracking.length === 0 ? (
+                <Card className="py-12">
+                  <CardContent className="text-center">
+                    <Truck className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                    <h3 className="font-medium text-lg">No shipments tracked yet</h3>
+                    <p className="text-muted-foreground">
+                      {shopProfile?.sitesLoggedIn?.includes("gmail") 
+                        ? "Complete an order and we'll extract tracking info automatically"
+                        : "Connect your Gmail to enable automatic tracking extraction"
+                      }
+                    </p>
+                    {!shopProfile?.sitesLoggedIn?.includes("gmail") && (
+                      <Button 
+                        className="mt-4" 
+                        variant="outline"
+                        onClick={() => setActiveTab("accounts")}
+                      >
+                        <Mail className="h-4 w-4 mr-2" />
+                        Connect Gmail
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid gap-4">
+                  {tracking.map((item) => (
+                    <Card key={item.id}>
+                      <CardContent className="pt-6">
+                        <div className="flex justify-between items-start">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <Truck className="h-4 w-4 text-primary" />
+                              <span className="font-medium">{item.carrier || "Unknown Carrier"}</span>
+                              <Badge variant={
+                                item.status === "delivered" ? "default" :
+                                item.status === "in_transit" ? "secondary" :
+                                "outline"
+                              }>
+                                {item.status.replace("_", " ").toUpperCase()}
+                              </Badge>
+                            </div>
+                            {item.tracking_number && (
+                              <p className="text-sm font-mono">{item.tracking_number}</p>
+                            )}
+                            {item.last_update && (
+                              <p className="text-sm text-muted-foreground">{item.last_update}</p>
+                            )}
+                            {item.estimated_delivery && (
+                              <p className="text-sm text-green-600">
+                                Est. delivery: {new Date(item.estimated_delivery).toLocaleDateString()}
+                              </p>
+                            )}
+                          </div>
+                          {item.tracking_url && (
+                            <Button size="sm" variant="outline" asChild>
+                              <a href={item.tracking_url} target="_blank" rel="noopener noreferrer">
+                                <ExternalLink className="h-4 w-4 mr-1" />
+                                Track
+                              </a>
                             </Button>
                           )}
                         </div>
