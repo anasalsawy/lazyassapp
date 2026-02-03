@@ -430,6 +430,48 @@ export type Database = {
         }
         Relationships: []
       }
+      browser_profiles: {
+        Row: {
+          browser_use_profile_id: string | null
+          created_at: string
+          id: string
+          last_login_at: string | null
+          pending_login_site: string | null
+          pending_session_id: string | null
+          pending_task_id: string | null
+          sites_logged_in: string[] | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          browser_use_profile_id?: string | null
+          created_at?: string
+          id?: string
+          last_login_at?: string | null
+          pending_login_site?: string | null
+          pending_session_id?: string | null
+          pending_task_id?: string | null
+          sites_logged_in?: string[] | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          browser_use_profile_id?: string | null
+          created_at?: string
+          id?: string
+          last_login_at?: string | null
+          pending_login_site?: string | null
+          pending_session_id?: string | null
+          pending_task_id?: string | null
+          sites_logged_in?: string[] | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       communications: {
         Row: {
           application_id: string | null

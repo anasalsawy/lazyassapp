@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { useAutoShop } from "@/hooks/useAutoShop";
 import { useAuth } from "@/hooks/useAuth";
-import { Navigate } from "react-router-dom";
+import { Navigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CreditCard, MapPin, ShoppingCart, Plus, Trash2, Loader2, Package, CheckCircle, XCircle, Search, Image, Link, X } from "lucide-react";
+import { CreditCard, MapPin, ShoppingCart, Plus, Trash2, Loader2, Package, CheckCircle, XCircle, Search, Image, Link as LinkIcon, X, Briefcase } from "lucide-react";
 
 const AutoShop = () => {
   const { user, loading: authLoading } = useAuth();
@@ -219,11 +219,19 @@ const AutoShop = () => {
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-6xl mx-auto p-6">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-foreground">🛒 Auto-Shop</h1>
-          <p className="text-muted-foreground mt-1">
-            AI-powered shopping agent that finds the best deals and places orders for you
-          </p>
+        <div className="mb-8 flex justify-between items-start">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">🛒 Auto-Shop</h1>
+            <p className="text-muted-foreground mt-1">
+              AI-powered shopping agent that finds the best deals and places orders for you
+            </p>
+          </div>
+          <Button variant="outline" asChild>
+            <Link to="/jobs">
+              <Briefcase className="h-4 w-4 mr-2" />
+              Job Agent
+            </Link>
+          </Button>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -314,7 +322,7 @@ const AutoShop = () => {
                   {/* Reference URL */}
                   <div className="space-y-2">
                     <Label className="flex items-center gap-2">
-                      <Link className="h-4 w-4" />
+                      <LinkIcon className="h-4 w-4" />
                       Reference URL (optional)
                     </Label>
                     <Input

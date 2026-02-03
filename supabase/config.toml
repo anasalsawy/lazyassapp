@@ -12,9 +12,6 @@ verify_jwt = false
 [functions.calculate-analytics]
 verify_jwt = false
 
-[functions.agent-orchestrator]
-verify_jwt = false
-
 [functions.scrape-jobs]
 verify_jwt = false
 
@@ -27,16 +24,7 @@ verify_jwt = false
 [functions.redesign-resume]
 verify_jwt = false
 
-[functions.web-agent-apply]
-verify_jwt = false
-
-[functions.web-agent-status]
-verify_jwt = false
-
 [functions.email-agent]
-verify_jwt = false
-
-[functions.test-automation]
 verify_jwt = false
 
 [functions.email-oauth]
@@ -51,8 +39,8 @@ verify_jwt = false
 [functions.generate-email-alias]
 verify_jwt = false
 
-[functions.auto-pipeline]
+[functions.auto-shop]
 verify_jwt = false
 
-[functions.auto-shop]
+[functions.job-agent]
 verify_jwt = false
