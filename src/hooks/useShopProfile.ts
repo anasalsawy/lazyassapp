@@ -173,17 +173,25 @@ export function useShopProfile() {
     return setProxy("", "", "");
   }, [setProxy]);
 
-  // Test proxy connection
+  // Test proxy connection - runs two tests: baseline (no proxy) and with proxy
   const testProxy = useCallback(async () => {
-    toast.info("Testing proxy connection... This may take 30-60 seconds.");
+    toast.info("Testing proxy... Running 2 parallel IP checks (may take 60-90 seconds)");
     const data = await callAgent("test_proxy");
     if (data?.success && data.tested) {
-      // Show the detected IP so user can verify it's their proxy's IP
-      const ip = data.detectedIp || "unknown";
-      toast.success(`Proxy test complete! Detected IP: ${ip}`, {
-        duration: 10000, // Show longer so user can verify
-        description: "Verify this matches your proxy provider's expected IP range.",
-      });
+      const baselineIp = data.baselineIp || "unknown";
+      const proxyIp = data.proxyIp || "unknown";
+      
+      if (data.proxyWorking) {
+        toast.success(`✅ Proxy is working!`, {
+          duration: 15000,
+          description: `Without proxy: ${baselineIp}\nWith proxy: ${proxyIp}`,
+        });
+      } else {
+        toast.error(`❌ Proxy NOT working`, {
+          duration: 15000,
+          description: `Both IPs same: ${baselineIp} = ${proxyIp}\nCheck your proxy credentials.`,
+        });
+      }
     } else if (data?.error) {
       toast.error(data.error);
     }

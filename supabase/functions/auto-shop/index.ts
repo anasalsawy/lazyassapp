@@ -826,6 +826,76 @@ async function handleSetProxy(
 }
 
 // Test proxy by making a simple request through Browser Use API
+// Helper to fetch IP from Browser Use
+async function fetchIpWithBrowserUse(
+  apiKey: string,
+  proxyConfig?: Record<string, string>
+): Promise<{ ip: string | null; status: string; error?: string }> {
+  const taskPayload: Record<string, unknown> = {
+    task: "Navigate to https://httpbin.org/ip and extract the IP address shown on the page. Return ONLY the IP address, nothing else.",
+    startUrl: "https://httpbin.org/ip",
+    llm: "browser-use-llm",
+    maxSteps: 5,
+  };
+
+  if (proxyConfig) {
+    taskPayload.proxy = proxyConfig;
+  }
+
+  try {
+    const response = await fetch("https://api.browser-use.com/api/v2/tasks", {
+      method: "POST",
+      headers: {
+        "X-Browser-Use-API-Key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(taskPayload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { ip: null, status: "failed", error: errorText };
+    }
+
+    const result = await response.json();
+    const taskId = result.id || result.task_id;
+
+    // Poll for result (max 60 seconds)
+    let attempts = 0;
+    const maxAttempts = 30;
+    let taskStatus = "pending";
+    let taskOutput = "";
+
+    while (attempts < maxAttempts && taskStatus !== "finished" && taskStatus !== "failed" && taskStatus !== "stopped") {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const statusRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${taskId}`, {
+        headers: { "X-Browser-Use-API-Key": apiKey },
+      });
+      
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        taskStatus = statusData.status;
+        taskOutput = statusData.output || "";
+      }
+      
+      attempts++;
+    }
+
+    const ipMatch = taskOutput.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+    return { 
+      ip: ipMatch ? ipMatch[1] : null, 
+      status: taskStatus 
+    };
+  } catch (error) {
+    return { 
+      ip: null, 
+      status: "error", 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    };
+  }
+}
+
 // deno-lint-ignore no-explicit-any
 async function handleTestProxy(
   supabase: any,
@@ -843,7 +913,7 @@ async function handleTestProxy(
     return new Response(
       JSON.stringify({ 
         success: false, 
-        error: "No proxy configured",
+        error: "No proxy configured. Add a proxy server first.",
         tested: false
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -869,98 +939,31 @@ async function handleTestProxy(
     proxyConfig.password = decrypted;
   }
 
-  // Create a quick test task that just checks the IP
-  const taskPayload = {
-    task: "Navigate to https://httpbin.org/ip and extract the IP address shown on the page. Just return the IP address.",
-    startUrl: "https://httpbin.org/ip",
-    llm: "browser-use-llm",
-    maxSteps: 5,
-    proxy: proxyConfig,
-  };
+  // Run BOTH tests in parallel - one without proxy (baseline) and one with proxy
+  console.log("[AutoShop] Running parallel IP tests (baseline + proxy)...");
+  
+  const [baselineResult, proxyResult] = await Promise.all([
+    fetchIpWithBrowserUse(apiKey), // No proxy - Browser Use's default IP
+    fetchIpWithBrowserUse(apiKey, proxyConfig), // With proxy
+  ]);
 
-  try {
-    const response = await fetch("https://api.browser-use.com/api/v2/tasks", {
-      method: "POST",
-      headers: {
-        "X-Browser-Use-API-Key": apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(taskPayload),
-    });
+  console.log(`[AutoShop] Baseline IP: ${baselineResult.ip}, Proxy IP: ${proxyResult.ip}`);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("[AutoShop] Proxy test failed:", errorText);
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: `Browser Use API error: ${response.status}`,
-          tested: true,
-          proxyWorking: false
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+  const proxyWorking = 
+    proxyResult.status === "finished" && 
+    proxyResult.ip !== null &&
+    proxyResult.ip !== baselineResult.ip;
 
-    const result = await response.json();
-    const taskId = result.id || result.task_id;
-    console.log(`[AutoShop] Proxy test task created: ${taskId}`);
-
-    // Poll for result (max 30 seconds)
-    let attempts = 0;
-    const maxAttempts = 15;
-    let taskStatus = "pending";
-    let taskOutput = "";
-
-    while (attempts < maxAttempts && taskStatus !== "finished" && taskStatus !== "failed" && taskStatus !== "stopped") {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const statusRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${taskId}`, {
-        headers: { "X-Browser-Use-API-Key": apiKey },
-      });
-      
-      if (statusRes.ok) {
-        const statusData = await statusRes.json();
-        taskStatus = statusData.status;
-        taskOutput = statusData.output || "";
-        console.log(`[AutoShop] Proxy test status: ${taskStatus}`);
-      }
-      
-      attempts++;
-    }
-
-    // Check if proxy worked
-    const proxyWorking = taskStatus === "finished" && taskOutput.length > 0;
-    
-    // Try to extract the IP from the output
-    const ipMatch = taskOutput.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
-    const detectedIp = ipMatch ? ipMatch[1] : null;
-
-    console.log(`[AutoShop] Proxy test complete. Working: ${proxyWorking}, IP: ${detectedIp}`);
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        tested: true,
-        proxyWorking,
-        detectedIp,
-        taskStatus,
-        message: proxyWorking 
-          ? `Proxy is working! Detected IP: ${detectedIp || "unknown"}` 
-          : `Proxy test ${taskStatus}. Check your proxy credentials.`
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (error) {
-    console.error("[AutoShop] Proxy test error:", error);
-    return new Response(
-      JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : "Unknown error",
-        tested: true,
-        proxyWorking: false
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  }
+  return new Response(
+    JSON.stringify({ 
+      success: true, 
+      tested: true,
+      proxyWorking,
+      baselineIp: baselineResult.ip,
+      proxyIp: proxyResult.ip,
+      baselineStatus: baselineResult.status,
+      proxyStatus: proxyResult.status,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
 }
