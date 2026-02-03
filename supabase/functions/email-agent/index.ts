@@ -47,7 +47,11 @@ async function sendMailgunEmail(to: string, subject: string, html: string): Prom
   }
 
   const formData = new FormData();
-  formData.append("from", `LazyAss <noreply@${MAILGUN_DOMAIN}>`);
+  // Use postmaster@ for sandbox domains, noreply@ for production
+  const fromAddress = MAILGUN_DOMAIN.includes('sandbox') 
+    ? `LazyAss <postmaster@${MAILGUN_DOMAIN}>`
+    : `LazyAss <noreply@${MAILGUN_DOMAIN}>`;
+  formData.append("from", fromAddress);
   formData.append("to", to);
   formData.append("subject", subject);
   formData.append("html", html);
