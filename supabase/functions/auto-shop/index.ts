@@ -39,6 +39,35 @@ interface AutoShopPayload {
   paymentCards: PaymentCard[];
 }
 
+// Generate email alias for account creation
+async function generateEmailAlias(supabase: any, userId: string, orderId: string, productQuery: string): Promise<string> {
+  const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
+  
+  if (!MAILGUN_DOMAIN) {
+    console.warn("[AutoShop] MAILGUN_DOMAIN not set, using fallback");
+    return `shop-${orderId.substring(0, 8)}@example.com`;
+  }
+
+  // Generate unique alias
+  const shortId = orderId.substring(0, 8);
+  const timestamp = Date.now().toString(36);
+  const productSlug = productQuery.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 10) || 'order';
+  const emailAlias = `shop-${productSlug}-${shortId}-${timestamp}@${MAILGUN_DOMAIN}`;
+
+  console.log(`[AutoShop] Generated email alias: ${emailAlias}`);
+
+  // Log the alias creation
+  await supabase.from("agent_logs").insert({
+    user_id: userId,
+    agent_name: "auto_shop",
+    log_level: "info",
+    message: `Generated email alias for shopping: ${emailAlias}`,
+    metadata: { emailAlias, orderId, productQuery },
+  });
+
+  return emailAlias;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
