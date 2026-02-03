@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { useAutoShop, PaymentCard, ShippingAddress } from "@/hooks/useAutoShop";
+import { useAutoShop } from "@/hooks/useAutoShop";
 import { useAuth } from "@/hooks/useAuth";
 import { Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -32,29 +33,16 @@ const AutoShop = () => {
   const [showAddCard, setShowAddCard] = useState(false);
   const [showAddAddress, setShowAddAddress] = useState(false);
   
-  // Form states
+  // Simplified form states - single text blocks
   const [cardForm, setCardForm] = useState({
     card_name: "",
-    card_number: "",
-    expiry: "",
-    cvv: "",
-    cardholder_name: "",
-    billing_address: "",
-    billing_city: "",
-    billing_state: "",
-    billing_zip: "",
+    card_details: "", // "4111111111111111, 12/25, 123, John Doe"
+    billing_details: "", // "123 Main St, City, ST 12345, USA"
   });
 
   const [addressForm, setAddressForm] = useState({
     address_name: "",
-    full_name: "",
-    address_line1: "",
-    address_line2: "",
-    city: "",
-    state: "",
-    zip_code: "",
-    country: "US",
-    phone: "",
+    shipping_details: "", // "John Doe, 123 Main St Apt 4, City, ST 12345, +1-555-1234"
   });
 
   const [orderForm, setOrderForm] = useState({
@@ -78,52 +66,86 @@ const AutoShop = () => {
     return <Navigate to="/auth" replace />;
   }
 
+  // Parse card details from single block
+  const parseCardDetails = (details: string) => {
+    const parts = details.split(",").map(s => s.trim());
+    return {
+      card_number: parts[0] || "",
+      expiry: parts[1] || "",
+      cvv: parts[2] || "",
+      cardholder_name: parts[3] || "",
+    };
+  };
+
+  // Parse billing from single block
+  const parseBillingDetails = (details: string) => {
+    // Simple format: "Address, City, State ZIP, Country"
+    return details.trim();
+  };
+
+  // Parse shipping from single block
+  const parseShippingDetails = (details: string) => {
+    const parts = details.split(",").map(s => s.trim());
+    // Format: "Full Name, Address Line 1, Address Line 2 (opt), City, State ZIP, Phone (opt)"
+    return {
+      full_name: parts[0] || "",
+      address_line1: parts[1] || "",
+      address_line2: parts.length > 5 ? parts[2] : "",
+      city: parts.length > 5 ? parts[3] : parts[2] || "",
+      state_zip: parts.length > 5 ? parts[4] : parts[3] || "",
+      phone: parts[parts.length - 1]?.match(/\+?\d/) ? parts[parts.length - 1] : "",
+    };
+  };
+
   const handleAddCard = async () => {
-    if (!cardForm.card_name || !cardForm.card_number || !cardForm.expiry || !cardForm.cvv) {
-      return;
-    }
+    if (!cardForm.card_name || !cardForm.card_details) return;
+    
     setSubmitting(true);
-    await addCard(cardForm);
-    setCardForm({
-      card_name: "",
-      card_number: "",
-      expiry: "",
-      cvv: "",
-      cardholder_name: "",
-      billing_address: "",
-      billing_city: "",
-      billing_state: "",
-      billing_zip: "",
+    const parsed = parseCardDetails(cardForm.card_details);
+    const billing = parseBillingDetails(cardForm.billing_details);
+    
+    await addCard({
+      card_name: cardForm.card_name,
+      card_number: parsed.card_number,
+      expiry: parsed.expiry,
+      cvv: parsed.cvv,
+      cardholder_name: parsed.cardholder_name,
+      billing_address: billing,
     });
+    
+    setCardForm({ card_name: "", card_details: "", billing_details: "" });
     setShowAddCard(false);
     setSubmitting(false);
   };
 
   const handleAddAddress = async () => {
-    if (!addressForm.address_name || !addressForm.full_name || !addressForm.address_line1 || !addressForm.city || !addressForm.state || !addressForm.zip_code) {
-      return;
-    }
+    if (!addressForm.address_name || !addressForm.shipping_details) return;
+    
     setSubmitting(true);
-    await addAddress(addressForm as Omit<ShippingAddress, "id" | "created_at">);
-    setAddressForm({
-      address_name: "",
-      full_name: "",
-      address_line1: "",
-      address_line2: "",
-      city: "",
-      state: "",
-      zip_code: "",
+    const parsed = parseShippingDetails(addressForm.shipping_details);
+    const stateZip = parsed.state_zip.split(" ");
+    
+    await addAddress({
+      address_name: addressForm.address_name,
+      full_name: parsed.full_name,
+      address_line1: parsed.address_line1,
+      address_line2: parsed.address_line2,
+      city: parsed.city,
+      state: stateZip[0] || "",
+      zip_code: stateZip[1] || "",
       country: "US",
-      phone: "",
+      phone: parsed.phone,
+      is_default: false,
     });
+    
+    setAddressForm({ address_name: "", shipping_details: "" });
     setShowAddAddress(false);
     setSubmitting(false);
   };
 
   const handleStartOrder = async () => {
-    if (!orderForm.product_query || !orderForm.shipping_address_id) {
-      return;
-    }
+    if (!orderForm.product_query || !orderForm.shipping_address_id) return;
+    
     setSubmitting(true);
     await startOrder({
       product_query: orderForm.product_query,
@@ -177,7 +199,7 @@ const AutoShop = () => {
             </TabsTrigger>
             <TabsTrigger value="cards" className="flex items-center gap-2">
               <CreditCard className="h-4 w-4" />
-              Payment Cards ({cards.length})
+              Cards ({cards.length})
             </TabsTrigger>
             <TabsTrigger value="addresses" className="flex items-center gap-2">
               <MapPin className="h-4 w-4" />
@@ -202,19 +224,20 @@ const AutoShop = () => {
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>What do you want to buy?</Label>
-                    <Input
-                      placeholder="e.g., iPhone 15 Pro 256GB, Sony WH-1000XM5 headphones..."
+                    <Textarea
+                      placeholder="e.g., iPhone 15 Pro 256GB black, Sony WH-1000XM5 headphones..."
                       value={orderForm.product_query}
                       onChange={(e) => setOrderForm({ ...orderForm, product_query: e.target.value })}
+                      rows={2}
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>Max Price (optional)</Label>
+                      <Label>Max Price ($)</Label>
                       <Input
                         type="number"
-                        placeholder="e.g., 500"
+                        placeholder="500"
                         value={orderForm.max_price}
                         onChange={(e) => setOrderForm({ ...orderForm, max_price: e.target.value })}
                       />
@@ -242,16 +265,11 @@ const AutoShop = () => {
                       <SelectContent>
                         {addresses.map((addr) => (
                           <SelectItem key={addr.id} value={addr.id}>
-                            {addr.address_name} - {addr.city}, {addr.state}
+                            {addr.address_name}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    {addresses.length === 0 && (
-                      <p className="text-sm text-muted-foreground">
-                        Add a shipping address first →
-                      </p>
-                    )}
                   </div>
 
                   <Button
@@ -275,7 +293,12 @@ const AutoShop = () => {
 
                   {cards.length === 0 && (
                     <p className="text-sm text-destructive text-center">
-                      ⚠️ Add at least one payment card to start shopping
+                      ⚠️ Add at least one payment card first
+                    </p>
+                  )}
+                  {addresses.length === 0 && (
+                    <p className="text-sm text-destructive text-center">
+                      ⚠️ Add a shipping address first
                     </p>
                   )}
                 </CardContent>
@@ -287,47 +310,31 @@ const AutoShop = () => {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
-                      1
-                    </div>
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">1</div>
                     <div>
                       <h4 className="font-medium">Search for Deals</h4>
-                      <p className="text-sm text-muted-foreground">
-                        AI searches Google Shopping, Amazon, eBay, Walmart, and more
-                      </p>
+                      <p className="text-sm text-muted-foreground">Searches Google, Amazon, eBay, Walmart & more</p>
                     </div>
                   </div>
                   <div className="flex gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
-                      2
-                    </div>
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">2</div>
                     <div>
-                      <h4 className="font-medium">Compare & Select</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Finds the best price within your budget
-                      </p>
+                      <h4 className="font-medium">Compare & Select Best Price</h4>
+                      <p className="text-sm text-muted-foreground">Finds lowest price within your budget</p>
                     </div>
                   </div>
                   <div className="flex gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
-                      3
-                    </div>
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">3</div>
                     <div>
                       <h4 className="font-medium">Auto-Checkout</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Fills shipping & payment, tries backup cards if needed
-                      </p>
+                      <p className="text-sm text-muted-foreground">Tries backup cards if one is declined</p>
                     </div>
                   </div>
                   <div className="flex gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
-                      4
-                    </div>
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">4</div>
                     <div>
                       <h4 className="font-medium">Order Complete</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Saves confirmation details in your order history
-                      </p>
+                      <p className="text-sm text-muted-foreground">Saves confirmation to order history</p>
                     </div>
                   </div>
                 </CardContent>
@@ -342,17 +349,12 @@ const AutoShop = () => {
                 <h2 className="text-xl font-semibold">Payment Cards</h2>
                 <Dialog open={showAddCard} onOpenChange={setShowAddCard}>
                   <DialogTrigger asChild>
-                    <Button>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add Card
-                    </Button>
+                    <Button><Plus className="mr-2 h-4 w-4" />Add Card</Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
                       <DialogTitle>Add Payment Card</DialogTitle>
-                      <DialogDescription>
-                        Card details are encrypted before storage
-                      </DialogDescription>
+                      <DialogDescription>Card details are encrypted</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4">
                       <div className="space-y-2">
@@ -364,67 +366,26 @@ const AutoShop = () => {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>Card Number</Label>
-                        <Input
-                          placeholder="1234 5678 9012 3456"
-                          value={cardForm.card_number}
-                          onChange={(e) => setCardForm({ ...cardForm, card_number: e.target.value })}
+                        <Label>Card Details</Label>
+                        <Textarea
+                          placeholder="Card Number, Expiry (MM/YY), CVV, Cardholder Name&#10;e.g., 4111111111111111, 12/25, 123, John Doe"
+                          value={cardForm.card_details}
+                          onChange={(e) => setCardForm({ ...cardForm, card_details: e.target.value })}
+                          rows={2}
                         />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>Expiry (MM/YY)</Label>
-                          <Input
-                            placeholder="12/25"
-                            value={cardForm.expiry}
-                            onChange={(e) => setCardForm({ ...cardForm, expiry: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>CVV</Label>
-                          <Input
-                            placeholder="123"
-                            type="password"
-                            value={cardForm.cvv}
-                            onChange={(e) => setCardForm({ ...cardForm, cvv: e.target.value })}
-                          />
-                        </div>
+                        <p className="text-xs text-muted-foreground">Format: Number, MM/YY, CVV, Name</p>
                       </div>
                       <div className="space-y-2">
-                        <Label>Cardholder Name</Label>
-                        <Input
-                          placeholder="John Doe"
-                          value={cardForm.cardholder_name}
-                          onChange={(e) => setCardForm({ ...cardForm, cardholder_name: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Billing Address (Optional)</Label>
-                        <Input
-                          placeholder="123 Main St"
-                          value={cardForm.billing_address}
-                          onChange={(e) => setCardForm({ ...cardForm, billing_address: e.target.value })}
-                        />
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <Input
-                          placeholder="City"
-                          value={cardForm.billing_city}
-                          onChange={(e) => setCardForm({ ...cardForm, billing_city: e.target.value })}
-                        />
-                        <Input
-                          placeholder="State"
-                          value={cardForm.billing_state}
-                          onChange={(e) => setCardForm({ ...cardForm, billing_state: e.target.value })}
-                        />
-                        <Input
-                          placeholder="ZIP"
-                          value={cardForm.billing_zip}
-                          onChange={(e) => setCardForm({ ...cardForm, billing_zip: e.target.value })}
+                        <Label>Billing Address (optional)</Label>
+                        <Textarea
+                          placeholder="123 Main St, City, ST 12345, USA"
+                          value={cardForm.billing_details}
+                          onChange={(e) => setCardForm({ ...cardForm, billing_details: e.target.value })}
+                          rows={2}
                         />
                       </div>
                       <Button onClick={handleAddCard} className="w-full" disabled={submitting}>
-                        {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         Save Card
                       </Button>
                     </div>
@@ -455,17 +416,10 @@ const AutoShop = () => {
                             <p className="text-lg font-mono">{getMaskedCardNumber(card.card_number_enc)}</p>
                             <p className="text-sm text-muted-foreground">{card.cardholder_name}</p>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteCard(card.id)}
-                          >
+                          <Button variant="ghost" size="icon" onClick={() => deleteCard(card.id)}>
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
                         </div>
-                        {card.is_default && (
-                          <Badge variant="secondary" className="mt-2">Default</Badge>
-                        )}
                       </CardContent>
                     </Card>
                   ))}
@@ -481,10 +435,7 @@ const AutoShop = () => {
                 <h2 className="text-xl font-semibold">Shipping Addresses</h2>
                 <Dialog open={showAddAddress} onOpenChange={setShowAddAddress}>
                   <DialogTrigger asChild>
-                    <Button>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add Address
-                    </Button>
+                    <Button><Plus className="mr-2 h-4 w-4" />Add Address</Button>
                   </DialogTrigger>
                   <DialogContent>
                     <DialogHeader>
@@ -500,65 +451,17 @@ const AutoShop = () => {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>Full Name</Label>
-                        <Input
-                          placeholder="John Doe"
-                          value={addressForm.full_name}
-                          onChange={(e) => setAddressForm({ ...addressForm, full_name: e.target.value })}
+                        <Label>Shipping Details</Label>
+                        <Textarea
+                          placeholder="Full Name, Street Address, City, State ZIP, Phone&#10;e.g., John Doe, 123 Main St Apt 4, New York, NY 10001, +1-555-1234"
+                          value={addressForm.shipping_details}
+                          onChange={(e) => setAddressForm({ ...addressForm, shipping_details: e.target.value })}
+                          rows={3}
                         />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Address Line 1</Label>
-                        <Input
-                          placeholder="123 Main Street"
-                          value={addressForm.address_line1}
-                          onChange={(e) => setAddressForm({ ...addressForm, address_line1: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Address Line 2 (Optional)</Label>
-                        <Input
-                          placeholder="Apt 4B"
-                          value={addressForm.address_line2}
-                          onChange={(e) => setAddressForm({ ...addressForm, address_line2: e.target.value })}
-                        />
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="space-y-2">
-                          <Label>City</Label>
-                          <Input
-                            placeholder="City"
-                            value={addressForm.city}
-                            onChange={(e) => setAddressForm({ ...addressForm, city: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>State</Label>
-                          <Input
-                            placeholder="CA"
-                            value={addressForm.state}
-                            onChange={(e) => setAddressForm({ ...addressForm, state: e.target.value })}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>ZIP</Label>
-                          <Input
-                            placeholder="90210"
-                            value={addressForm.zip_code}
-                            onChange={(e) => setAddressForm({ ...addressForm, zip_code: e.target.value })}
-                          />
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Phone (Optional)</Label>
-                        <Input
-                          placeholder="+1 555-123-4567"
-                          value={addressForm.phone}
-                          onChange={(e) => setAddressForm({ ...addressForm, phone: e.target.value })}
-                        />
+                        <p className="text-xs text-muted-foreground">Format: Name, Address, City, State ZIP, Phone</p>
                       </div>
                       <Button onClick={handleAddAddress} className="w-full" disabled={submitting}>
-                        {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         Save Address
                       </Button>
                     </div>
@@ -587,25 +490,13 @@ const AutoShop = () => {
                           <div>
                             <h3 className="font-semibold">{addr.address_name}</h3>
                             <p className="text-sm">{addr.full_name}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {addr.address_line1}
-                              {addr.address_line2 && `, ${addr.address_line2}`}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              {addr.city}, {addr.state} {addr.zip_code}
-                            </p>
+                            <p className="text-sm text-muted-foreground">{addr.address_line1}</p>
+                            <p className="text-sm text-muted-foreground">{addr.city}, {addr.state} {addr.zip_code}</p>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteAddress(addr.id)}
-                          >
+                          <Button variant="ghost" size="icon" onClick={() => deleteAddress(addr.id)}>
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
                         </div>
-                        {addr.is_default && (
-                          <Badge variant="secondary" className="mt-2">Default</Badge>
-                        )}
                       </CardContent>
                     </Card>
                   ))}
@@ -643,8 +534,7 @@ const AutoShop = () => {
                               {getStatusBadge(order.status)}
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              Qty: {order.quantity}
-                              {order.max_price && ` • Max: $${order.max_price}`}
+                              Qty: {order.quantity}{order.max_price && ` • Max: $${order.max_price}`}
                             </p>
                             {order.selected_deal_site && (
                               <p className="text-sm">
@@ -653,25 +543,17 @@ const AutoShop = () => {
                               </p>
                             )}
                             {order.order_confirmation && (
-                              <p className="text-sm text-green-600">
-                                ✓ Confirmation: {order.order_confirmation}
-                              </p>
+                              <p className="text-sm text-green-600">✓ Confirmation: {order.order_confirmation}</p>
                             )}
                             {order.error_message && (
-                              <p className="text-sm text-destructive">
-                                ✗ {order.error_message}
-                              </p>
+                              <p className="text-sm text-destructive">✗ {order.error_message}</p>
                             )}
                             <p className="text-xs text-muted-foreground">
                               {new Date(order.created_at).toLocaleString()}
                             </p>
                           </div>
                           {(order.status === "pending" || order.status === "searching") && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => cancelOrder(order.id)}
-                            >
+                            <Button variant="outline" size="sm" onClick={() => cancelOrder(order.id)}>
                               Cancel
                             </Button>
                           )}
