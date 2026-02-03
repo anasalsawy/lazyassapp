@@ -57,9 +57,13 @@ async function sendMailgunEmail(to: string, subject: string, html: string): Prom
     ? "https://api.eu.mailgun.net" 
     : "https://api.mailgun.net";
   
+  const apiUrl = `${apiBase}/v3/${MAILGUN_DOMAIN}/messages`;
   console.log(`Sending email via Mailgun (${MAILGUN_REGION.toUpperCase()} region) to ${to}`);
+  console.log(`Mailgun API URL: ${apiUrl}`);
+  console.log(`Mailgun Domain: ${MAILGUN_DOMAIN}`);
+  console.log(`API Key prefix: ${MAILGUN_API_KEY?.substring(0, 10)}...`);
 
-  const response = await fetch(`${apiBase}/v3/${MAILGUN_DOMAIN}/messages`, {
+  const response = await fetch(apiUrl, {
     method: "POST",
     headers: {
       Authorization: `Basic ${btoa(`api:${MAILGUN_API_KEY}`)}`,
