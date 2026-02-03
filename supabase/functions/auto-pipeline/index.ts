@@ -61,6 +61,50 @@ serve(async (req) => {
 
     await log("🚀 Pipeline triggered", { trigger, resumeId });
 
+    // Get Mailgun config
+    const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
+
+    // STEP 0: Create dedicated Mailgun email for this user
+    await log("📧 Step 0: Creating your application email address...");
+    let applicationEmail = "";
+    
+    if (MAILGUN_DOMAIN) {
+      // Generate a unique user-specific email
+      const userShortId = user.id.substring(0, 8);
+      const timestamp = Date.now().toString(36);
+      applicationEmail = `apply-${userShortId}-${timestamp}@${MAILGUN_DOMAIN}`;
+      
+      // Store/update user's email account
+      const { data: existingAccount } = await supabase
+        .from("email_accounts")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("email_provider", "mailgun")
+        .maybeSingle();
+
+      if (!existingAccount) {
+        await supabase.from("email_accounts").insert({
+          user_id: user.id,
+          email_address: applicationEmail,
+          email_provider: "mailgun",
+          is_active: true,
+        });
+      } else {
+        applicationEmail = existingAccount.email_address; // Keep existing alias
+      }
+      
+      await log("✅ Application email ready", { applicationEmail });
+    } else {
+      // Fallback to user's profile email
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("email")
+        .eq("user_id", user.id)
+        .single();
+      applicationEmail = profile?.email || user.email || "";
+      await log("⚠️ No Mailgun configured, using profile email", { email: applicationEmail });
+    }
+
     // STEP 1: Analyze Resume
     await log("📄 Step 1: Analyzing resume...");
     let resumeAnalysis;
@@ -346,6 +390,21 @@ My Experience: ${resume?.experience_years} years`,
 
         // Check if Browser Use API is available for real submissions
         if (BROWSER_USE_API_KEY && job.url) {
+          // Use the Mailgun email alias for this application!
+          const jobEmailAlias = MAILGUN_DOMAIN 
+            ? `apply-${job.company?.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 10) || 'job'}-${job.id.substring(0, 8)}-${Date.now().toString(36)}@${MAILGUN_DOMAIN}`
+            : applicationEmail;
+
+          // Store job-specific email alias for tracking
+          if (MAILGUN_DOMAIN) {
+            await supabase.from("email_accounts").upsert({
+              user_id: user.id,
+              email_address: jobEmailAlias,
+              email_provider: "mailgun",
+              is_active: true,
+            }, { onConflict: "user_id,email_address" });
+          }
+
           // Submit via Browser Use for real applications
           const browserUseResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
             method: "POST",
@@ -356,17 +415,27 @@ My Experience: ${resume?.experience_years} years`,
             body: JSON.stringify({
               task: `Apply for the job "${job.title}" at "${job.company}".
               
+IMPORTANT: Use this email address for the application: ${jobEmailAlias}
+
 Fill out the application with:
-- Name: ${profile?.first_name || "User"} ${profile?.last_name || ""}
-- Email: ${profile?.email || user.email}
-- Phone: ${profile?.phone || ""}
+- Full Name: ${profile?.first_name || "User"} ${profile?.last_name || ""}
+- Email: ${jobEmailAlias}
+- Phone: ${profile?.phone || "Not provided"}
+- LinkedIn: ${profile?.linkedin_url || ""}
 
 Resume Summary: ${resume?.parsed_content?.text?.substring(0, 1500) || ""}
 
 Cover Letter:
 ${coverLetter || "I am interested in this position."}
 
-If login required, STOP. If CAPTCHA, solve it. Submit the application.`,
+INSTRUCTIONS:
+1. Navigate to the apply form
+2. Fill ALL required fields using the info above
+3. If resume upload is available, paste the resume summary
+4. Submit the application
+5. If CAPTCHA appears, solve it
+6. If login/account creation required, create account with email: ${jobEmailAlias}
+7. Report SUCCESS or any errors`,
               startUrl: job.url,
               llm: "browser-use-llm",
               maxSteps: 50,
@@ -376,30 +445,42 @@ If login required, STOP. If CAPTCHA, solve it. Submit the application.`,
           if (browserUseResponse.ok) {
             const taskData = await browserUseResponse.json();
             
-            // Create application record
+            // Create application record with email alias tracking
             const { data: app } = await supabase.from("applications").insert({
               user_id: user.id,
               job_id: job.id,
               resume_id: resume?.id,
               status: "applied",
               cover_letter: coverLetter,
-              notes: `Auto-applied via Browser Use. Task: ${taskData.id || taskData.task_id}. Match: ${job.match_score}%`,
+              notes: `Auto-applied via Browser Use. Task: ${taskData.id || taskData.task_id}. Email: ${jobEmailAlias}. Match: ${job.match_score}%`,
             }).select().single();
 
             if (app) {
               applications.push(app);
               successCount++;
+              
+              // Log successful application with email tracking
+              await log("📨 Application submitted", { 
+                jobTitle: job.title, 
+                company: job.company, 
+                emailUsed: jobEmailAlias,
+                taskId: taskData.id || taskData.task_id 
+              });
             }
+          } else {
+            const errorText = await browserUseResponse.text();
+            await log("❌ Browser Use failed", { status: browserUseResponse.status, error: errorText });
+            failCount++;
           }
         } else {
-          // No Browser Use - create quick apply record
+          // No Browser Use - create quick apply record with tracking email
           const { data: app } = await supabase.from("applications").insert({
             user_id: user.id,
             job_id: job.id,
             resume_id: resume?.id,
             status: "applied",
             cover_letter: coverLetter,
-            notes: `Quick apply. Match: ${job.match_score}%. URL: ${job.url}`,
+            notes: `Quick apply. Email: ${applicationEmail}. Match: ${job.match_score}%. URL: ${job.url}`,
           }).select().single();
 
           if (app) {
@@ -430,6 +511,7 @@ If login required, STOP. If CAPTCHA, solve it. Submit the application.`,
       summary_json: {
         resumeAnalyzed: !!resumeAnalysis,
         atsScore: resumeAnalysis?.atsScore,
+        applicationEmail: applicationEmail,
         jobsScraped: scrapedJobs.length,
         jobsMatched: matchedJobs.length,
         jobsSaved: savedJobs.length,
@@ -441,12 +523,13 @@ If login required, STOP. If CAPTCHA, solve it. Submit the application.`,
     return new Response(
       JSON.stringify({
         success: true,
-        message: `Pipeline complete! Analyzed resume, found ${savedJobs.length} matching jobs, submitted ${successCount} applications.`,
+        message: `Pipeline complete! Created email ${applicationEmail}, found ${savedJobs.length} matching jobs, submitted ${successCount} applications.`,
         summary: {
           atsScore: resumeAnalysis?.atsScore,
           skills: resumeAnalysis?.skills?.length,
           jobsFound: savedJobs.length,
           applications: successCount,
+          applicationEmail: applicationEmail,
         },
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
