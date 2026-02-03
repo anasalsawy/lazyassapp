@@ -11,24 +11,30 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const statusColors: Record<string, string> = {
-  applied: "bg-primary/10 text-primary border-primary/20",
+  pending: "bg-muted text-muted-foreground border-muted animate-pulse",
+  in_progress: "bg-primary/10 text-primary border-primary/20 animate-pulse",
+  applied: "bg-success/10 text-success border-success/20",
   under_review: "bg-warning/10 text-warning border-warning/20",
-  interview: "bg-success/10 text-success border-success/20",
-  offer: "bg-accent/10 text-accent border-accent/20",
+  interview: "bg-accent/10 text-accent border-accent/20",
+  offer: "bg-primary/10 text-primary border-primary/20",
   rejected: "bg-destructive/10 text-destructive border-destructive/20",
   withdrawn: "bg-muted text-muted-foreground border-muted",
+  failed: "bg-destructive/10 text-destructive border-destructive/20",
 };
 
 const statusLabels: Record<string, string> = {
+  pending: "Pending",
+  in_progress: "AI Submitting...",
   applied: "Applied",
   under_review: "Under Review",
   interview: "Interview",
   offer: "Offer",
   rejected: "Rejected",
   withdrawn: "Withdrawn",
+  failed: "Failed",
 };
 
-const statuses = ["applied", "under_review", "interview", "offer", "rejected", "withdrawn"];
+const statuses = ["pending", "in_progress", "applied", "under_review", "interview", "offer", "rejected", "withdrawn", "failed"];
 
 const Applications = () => {
   const { applications, loading, stats, updateStatus, deleteApplication } = useApplications();
