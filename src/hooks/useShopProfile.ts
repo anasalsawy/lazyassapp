@@ -173,6 +173,22 @@ export function useShopProfile() {
     return setProxy("", "", "");
   }, [setProxy]);
 
+  // Test proxy connection
+  const testProxy = useCallback(async () => {
+    toast.info("Testing proxy connection...");
+    const data = await callAgent("test_proxy");
+    if (data?.success && data.tested) {
+      if (data.proxyWorking) {
+        toast.success(data.message || "Proxy is working!");
+      } else {
+        toast.error(data.message || "Proxy test failed");
+      }
+    } else if (data?.error) {
+      toast.error(data.error);
+    }
+    return data;
+  }, [callAgent]);
+
   return {
     profile,
     tracking,
@@ -185,6 +201,7 @@ export function useShopProfile() {
     syncOrders,
     setProxy,
     clearProxy,
+    testProxy,
     refetch: fetchStatus,
   };
 }

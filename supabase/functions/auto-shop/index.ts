@@ -100,6 +100,9 @@ serve(async (req) => {
       case "set_proxy": {
         return await handleSetProxy(supabase, user.id, payload);
       }
+      case "test_proxy": {
+        return await handleTestProxy(supabase, user.id, BROWSER_USE_API_KEY);
+      }
       default:
         throw new Error(`Unknown action: ${action}`);
     }
@@ -820,4 +823,144 @@ async function handleSetProxy(
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
+}
+
+// Test proxy by making a simple request through Browser Use API
+// deno-lint-ignore no-explicit-any
+async function handleTestProxy(
+  supabase: any,
+  userId: string,
+  apiKey: string
+) {
+  // Get profile with proxy settings
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+
+  if (!profile?.proxy_server) {
+    return new Response(
+      JSON.stringify({ 
+        success: false, 
+        error: "No proxy configured",
+        tested: false
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  console.log(`[AutoShop] Testing proxy: ${profile.proxy_server}`);
+
+  // Build proxy config
+  const proxyConfig: Record<string, string> = {
+    server: profile.proxy_server,
+  };
+  if (profile.proxy_username) {
+    proxyConfig.username = profile.proxy_username;
+  }
+  if (profile.proxy_password_enc) {
+    const key = "SHOP_PROXY_KEY_2024";
+    const decoded = atob(profile.proxy_password_enc);
+    let decrypted = "";
+    for (let i = 0; i < decoded.length; i++) {
+      decrypted += String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    }
+    proxyConfig.password = decrypted;
+  }
+
+  // Create a quick test task that just checks the IP
+  const taskPayload = {
+    task: "Navigate to https://httpbin.org/ip and extract the IP address shown on the page. Just return the IP address.",
+    startUrl: "https://httpbin.org/ip",
+    llm: "browser-use-llm",
+    maxSteps: 5,
+    proxy: proxyConfig,
+  };
+
+  try {
+    const response = await fetch("https://api.browser-use.com/api/v2/tasks", {
+      method: "POST",
+      headers: {
+        "X-Browser-Use-API-Key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(taskPayload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[AutoShop] Proxy test failed:", errorText);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: `Browser Use API error: ${response.status}`,
+          tested: true,
+          proxyWorking: false
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const result = await response.json();
+    const taskId = result.id || result.task_id;
+    console.log(`[AutoShop] Proxy test task created: ${taskId}`);
+
+    // Poll for result (max 30 seconds)
+    let attempts = 0;
+    const maxAttempts = 15;
+    let taskStatus = "pending";
+    let taskOutput = "";
+
+    while (attempts < maxAttempts && taskStatus !== "finished" && taskStatus !== "failed" && taskStatus !== "stopped") {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const statusRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${taskId}`, {
+        headers: { "X-Browser-Use-API-Key": apiKey },
+      });
+      
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        taskStatus = statusData.status;
+        taskOutput = statusData.output || "";
+        console.log(`[AutoShop] Proxy test status: ${taskStatus}`);
+      }
+      
+      attempts++;
+    }
+
+    // Check if proxy worked
+    const proxyWorking = taskStatus === "finished" && taskOutput.length > 0;
+    
+    // Try to extract the IP from the output
+    const ipMatch = taskOutput.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+    const detectedIp = ipMatch ? ipMatch[1] : null;
+
+    console.log(`[AutoShop] Proxy test complete. Working: ${proxyWorking}, IP: ${detectedIp}`);
+
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        tested: true,
+        proxyWorking,
+        detectedIp,
+        taskStatus,
+        message: proxyWorking 
+          ? `Proxy is working! Detected IP: ${detectedIp || "unknown"}` 
+          : `Proxy test ${taskStatus}. Check your proxy credentials.`
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  } catch (error) {
+    console.error("[AutoShop] Proxy test error:", error);
+    return new Response(
+      JSON.stringify({ 
+        success: false, 
+        error: error instanceof Error ? error.message : "Unknown error",
+        tested: true,
+        proxyWorking: false
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 }

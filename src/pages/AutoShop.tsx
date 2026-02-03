@@ -73,6 +73,7 @@ const AutoShop = () => {
     syncOrders,
     setProxy,
     clearProxy,
+    testProxy,
   } = useShopProfile();
 
   const [activeTab, setActiveTab] = useState("shop");
@@ -625,20 +626,35 @@ const AutoShop = () => {
                 </CardHeader>
                 <CardContent>
                   {shopProfile?.proxyServer ? (
-                    <div className="flex items-center justify-between p-4 border rounded-lg bg-green-500/10 border-green-500">
-                      <div className="flex items-center gap-3">
-                        <Shield className="h-5 w-5 text-green-500" />
-                        <div>
-                          <p className="font-medium">Proxy Active</p>
-                          <p className="text-sm text-muted-foreground">{shopProfile.proxyServer}</p>
-                          {shopProfile.proxyUsername && (
-                            <p className="text-xs text-muted-foreground">Auth: {shopProfile.proxyUsername}</p>
-                          )}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-4 border rounded-lg bg-green-500/10 border-green-500">
+                        <div className="flex items-center gap-3">
+                          <Shield className="h-5 w-5 text-green-500" />
+                          <div>
+                            <p className="font-medium">Proxy Active</p>
+                            <p className="text-sm text-muted-foreground">{shopProfile.proxyServer}</p>
+                            {shopProfile.proxyUsername && (
+                              <p className="text-xs text-muted-foreground">Auth: {shopProfile.proxyUsername}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => testProxy()}
+                          >
+                            <Zap className="h-4 w-4 mr-1" />
+                            Test
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => clearProxy()}>
+                            Clear
+                          </Button>
                         </div>
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => clearProxy()}>
-                        Clear Proxy
-                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Click "Test" to verify your proxy is working. This will check your IP through the proxy.
+                      </p>
                     </div>
                   ) : (
                     <Dialog open={showProxyDialog} onOpenChange={setShowProxyDialog}>
