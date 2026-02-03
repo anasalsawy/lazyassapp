@@ -256,14 +256,70 @@ const AutoShop = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {/* Product Name */}
                   <div className="space-y-2">
-                    <Label>What do you want to buy?</Label>
+                    <Label>Product Name</Label>
                     <Textarea
                       placeholder="e.g., iPhone 15 Pro 256GB black, Sony WH-1000XM5 headphones..."
                       value={orderForm.product_query}
                       onChange={(e) => setOrderForm({ ...orderForm, product_query: e.target.value })}
                       rows={2}
                     />
+                  </div>
+
+                  {/* Product Image */}
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2">
+                      <Image className="h-4 w-4" />
+                      Product Image (optional)
+                    </Label>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                    />
+                    {orderForm.product_image_preview ? (
+                      <div className="relative inline-block">
+                        <img
+                          src={orderForm.product_image_preview}
+                          alt="Product"
+                          className="h-24 w-24 object-cover rounded-md border"
+                        />
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          className="absolute -top-2 -right-2 h-6 w-6"
+                          onClick={clearImage}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full"
+                      >
+                        <Image className="mr-2 h-4 w-4" />
+                        Upload Image
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Reference URL */}
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2">
+                      <Link className="h-4 w-4" />
+                      Reference URL (optional)
+                    </Label>
+                    <Input
+                      placeholder="https://example.com/product-page (for reference only)"
+                      value={orderForm.reference_url}
+                      onChange={(e) => setOrderForm({ ...orderForm, reference_url: e.target.value })}
+                    />
+                    <p className="text-xs text-muted-foreground">Used to identify the product, not to limit shopping sites</p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
