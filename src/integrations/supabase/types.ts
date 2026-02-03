@@ -613,9 +613,11 @@ export type Database = {
           id: string
           is_read: boolean | null
           is_replied: boolean | null
+          is_verification_email: boolean | null
           received_at: string
           subject: string
           user_id: string
+          verification_code: string | null
         }
         Insert: {
           ai_sentiment?: string | null
@@ -631,9 +633,11 @@ export type Database = {
           id?: string
           is_read?: boolean | null
           is_replied?: boolean | null
+          is_verification_email?: boolean | null
           received_at: string
           subject: string
           user_id: string
+          verification_code?: string | null
         }
         Update: {
           ai_sentiment?: string | null
@@ -649,9 +653,11 @@ export type Database = {
           id?: string
           is_read?: boolean | null
           is_replied?: boolean | null
+          is_verification_email?: boolean | null
           received_at?: string
           subject?: string
           user_id?: string
+          verification_code?: string | null
         }
         Relationships: [
           {

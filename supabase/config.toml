@@ -44,3 +44,12 @@ verify_jwt = false
 
 [functions.email-processor]
 verify_jwt = false
+
+[functions.get-verification-code]
+verify_jwt = false
+
+[functions.generate-email-alias]
+verify_jwt = false
+
+[functions.auto-pipeline]
+verify_jwt = false

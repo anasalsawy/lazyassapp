@@ -201,6 +201,15 @@ ${bodyText.substring(0, 2000)}`,
       }
     }
 
+    // Extract verification code if present
+    const verificationCode = extractVerificationCode(subject + " " + bodyText);
+    const isVerificationEmail = !!verificationCode || 
+      /verify|verification|confirm|code|otp|one-time|security code/i.test(subject + " " + bodyText.substring(0, 500));
+
+    if (verificationCode) {
+      console.log(`[EmailWebhook] Extracted verification code: ${verificationCode}`);
+    }
+
     // Store the email
     const { data: savedEmail, error } = await supabase
       .from("incoming_emails")
@@ -218,6 +227,8 @@ ${bodyText.substring(0, 2000)}`,
         ai_sentiment: aiSentiment,
         ai_suggested_reply: aiSuggestedReply,
         received_at: receivedAt,
+        verification_code: verificationCode,
+        is_verification_email: isVerificationEmail,
       })
       .select()
       .single();
@@ -296,4 +307,34 @@ function extractEmail(str: string): string {
 function extractName(str: string): string {
   const match = str.match(/^([^<]+)</);
   return match ? match[1].trim() : str.split("@")[0];
+}
+
+// Extract verification/OTP codes from email content
+function extractVerificationCode(text: string): string | null {
+  // Common patterns for verification codes
+  const patterns = [
+    // 6-8 digit codes (most common)
+    /\b(?:code|pin|otp|verification)[:\s]+(\d{6,8})\b/i,
+    /\b(\d{6,8})\s*(?:is your|verification|code|pin)\b/i,
+    // Codes in special formatting
+    /verification code[:\s]*\**([A-Z0-9]{6,8})\**/i,
+    /security code[:\s]*\**([A-Z0-9]{6,8})\**/i,
+    // Standalone 6-8 character alphanumeric codes on their own line
+    /^\s*([A-Z0-9]{6,8})\s*$/im,
+    // Codes with dashes
+    /\b([A-Z0-9]{3,4}-[A-Z0-9]{3,4})\b/i,
+    // Generic "Your code is: XXXXXX"
+    /your (?:code|pin|otp) (?:is[:\s]*)?([A-Z0-9]{4,8})/i,
+    // "Enter XXXXXX to verify"
+    /enter[:\s]+([A-Z0-9]{4,8})\s+to/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      return match[1].toUpperCase();
+    }
+  }
+
+  return null;
 }
