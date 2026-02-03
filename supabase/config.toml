@@ -53,3 +53,6 @@ verify_jwt = false
 
 [functions.auto-pipeline]
 verify_jwt = false
+
+[functions.auto-shop]
+verify_jwt = false

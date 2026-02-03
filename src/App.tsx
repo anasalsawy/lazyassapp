@@ -44,6 +44,15 @@ const App = () => (
             <Route path="messages" element={<Messages />} />
             <Route path="settings" element={<Settings />} />
           </Route>
+          {/* Standalone Auto-Shop page (not in dashboard) */}
+          <Route
+            path="/auto-shop"
+            element={
+              <ProtectedRoute>
+                <AutoShop />
+              </ProtectedRoute>
+            }
+          />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
