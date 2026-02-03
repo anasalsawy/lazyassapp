@@ -39,6 +39,9 @@ interface AutoShopPayload {
   shippingAddress?: ShippingAddress;
   paymentCards?: PaymentCard[];
   site?: string;
+  proxyServer?: string;
+  proxyUsername?: string;
+  proxyPassword?: string;
 }
 
 serve(async (req) => {
@@ -94,6 +97,9 @@ serve(async (req) => {
       case "sync_all_orders": {
         return await handleSyncAllOrders(supabase, user.id, BROWSER_USE_API_KEY);
       }
+      case "set_proxy": {
+        return await handleSetProxy(supabase, user.id, payload);
+      }
       default:
         throw new Error(`Unknown action: ${action}`);
     }
@@ -132,6 +138,8 @@ async function handleGetStatus(supabase: any, userId: string) {
         sitesLoggedIn: profile.shop_sites_logged_in || [],
         lastLoginAt: profile.last_login_at,
         status: profile.status,
+        proxyServer: profile.proxy_server || null,
+        proxyUsername: profile.proxy_username || null,
       } : null,
       tracking: tracking || [],
     }),
@@ -384,6 +392,28 @@ async function handleStartOrder(
   // Use profile if available
   if (profileId) {
     taskPayload.profileId = profileId;
+  }
+
+  // Add custom proxy if configured
+  if (profile?.proxy_server) {
+    const proxyConfig: Record<string, string> = {
+      server: profile.proxy_server,
+    };
+    if (profile.proxy_username) {
+      proxyConfig.username = profile.proxy_username;
+    }
+    if (profile.proxy_password_enc) {
+      // Decrypt password (simple XOR for now, same as cards)
+      const key = "SHOP_PROXY_KEY_2024";
+      const decoded = atob(profile.proxy_password_enc);
+      let decrypted = "";
+      for (let i = 0; i < decoded.length; i++) {
+        decrypted += String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+      }
+      proxyConfig.password = decrypted;
+    }
+    taskPayload.proxy = proxyConfig;
+    console.log(`[AutoShop] Using custom proxy: ${profile.proxy_server}`);
   }
 
   const browserUseResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
@@ -745,4 +775,49 @@ async function updateOrderFromTask(supabase: any, order: any, taskData: any) {
   }
 
   return order;
+}
+
+// deno-lint-ignore no-explicit-any
+async function handleSetProxy(
+  supabase: any,
+  userId: string,
+  payload: AutoShopPayload
+) {
+  const { proxyServer, proxyUsername, proxyPassword } = payload;
+
+  // Encrypt password if provided
+  let passwordEnc: string | null = null;
+  if (proxyPassword) {
+    const key = "SHOP_PROXY_KEY_2024";
+    let encrypted = "";
+    for (let i = 0; i < proxyPassword.length; i++) {
+      encrypted += String.fromCharCode(proxyPassword.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    }
+    passwordEnc = btoa(encrypted);
+  }
+
+  // Upsert the profile with proxy settings
+  const { error } = await supabase
+    .from("browser_profiles")
+    .upsert({
+      user_id: userId,
+      proxy_server: proxyServer || null,
+      proxy_username: proxyUsername || null,
+      proxy_password_enc: passwordEnc,
+      status: proxyServer ? "ready" : "not_setup",
+    }, { onConflict: "user_id" });
+
+  if (error) {
+    throw new Error(`Failed to save proxy: ${error.message}`);
+  }
+
+  console.log(`[AutoShop] Proxy configured: ${proxyServer || "cleared"}`);
+
+  return new Response(
+    JSON.stringify({ 
+      success: true, 
+      message: proxyServer ? "Proxy configured" : "Proxy cleared" 
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
 }

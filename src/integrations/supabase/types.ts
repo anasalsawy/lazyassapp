@@ -439,6 +439,9 @@ export type Database = {
           pending_login_site: string | null
           pending_session_id: string | null
           pending_task_id: string | null
+          proxy_password_enc: string | null
+          proxy_server: string | null
+          proxy_username: string | null
           shop_pending_login_site: string | null
           shop_pending_session_id: string | null
           shop_pending_task_id: string | null
@@ -456,6 +459,9 @@ export type Database = {
           pending_login_site?: string | null
           pending_session_id?: string | null
           pending_task_id?: string | null
+          proxy_password_enc?: string | null
+          proxy_server?: string | null
+          proxy_username?: string | null
           shop_pending_login_site?: string | null
           shop_pending_session_id?: string | null
           shop_pending_task_id?: string | null
@@ -473,6 +479,9 @@ export type Database = {
           pending_login_site?: string | null
           pending_session_id?: string | null
           pending_task_id?: string | null
+          proxy_password_enc?: string | null
+          proxy_server?: string | null
+          proxy_username?: string | null
           shop_pending_login_site?: string | null
           shop_pending_session_id?: string | null
           shop_pending_task_id?: string | null

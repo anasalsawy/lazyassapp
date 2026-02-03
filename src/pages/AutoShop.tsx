@@ -31,7 +31,9 @@ import {
   ExternalLink,
   Zap,
   Truck,
-  Settings
+  Settings,
+  Globe,
+  Shield
 } from "lucide-react";
 
 const SHOP_SITES = [
@@ -69,6 +71,8 @@ const AutoShop = () => {
     startLogin,
     confirmLogin,
     syncOrders,
+    setProxy,
+    clearProxy,
   } = useShopProfile();
 
   const [activeTab, setActiveTab] = useState("shop");
@@ -96,6 +100,14 @@ const AutoShop = () => {
     quantity: "1",
     shipping_address_id: "",
   });
+
+  // Proxy form state
+  const [proxyForm, setProxyForm] = useState({
+    server: "",
+    username: "",
+    password: "",
+  });
+  const [showProxyDialog, setShowProxyDialog] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -599,6 +611,95 @@ const AutoShop = () => {
                   </CardContent>
                 </Card>
               )}
+
+              {/* Custom Proxy Configuration */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Globe className="h-5 w-5" />
+                    Custom Proxy (Optional)
+                  </CardTitle>
+                  <CardDescription>
+                    Use your own proxy to avoid blocks on shopping sites. Residential proxies work best.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {shopProfile?.proxyServer ? (
+                    <div className="flex items-center justify-between p-4 border rounded-lg bg-green-500/10 border-green-500">
+                      <div className="flex items-center gap-3">
+                        <Shield className="h-5 w-5 text-green-500" />
+                        <div>
+                          <p className="font-medium">Proxy Active</p>
+                          <p className="text-sm text-muted-foreground">{shopProfile.proxyServer}</p>
+                          {shopProfile.proxyUsername && (
+                            <p className="text-xs text-muted-foreground">Auth: {shopProfile.proxyUsername}</p>
+                          )}
+                        </div>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => clearProxy()}>
+                        Clear Proxy
+                      </Button>
+                    </div>
+                  ) : (
+                    <Dialog open={showProxyDialog} onOpenChange={setShowProxyDialog}>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" className="w-full">
+                          <Globe className="h-4 w-4 mr-2" />
+                          Configure Proxy
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Configure Custom Proxy</DialogTitle>
+                          <DialogDescription>
+                            Enter your proxy details. Residential proxies from providers like BrightData, Oxylabs, or Smartproxy work best.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label>Proxy Server URL</Label>
+                            <Input
+                              placeholder="http://proxy.example.com:8080"
+                              value={proxyForm.server}
+                              onChange={(e) => setProxyForm({ ...proxyForm, server: e.target.value })}
+                            />
+                            <p className="text-xs text-muted-foreground">Format: http://host:port or socks5://host:port</p>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Username (optional)</Label>
+                            <Input
+                              placeholder="proxy_user"
+                              value={proxyForm.username}
+                              onChange={(e) => setProxyForm({ ...proxyForm, username: e.target.value })}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Password (optional)</Label>
+                            <Input
+                              type="password"
+                              placeholder="proxy_password"
+                              value={proxyForm.password}
+                              onChange={(e) => setProxyForm({ ...proxyForm, password: e.target.value })}
+                            />
+                          </div>
+                          <Button 
+                            onClick={async () => {
+                              if (!proxyForm.server) return;
+                              await setProxy(proxyForm.server, proxyForm.username, proxyForm.password);
+                              setShowProxyDialog(false);
+                              setProxyForm({ server: "", username: "", password: "" });
+                            }} 
+                            className="w-full"
+                            disabled={!proxyForm.server}
+                          >
+                            Save Proxy
+                          </Button>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  )}
+                </CardContent>
+              </Card>
 
               {/* Benefits Info */}
               <Card>
