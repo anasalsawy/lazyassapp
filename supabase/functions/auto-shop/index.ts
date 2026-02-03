@@ -538,15 +538,8 @@ PRODUCT TO FIND:
 STEP 1 - SEARCH FOR DEALS:
 1. Start at Google Shopping and search for "${productQuery}"
 2. Look at multiple results - compare prices across different sites
-3. Check these sites for deals:
-   - Amazon ${sitesLoggedIn.includes("amazon") ? "(LOGGED IN)" : ""}
-   - eBay ${sitesLoggedIn.includes("ebay") ? "(LOGGED IN)" : ""}
-   - Walmart ${sitesLoggedIn.includes("walmart") ? "(LOGGED IN)" : ""}
-   - Target
-   - Best Buy
-   - Any other reputable e-commerce site
-4. Find the BEST DEAL (lowest price with good seller rating)
-5. PRIORITIZE sites you're already logged into
+3. Find the BEST DEAL (lowest price with good seller rating) from any reputable e-commerce site
+4. PRIORITIZE sites you're already logged into${sitesLoggedIn.length > 0 ? `: ${sitesLoggedIn.join(", ")}` : ""}
 
 STEP 2 - VERIFY THE DEAL:
 1. Click through to the product page
