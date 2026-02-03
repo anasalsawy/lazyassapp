@@ -12,6 +12,7 @@ import Applications from "./pages/Applications";
 import Messages from "./pages/Messages";
 import Settings from "./pages/Settings";
 import Automation from "./pages/Automation";
+import AutoShop from "./pages/AutoShop";
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import NotFound from "./pages/NotFound";
@@ -43,6 +44,15 @@ const App = () => (
             <Route path="messages" element={<Messages />} />
             <Route path="settings" element={<Settings />} />
           </Route>
+          {/* Standalone Auto-Shop page (not in dashboard) */}
+          <Route
+            path="/auto-shop"
+            element={
+              <ProtectedRoute>
+                <AutoShop />
+              </ProtectedRoute>
+            }
+          />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
