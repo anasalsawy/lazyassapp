@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useAutoShop } from "@/hooks/useAutoShop";
 import { useAuth } from "@/hooks/useAuth";
 import { Navigate } from "react-router-dom";
@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CreditCard, MapPin, ShoppingCart, Plus, Trash2, Loader2, Package, CheckCircle, XCircle, Search } from "lucide-react";
+import { CreditCard, MapPin, ShoppingCart, Plus, Trash2, Loader2, Package, CheckCircle, XCircle, Search, Image, Link, X } from "lucide-react";
 
 const AutoShop = () => {
   const { user, loading: authLoading } = useAuth();
