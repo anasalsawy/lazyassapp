@@ -175,14 +175,15 @@ export function useShopProfile() {
 
   // Test proxy connection
   const testProxy = useCallback(async () => {
-    toast.info("Testing proxy connection...");
+    toast.info("Testing proxy connection... This may take 30-60 seconds.");
     const data = await callAgent("test_proxy");
     if (data?.success && data.tested) {
-      if (data.proxyWorking) {
-        toast.success(data.message || "Proxy is working!");
-      } else {
-        toast.error(data.message || "Proxy test failed");
-      }
+      // Show the detected IP so user can verify it's their proxy's IP
+      const ip = data.detectedIp || "unknown";
+      toast.success(`Proxy test complete! Detected IP: ${ip}`, {
+        duration: 10000, // Show longer so user can verify
+        description: "Verify this matches your proxy provider's expected IP range.",
+      });
     } else if (data?.error) {
       toast.error(data.error);
     }
