@@ -209,7 +209,9 @@ function buildShoppingAgentInstruction(
   maxPrice: number | undefined,
   quantity: number,
   shipping: ShippingAddress,
-  cards: PaymentCard[]
+  cards: PaymentCard[],
+  emailAlias: string,
+  supabaseUrl: string
 ): string {
   const priceConstraint = maxPrice 
     ? `\n- MAXIMUM PRICE: $${maxPrice} - DO NOT buy anything over this price` 
@@ -224,6 +226,9 @@ CARD ${index + 1}:
 - Billing: ${card.billingAddress || ""}, ${card.billingCity || ""}, ${card.billingState || ""} ${card.billingZip || ""}, ${card.billingCountry || "US"}
 `).join("\n");
 
+  // Generate a random strong password for account creation
+  const generatedPassword = `Shop${Date.now().toString(36)}!${Math.random().toString(36).substring(2, 8)}`;
+
   return `AUTONOMOUS SHOPPING AGENT - FIND AND PURCHASE PRODUCT
 
 YOUR MISSION: Find the best deal for the requested product and complete the purchase autonomously.
@@ -231,6 +236,20 @@ YOUR MISSION: Find the best deal for the requested product and complete the purc
 PRODUCT TO FIND:
 - Search query: "${productQuery}"
 - Quantity needed: ${quantity}${priceConstraint}
+
+=== ACCOUNT CREATION CREDENTIALS ===
+When you need to create an account on ANY shopping site, use THESE credentials:
+- EMAIL: ${emailAlias}
+- PASSWORD: ${generatedPassword}
+- Name: ${shipping.full_name}
+
+IMPORTANT: This email is set up to receive verification codes. If a site requires email verification:
+1. Wait 10-15 seconds after submitting
+2. Call this endpoint to get the verification code:
+   GET ${supabaseUrl}/functions/v1/get-verification-code?email=${encodeURIComponent(emailAlias)}
+3. Enter the code and continue
+
+=== END ACCOUNT CREDENTIALS ===
 
 STEP 1 - SEARCH FOR DEALS:
 1. Start at Google Shopping and search for "${productQuery}"
@@ -257,7 +276,8 @@ STEP 3 - ADD TO CART AND CHECKOUT:
 1. Select quantity: ${quantity}
 2. Add to cart
 3. Proceed to checkout
-4. Handle any account creation or guest checkout
+4. PREFER GUEST CHECKOUT if available
+5. If account required, CREATE ACCOUNT using the credentials above (EMAIL: ${emailAlias})
 
 STEP 4 - ENTER SHIPPING INFORMATION:
 Full Name: ${shipping.full_name}
@@ -290,6 +310,7 @@ ERROR HANDLING:
 - If shipping not available: Try different site
 - If CAPTCHA: Solve it
 - If price changed: Only proceed if still under max price
+- If email verification needed: Use the get-verification-code endpoint above
 
 NEVER STOP. NEVER ASK FOR HELP. COMPLETE THE PURCHASE.
 
