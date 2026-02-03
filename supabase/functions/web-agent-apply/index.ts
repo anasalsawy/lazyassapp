@@ -360,6 +360,8 @@ CANDIDATE INFORMATION:
 ${coverLetter}`;
   }
 
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  
   instruction += `
 
 FORM FILLING GUIDELINES:
@@ -371,10 +373,20 @@ FORM FILLING GUIDELINES:
 - If a field is optional and you don't have the info, skip it
 - If a field is required and you don't have the info, make a reasonable choice
 
+EMAIL VERIFICATION HANDLING (CRITICAL):
+If the site asks for an email verification code or security code:
+1. Wait 30 seconds for the email to arrive
+2. Call this API to retrieve the code:
+   POST ${supabaseUrl}/functions/v1/get-verification-code
+   Body: {"emailAddress": "${userProfile.email}", "maxWaitSeconds": 60}
+3. The API will return: {"success": true, "code": "XXXXXX"}
+4. Enter the code and continue with the application
+5. If no code is received after 60 seconds, report "BLOCKED: Email verification required but code not received"
+
 PROBLEM SOLVING:
 - If CAPTCHA appears, solve it
-- If email verification is required, note it but continue with the application if possible
-- If multi-factor auth is required, report it as a blocker
+- If email verification is required, USE THE API ABOVE to get the code - do NOT skip or give up
+- If multi-factor auth is required (not email-based), report it as a blocker
 - If the application has multiple pages/steps, complete ALL of them
 - If there are errors, try to fix them and resubmit
 
