@@ -61,6 +61,29 @@ serve(async (req) => {
     console.log(`[WebAgent] Starting AI-powered application for: ${jobTitle} at ${company}`);
     console.log(`[WebAgent] Target URL: ${jobUrl}`);
 
+    // Generate a unique email alias for this application using Mailgun
+    let applicationEmail = userProfile.email;
+    const MAILGUN_DOMAIN = Deno.env.get("MAILGUN_DOMAIN");
+    
+    if (MAILGUN_DOMAIN) {
+      const shortId = jobId.substring(0, 8);
+      const timestamp = Date.now().toString(36);
+      const companySlug = company 
+        ? company.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 10)
+        : 'app';
+      applicationEmail = `apply-${companySlug}-${shortId}-${timestamp}@${MAILGUN_DOMAIN}`;
+      
+      console.log(`[WebAgent] Using Mailgun email alias: ${applicationEmail}`);
+      
+      // Store the email alias for tracking
+      await supabase.from("email_accounts").upsert({
+        user_id: user.id,
+        email_address: applicationEmail,
+        email_provider: "mailgun",
+        is_active: true,
+      }, { onConflict: "user_id,email_address" }).select();
+    }
+
     // Log the start of the web agent task
     await supabase.from("agent_logs").insert({
       user_id: user.id,
@@ -95,7 +118,11 @@ serve(async (req) => {
     }
 
     // Build the natural language instruction for the AI agent
-    const agentInstruction = buildAgentInstruction(payload);
+    // Use the generated email alias for the application
+    const agentInstruction = buildAgentInstruction({ 
+      ...payload, 
+      userProfile: { ...userProfile, email: applicationEmail } 
+    });
 
     console.log(`[WebAgent] Sending task to Hyperbrowser...`);
 
