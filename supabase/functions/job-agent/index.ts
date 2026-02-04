@@ -6,6 +6,46 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Browser Use Cloud has multiple API hostnames depending on plan/product generation.
+// We try them in order to avoid hard failures when one host returns 404.
+const DEFAULT_BROWSER_USE_BASE_URLS = [
+  "https://api.browser-use.com",
+  "https://api.cloud.browser-use.com",
+];
+
+function getBrowserUseBaseUrls() {
+  const raw = Deno.env.get("BROWSER_USE_BASE_URLS");
+  if (!raw) return DEFAULT_BROWSER_USE_BASE_URLS;
+  const urls = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return urls.length ? urls : DEFAULT_BROWSER_USE_BASE_URLS;
+}
+
+async function browserUseFetch(
+  path: string,
+  init: RequestInit,
+  opts: { retryOn404?: boolean } = {},
+) {
+  const baseUrls = getBrowserUseBaseUrls();
+  const retryOn404 = opts.retryOn404 ?? true;
+
+  let lastResp: Response | null = null;
+  for (const baseUrl of baseUrls) {
+    const url = `${baseUrl}${path}`;
+    const resp = await fetch(url, init);
+
+    // Success, or non-404 error (auth, rate limit, etc.) should be surfaced immediately.
+    if (resp.ok) return resp;
+    if (!retryOn404 || resp.status !== 404) return resp;
+
+    lastResp = resp;
+  }
+
+  return lastResp ?? new Response(JSON.stringify({ detail: "No Browser Use base URLs configured" }), { status: 500 });
+}
+
 /**
  * JOB AGENT - Simplified job automation using Browser Use persistent profiles
  * 
@@ -83,7 +123,7 @@ serve(async (req) => {
         }
 
         // Create profile in Browser Use - Note: v1 API uses Bearer auth
-        const profileResponse = await fetch("https://api.browser-use.com/api/v1/browser-profile", {
+        const profileResponse = await browserUseFetch("/api/v1/browser-profile", {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
@@ -153,7 +193,7 @@ serve(async (req) => {
         // Create a task that navigates to the login page and waits for user
         console.log("Calling Browser Use API with key:", BROWSER_USE_API_KEY?.substring(0, 10) + "...");
         
-        const taskResponse = await fetch("https://api.browser-use.com/api/v1/run-task", {
+        const taskResponse = await browserUseFetch("/api/v1/run-task", {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
@@ -192,12 +232,12 @@ serve(async (req) => {
         if (!liveViewUrl && taskId) {
           await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3s for task to initialize
           
-          const detailsResponse = await fetch(`https://api.browser-use.com/api/v1/task/${taskId}`, {
+           const detailsResponse = await browserUseFetch(`/api/v1/task/${taskId}`, {
             method: "GET",
             headers: {
               "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
             },
-          });
+           });
           
           if (detailsResponse.ok) {
             const detailsData = await detailsResponse.json();
@@ -369,7 +409,7 @@ DO NOT STOP. Work through all sites methodically. Complete as many applications 
 `;
 
         // Start the agent task
-        const taskResponse = await fetch("https://api.browser-use.com/api/v1/run-task", {
+        const taskResponse = await browserUseFetch("/api/v1/run-task", {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
