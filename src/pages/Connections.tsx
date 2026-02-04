@@ -52,7 +52,7 @@ export default function Connections() {
   const [isStartingSession, setIsStartingSession] = useState(false);
   const [activeSession, setActiveSession] = useState<{
     liveViewUrl: string | null;
-    taskId: string | null;
+    sessionId: string | null;
   } | null>(null);
   const [connectedPlatforms, setConnectedPlatforms] = useState<string[]>([]);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -63,7 +63,10 @@ export default function Connections() {
       const { data, error } = await supabase.functions.invoke("job-agent", {
         body: {
           action: "start_login",
-          site: "all", // Open session for all platforms
+          // NOTE: "all" would produce https://all.com in the backend.
+          // We open a single persistent browser session starting at Gmail;
+          // user can then navigate to LinkedIn/Indeed in the same session.
+          site: "gmail",
         },
       });
 
@@ -72,7 +75,7 @@ export default function Connections() {
       if (data?.liveViewUrl) {
         setActiveSession({
           liveViewUrl: data.liveViewUrl,
-          taskId: data.taskId,
+          sessionId: data.sessionId ?? null,
         });
         // Open in new tab
         window.open(data.liveViewUrl, "_blank");
@@ -92,17 +95,23 @@ export default function Connections() {
   const confirmLogins = async () => {
     setIsConfirming(true);
     try {
-      // Confirm the logins for all platforms
-      const { data, error } = await supabase.functions.invoke("job-agent", {
-        body: {
-          action: "confirm_login",
-          sites: ["gmail", "linkedin", "indeed"],
-        },
-      });
+      // Backend expects { site }, so confirm each platform.
+      const sites = ["gmail", "linkedin", "indeed"] as const;
+      const results = await Promise.all(
+        sites.map(async (site) => {
+          const { data, error } = await supabase.functions.invoke("job-agent", {
+            body: {
+              action: "confirm_login",
+              site,
+            },
+          });
+          if (error) throw error;
+          return (data?.sitesLoggedIn as string[] | undefined) ?? [];
+        })
+      );
 
-      if (error) throw error;
-
-      setConnectedPlatforms(data?.sitesLoggedIn || []);
+      const merged = Array.from(new Set(results.flat()));
+      setConnectedPlatforms(merged);
       setActiveSession(null);
       
       toast({
