@@ -6,44 +6,28 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Browser Use Cloud has multiple API hostnames depending on plan/product generation.
-// We try them in order to avoid hard failures when one host returns 404.
-const DEFAULT_BROWSER_USE_BASE_URLS = [
-  "https://api.browser-use.com",
-  "https://api.cloud.browser-use.com",
-];
+// Browser Use Cloud v2 API base URL
+const BROWSER_USE_BASE_URL = "https://api.browser-use.com";
 
-function getBrowserUseBaseUrls() {
-  const raw = Deno.env.get("BROWSER_USE_BASE_URLS");
-  if (!raw) return DEFAULT_BROWSER_USE_BASE_URLS;
-  const urls = raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return urls.length ? urls : DEFAULT_BROWSER_USE_BASE_URLS;
-}
-
-async function browserUseFetch(
+/**
+ * Helper to call Browser Use Cloud v2 API
+ * Uses X-Browser-Use-API-Key header for authentication
+ */
+async function browserUseApi(
+  apiKey: string,
   path: string,
-  init: RequestInit,
-  opts: { retryOn404?: boolean } = {},
-) {
-  const baseUrls = getBrowserUseBaseUrls();
-  const retryOn404 = opts.retryOn404 ?? true;
-
-  let lastResp: Response | null = null;
-  for (const baseUrl of baseUrls) {
-    const url = `${baseUrl}${path}`;
-    const resp = await fetch(url, init);
-
-    // Success, or non-404 error (auth, rate limit, etc.) should be surfaced immediately.
-    if (resp.ok) return resp;
-    if (!retryOn404 || resp.status !== 404) return resp;
-
-    lastResp = resp;
-  }
-
-  return lastResp ?? new Response(JSON.stringify({ detail: "No Browser Use base URLs configured" }), { status: 500 });
+  init: RequestInit = {}
+): Promise<Response> {
+  const url = `${BROWSER_USE_BASE_URL}${path}`;
+  const headers = {
+    "X-Browser-Use-API-Key": apiKey,
+    "Content-Type": "application/json",
+    ...init.headers,
+  };
+  
+  console.log(`[BrowserUse] ${init.method || "GET"} ${path}`);
+  
+  return fetch(url, { ...init, headers });
 }
 
 /**
@@ -52,6 +36,7 @@ async function browserUseFetch(
  * Actions:
  * - create_profile: Creates a Browser Use profile for the user
  * - start_login: Opens live browser for user to log into accounts
+ * - confirm_login: Mark site as logged in
  * - run_agent: Background task to scrape jobs, apply, monitor emails
  * - get_status: Check agent status and profile health
  */
@@ -63,7 +48,6 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
   if (!BROWSER_USE_API_KEY) {
     return new Response(
@@ -122,13 +106,9 @@ serve(async (req) => {
           );
         }
 
-        // Create profile in Browser Use - Note: v1 API uses Bearer auth
-        const profileResponse = await browserUseFetch("/api/v1/browser-profile", {
+        // Create profile in Browser Use Cloud v2 API
+        const profileResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/profiles", {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
           body: JSON.stringify({
             name: `user-${user.id.substring(0, 8)}`,
           }),
@@ -136,11 +116,12 @@ serve(async (req) => {
 
         if (!profileResponse.ok) {
           const error = await profileResponse.text();
-          throw new Error(`Failed to create profile: ${error}`);
+          console.error("Profile creation failed:", profileResponse.status, error);
+          throw new Error(`Failed to create profile (${profileResponse.status}): ${error}`);
         }
 
         const profileData = await profileResponse.json();
-        const profileId = profileData.id || profileData.profile_id;
+        const profileId = profileData.id;
 
         // Store profile reference
         await supabase.from("browser_profiles").upsert({
@@ -166,19 +147,39 @@ serve(async (req) => {
         
         await log("Starting login session...", { site });
 
-        // Ensure user has a profile record (create if needed)
-        const { data: existingProfile } = await supabase
+        // Get or create browser profile
+        let { data: browserProfile } = await supabase
           .from("browser_profiles")
           .select("*")
           .eq("user_id", user.id)
           .single();
 
-        if (!existingProfile) {
-          await supabase.from("browser_profiles").insert({
+        // Auto-create profile if it doesn't exist
+        if (!browserProfile?.browser_use_profile_id) {
+          await log("No profile found, creating one...");
+          
+          const profileResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/profiles", {
+            method: "POST",
+            body: JSON.stringify({
+              name: `user-${user.id.substring(0, 8)}`,
+            }),
+          });
+
+          if (!profileResponse.ok) {
+            const error = await profileResponse.text();
+            throw new Error(`Failed to create profile: ${error}`);
+          }
+
+          const profileData = await profileResponse.json();
+          
+          await supabase.from("browser_profiles").upsert({
             user_id: user.id,
+            browser_use_profile_id: profileData.id,
             status: "pending_login",
             sites_logged_in: [],
           });
+
+          browserProfile = { browser_use_profile_id: profileData.id };
         }
 
         const siteUrls: Record<string, string> = {
@@ -190,80 +191,51 @@ serve(async (req) => {
 
         const startUrl = siteUrls[site] || `https://${site}.com`;
 
-        // Create a task that navigates to the login page and waits for user
-        console.log("Calling Browser Use API with key:", BROWSER_USE_API_KEY?.substring(0, 10) + "...");
+        // Create a session with the profile for persistent login state
+        // Using keepAlive=true so the session stays open for manual login
+        console.log("Creating Browser Use session with profile:", browserProfile.browser_use_profile_id);
         
-        const taskResponse = await browserUseFetch("/api/v1/run-task", {
+        const sessionResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions", {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
           body: JSON.stringify({
-            task: `Navigate to ${startUrl}. This is a login session - wait for the user to manually log in. Do not take any automated actions. Simply observe and report when the user has successfully logged in (when the page shows a logged-in state like an inbox or dashboard).`,
-            save_browser_data: true,
-            highlight_elements: false,
+            profileId: browserProfile.browser_use_profile_id,
+            startUrl: startUrl,
+            keepAlive: true,
+            browserScreenWidth: 1280,
+            browserScreenHeight: 800,
           }),
         });
 
-        console.log("Browser Use API response status:", taskResponse.status);
+        console.log("Session response status:", sessionResponse.status);
 
-        if (!taskResponse.ok) {
-          const error = await taskResponse.text();
-          console.error("Task creation failed:", error);
-          
-          // Provide better error message
-          if (taskResponse.status === 404) {
-            throw new Error("Browser Use API returned 404. Please verify your BROWSER_USE_API_KEY is valid and has access to the API.");
-          }
-          if (taskResponse.status === 401 || taskResponse.status === 403) {
-            throw new Error("Browser Use API authentication failed. Please check your API key.");
-          }
-          throw new Error(`Browser Use API error (${taskResponse.status}): ${error}`);
+        if (!sessionResponse.ok) {
+          const error = await sessionResponse.text();
+          console.error("Session creation failed:", error);
+          throw new Error(`Failed to create session (${sessionResponse.status}): ${error}`);
         }
 
-        const taskData = await taskResponse.json();
-        console.log("Task response:", JSON.stringify(taskData));
+        const sessionData = await sessionResponse.json();
+        console.log("Session created:", JSON.stringify(sessionData));
         
-        const taskId = taskData.id || taskData.task_id;
-        let liveViewUrl = taskData.live_url || taskData.liveUrl || taskData.stream_url;
-        
-        // If no live URL in initial response, fetch task details
-        if (!liveViewUrl && taskId) {
-          await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3s for task to initialize
-          
-           const detailsResponse = await browserUseFetch(`/api/v1/task/${taskId}`, {
-            method: "GET",
-            headers: {
-              "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
-            },
-           });
-          
-          if (detailsResponse.ok) {
-            const detailsData = await detailsResponse.json();
-            console.log("Task details:", JSON.stringify(detailsData));
-            liveViewUrl = detailsData.live_url || detailsData.liveUrl || detailsData.stream_url;
-          }
-        }
+        const sessionId = sessionData.id;
+        const liveViewUrl = sessionData.liveUrl;
 
         // Store pending login
         await supabase.from("browser_profiles").update({
           pending_login_site: site,
-          pending_task_id: taskId,
+          pending_session_id: sessionId,
           status: "pending_login",
         }).eq("user_id", user.id);
 
-        await log("Login session started", { site, taskId, liveViewUrl, hasUrl: !!liveViewUrl });
+        await log("Login session started", { site, sessionId, liveViewUrl });
 
         return new Response(
           JSON.stringify({
             success: true,
-            taskId,
+            sessionId,
             liveViewUrl,
             site,
-            message: liveViewUrl 
-              ? `Browser opened for ${site}. Log in to save your session.`
-              : `Login task started for ${site}. Check back in a moment.`,
+            message: `Browser opened for ${site}. Log in to save your session.`,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -283,6 +255,18 @@ serve(async (req) => {
 
         if (!profile) throw new Error("No profile found");
 
+        // Stop the session to save the profile state
+        if (profile.pending_session_id) {
+          try {
+            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${profile.pending_session_id}/stop`, {
+              method: "POST",
+            });
+            await log("Session stopped, profile state saved", { sessionId: profile.pending_session_id });
+          } catch (e) {
+            console.error("Failed to stop session:", e);
+          }
+        }
+
         const sitesLoggedIn = [...new Set([...(profile.sites_logged_in || []), site])];
 
         await supabase.from("browser_profiles").update({
@@ -291,6 +275,7 @@ serve(async (req) => {
           pending_session_id: null,
           pending_task_id: null,
           last_login_at: new Date().toISOString(),
+          status: "active",
         }).eq("user_id", user.id);
 
         await log("Login confirmed", { site, allSites: sitesLoggedIn });
@@ -341,7 +326,7 @@ serve(async (req) => {
           .eq("user_id", user.id)
           .single();
 
-        // Create an agent run
+        // Create an agent run record
         const { data: run } = await supabase
           .from("agent_runs")
           .insert({
@@ -408,35 +393,53 @@ REPORT FORMAT (return this JSON at the end):
 DO NOT STOP. Work through all sites methodically. Complete as many applications as possible.
 `;
 
-        // Start the agent task
-        const taskResponse = await browserUseFetch("/api/v1/run-task", {
+        // Create session with profile, then create task
+        const sessionResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions", {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
           body: JSON.stringify({
-            task: agentInstruction,
-            save_browser_data: true,
-            max_agent_steps: 100,
+            profileId: browserProfile.browser_use_profile_id,
+            keepAlive: false, // Auto-close when done
           }),
         });
 
+        if (!sessionResponse.ok) {
+          const error = await sessionResponse.text();
+          throw new Error(`Failed to create agent session: ${error}`);
+        }
+
+        const sessionData = await sessionResponse.json();
+
+        // Create the task in the session
+        const taskResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/tasks", {
+          method: "POST",
+          body: JSON.stringify({
+            task: agentInstruction,
+            sessionId: sessionData.id,
+            maxSteps: 100,
+          }),
+        });
+
+        if (!taskResponse.ok) {
+          const error = await taskResponse.text();
+          throw new Error(`Failed to create agent task: ${error}`);
+        }
+
         const taskData = await taskResponse.json();
-        const taskId = taskData.id || taskData.task_id;
+        const taskId = taskData.id;
 
         // Store task reference
         await supabase.from("agent_runs").update({
-          summary_json: { browser_use_task_id: taskId },
+          summary_json: { browser_use_task_id: taskId, session_id: sessionData.id },
         }).eq("id", run?.id);
 
-        await log("Agent task started", { taskId, runId: run?.id });
+        await log("Agent task started", { taskId, sessionId: sessionData.id, runId: run?.id });
 
         return new Response(
           JSON.stringify({
             success: true,
             runId: run?.id,
             taskId,
+            sessionId: sessionData.id,
             message: "Job agent is running. Check back in a few minutes.",
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
