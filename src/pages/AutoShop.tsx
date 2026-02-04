@@ -3,6 +3,7 @@ import { useAutoShop } from "@/hooks/useAutoShop";
 import { useShopProfile } from "@/hooks/useShopProfile";
 import { useAuth } from "@/hooks/useAuth";
 import { Navigate, Link } from "react-router-dom";
+import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -271,11 +272,11 @@ const AutoShop = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-6xl mx-auto p-6">
+    <AppLayout>
+      <div className="container max-w-6xl mx-auto py-8 px-4">
         <div className="mb-8 flex justify-between items-start">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">🛒 Auto-Shop</h1>
+            <h1 className="text-3xl font-bold">🛒 Auto-Shop</h1>
             <p className="text-muted-foreground mt-1">
               AI-powered shopping agent that finds the best deals and places orders for you
             </p>
@@ -1091,7 +1092,7 @@ const AutoShop = () => {
           </TabsContent>
         </Tabs>
       </div>
-    </div>
+    </AppLayout>
   );
 };
 
