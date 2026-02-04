@@ -5,21 +5,27 @@ import { formatDistanceToNow } from "date-fns";
 import { Link } from "react-router-dom";
 
 const statusColors: Record<string, string> = {
-  applied: "bg-primary/10 text-primary",
-  under_review: "bg-warning/10 text-warning",
-  interview: "bg-success/10 text-success",
-  offer: "bg-accent/10 text-accent",
-  rejected: "bg-destructive/10 text-destructive",
-  withdrawn: "bg-muted text-muted-foreground",
+  "pending-apply": "bg-muted text-muted-foreground",
+  "applying": "bg-primary/10 text-primary",
+  "applied": "bg-blue-500/10 text-blue-600",
+  "in-review": "bg-purple-500/10 text-purple-600",
+  "interview": "bg-success/10 text-success",
+  "offer": "bg-yellow-500/10 text-yellow-600",
+  "rejected": "bg-destructive/10 text-destructive",
+  "error": "bg-destructive/10 text-destructive",
+  "needs-user-action": "bg-warning/10 text-warning",
 };
 
 const statusLabels: Record<string, string> = {
-  applied: "Applied",
-  under_review: "Under Review",
-  interview: "Interview",
-  offer: "Offer",
-  rejected: "Rejected",
-  withdrawn: "Withdrawn",
+  "pending-apply": "Pending",
+  "applying": "Applying",
+  "applied": "Applied",
+  "in-review": "In Review",
+  "interview": "Interview",
+  "offer": "Offer",
+  "rejected": "Rejected",
+  "error": "Error",
+  "needs-user-action": "Action Needed",
 };
 
 export const RecentApplications = () => {
