@@ -251,40 +251,64 @@ export type Database = {
       applications: {
         Row: {
           applied_at: string
+          company_name: string | null
           cover_letter: string | null
           created_at: string
+          email_thread_id: string | null
+          extra_metadata: Json | null
           id: string
           job_id: string
+          job_title: string | null
+          job_url: string | null
           notes: string | null
+          platform: string | null
           response_at: string | null
           resume_id: string | null
           status: string
+          status_message: string | null
+          status_source: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           applied_at?: string
+          company_name?: string | null
           cover_letter?: string | null
           created_at?: string
+          email_thread_id?: string | null
+          extra_metadata?: Json | null
           id?: string
           job_id: string
+          job_title?: string | null
+          job_url?: string | null
           notes?: string | null
+          platform?: string | null
           response_at?: string | null
           resume_id?: string | null
           status?: string
+          status_message?: string | null
+          status_source?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           applied_at?: string
+          company_name?: string | null
           cover_letter?: string | null
           created_at?: string
+          email_thread_id?: string | null
+          extra_metadata?: Json | null
           id?: string
           job_id?: string
+          job_title?: string | null
+          job_url?: string | null
           notes?: string | null
+          platform?: string | null
           response_at?: string | null
           resume_id?: string | null
           status?: string
+          status_message?: string | null
+          status_source?: string | null
           updated_at?: string
           user_id?: string
         }
