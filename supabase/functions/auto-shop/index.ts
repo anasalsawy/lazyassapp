@@ -56,7 +56,8 @@ async function browserUseFetchJson(
   path: string,
   init: RequestInit,
 ): Promise<{ baseUrl: string; status: number; data: BrowserUseJson }> {
-  let lastErrorText = "";
+  let lastExceptionText = "";
+  let lastHttpError: { baseUrl: string; status: number; text: string } | null = null;
 
   for (const baseUrl of BROWSER_USE_BASE_URLS) {
     try {
@@ -70,8 +71,11 @@ async function browserUseFetchJson(
       });
 
       const text = await res.text();
-      lastErrorText = text;
-      if (!res.ok) continue;
+      if (!res.ok) {
+        // Keep the most recent *HTTP* error (prefer this over DNS/connection errors)
+        lastHttpError = { baseUrl, status: res.status, text };
+        continue;
+      }
 
       let json: BrowserUseJson = {};
       try {
@@ -82,12 +86,18 @@ async function browserUseFetchJson(
 
       return { baseUrl, status: res.status, data: json };
     } catch (e) {
-      lastErrorText = e instanceof Error ? e.message : String(e);
+      lastExceptionText = e instanceof Error ? e.message : String(e);
       continue;
     }
   }
 
-  throw new Error(`Browser Use API request failed for ${path}: ${lastErrorText || "unknown error"}`);
+  if (lastHttpError) {
+    throw new Error(
+      `Browser Use API ${lastHttpError.status} for ${path} via ${lastHttpError.baseUrl}: ${lastHttpError.text || "(empty response)"}`,
+    );
+  }
+
+  throw new Error(`Browser Use API request failed for ${path}: ${lastExceptionText || "unknown error"}`);
 }
 
 async function browserUseFetchJsonMultiPath(
