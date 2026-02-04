@@ -413,12 +413,14 @@ async function handleStartOrder(
   );
 
   // Call Browser Use Cloud API
+  // Always use US proxy for shopping tasks to avoid geo-restrictions
   const taskPayload: Record<string, unknown> = {
     task: agentInstruction,
     startUrl: "https://www.google.com/shopping",
     llm: "browser-use-llm",
     maxSteps: 100,
     highlightElements: true,
+    proxyCountryCode: "us", // Always use US proxy
   };
 
   // Attach the authenticated user's persistent profile
