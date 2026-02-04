@@ -25,6 +25,23 @@ export interface Job {
   updated_at: string;
 }
 
+export interface ResumeForMatching {
+  skills?: string[] | null;
+  experienceYears?: number | null;
+  parsedContent?: any;
+  fullText?: string;
+  atsScore?: number | null;
+}
+
+export interface JobPreferencesForMatching {
+  jobTitles?: string[];
+  locations?: string[];
+  remotePreference?: string;
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  industries?: string[];
+}
+
 export const useJobs = () => {
   const { user } = useAuth();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -60,18 +77,39 @@ export const useJobs = () => {
     }
   };
 
-  const searchJobs = async (preferences: any, skills?: string[]) => {
+  const searchJobs = async (
+    preferences: JobPreferencesForMatching, 
+    resume?: ResumeForMatching
+  ) => {
     if (!user) return;
 
     setSearching(true);
     try {
+      console.log("Starting job search with:", {
+        preferences,
+        resumeSkills: resume?.skills?.length || 0,
+        hasFullText: !!resume?.fullText,
+        hasParsedContent: !!resume?.parsedContent
+      });
+
       const { data, error } = await supabase.functions.invoke("match-jobs", {
-        body: { preferences, skills },
+        body: { 
+          preferences,
+          resume: {
+            skills: resume?.skills || [],
+            experienceYears: resume?.experienceYears || 0,
+            parsedContent: resume?.parsedContent || null,
+            fullText: resume?.fullText || "",
+            atsScore: resume?.atsScore || null
+          }
+        },
       });
 
       if (error) throw error;
 
       if (data.success && data.jobs) {
+        console.log(`Received ${data.jobs.length} job matches`, data.matchedWith);
+        
         // Save matched jobs to database
         const jobsToInsert = data.jobs.map((job: any) => ({
           user_id: user.id,
@@ -82,7 +120,7 @@ export const useJobs = () => {
           location: job.location,
           salary_min: job.salaryMin,
           salary_max: job.salaryMax,
-          description: job.description,
+          description: job.description + (job.matchReason ? `\n\nMatch Reason: ${job.matchReason}` : ""),
           requirements: job.requirements,
           job_type: job.jobType,
           posted_at: job.postedAt,
@@ -97,10 +135,14 @@ export const useJobs = () => {
         if (insertError) throw insertError;
 
         await fetchJobs();
+        
+        const topScore = data.jobs[0]?.matchScore || 0;
         toast({ 
-          title: "Jobs found!", 
-          description: `Found ${data.jobs.length} matching jobs.` 
+          title: "Jobs matched!", 
+          description: `Found ${data.jobs.length} matches. Best match: ${topScore}%` 
         });
+      } else if (data.error) {
+        throw new Error(data.error);
       }
     } catch (error: any) {
       console.error("Error searching jobs:", error);
@@ -148,6 +190,28 @@ export const useJobs = () => {
     }
   };
 
+  const clearAllJobs = async () => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase
+        .from("jobs")
+        .delete()
+        .eq("user_id", user.id);
+
+      if (error) throw error;
+      setJobs([]);
+      toast({ title: "Jobs cleared", description: "All job matches have been removed." });
+    } catch (error: any) {
+      console.error("Error clearing jobs:", error);
+      toast({ 
+        title: "Error", 
+        description: "Failed to clear jobs", 
+        variant: "destructive" 
+      });
+    }
+  };
+
   return { 
     jobs, 
     loading, 
@@ -155,6 +219,7 @@ export const useJobs = () => {
     searchJobs, 
     toggleSaved, 
     deleteJob,
+    clearAllJobs,
     refetch: fetchJobs,
     savedJobs: jobs.filter(j => j.is_saved),
     topMatches: jobs.slice(0, 10),

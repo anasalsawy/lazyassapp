@@ -14,15 +14,26 @@ interface JobPreferences {
   industries: string[];
 }
 
-interface Job {
-  title: string;
-  company: string;
-  location: string;
-  salaryMin?: number;
-  salaryMax?: number;
-  description: string;
-  requirements?: string[];
-  jobType?: string;
+interface ResumeData {
+  skills?: string[];
+  experienceYears?: number;
+  parsedContent?: {
+    summary?: string;
+    experience?: Array<{
+      title?: string;
+      company?: string;
+      description?: string;
+      duration?: string;
+    }>;
+    education?: Array<{
+      degree?: string;
+      institution?: string;
+      field?: string;
+    }>;
+    certifications?: string[];
+  };
+  fullText?: string;
+  atsScore?: number;
 }
 
 serve(async (req) => {
@@ -31,7 +42,7 @@ serve(async (req) => {
   }
 
   try {
-    const { preferences, skills, experienceYears } = await req.json();
+    const { preferences, resume } = await req.json();
 
     if (!preferences) {
       return new Response(
@@ -45,42 +56,104 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // Generate mock job listings using AI
-    const systemPrompt = `You are a job search agent. Based on the user's preferences, generate 10 realistic job listings that would match their criteria.
+    // Extract resume data with fallbacks
+    const resumeData: ResumeData = resume || {};
+    const skills = resumeData.skills || [];
+    const experienceYears = resumeData.experienceYears || 0;
+    const parsedContent = resumeData.parsedContent || {};
+    const fullText = resumeData.fullText || "";
 
-User Preferences:
-- Desired Titles: ${preferences.jobTitles?.join(', ') || 'Software Engineer'}
-- Locations: ${preferences.locations?.join(', ') || 'Remote'}
+    // Build a comprehensive candidate profile from resume
+    let candidateProfile = "";
+    
+    if (fullText) {
+      candidateProfile += `\n=== FULL RESUME TEXT ===\n${fullText}\n`;
+    }
+    
+    if (parsedContent.summary) {
+      candidateProfile += `\n=== PROFESSIONAL SUMMARY ===\n${parsedContent.summary}\n`;
+    }
+    
+    if (parsedContent.experience && parsedContent.experience.length > 0) {
+      candidateProfile += `\n=== WORK EXPERIENCE ===\n`;
+      parsedContent.experience.forEach((exp: any, i: number) => {
+        candidateProfile += `${i + 1}. ${exp.title || 'Position'} at ${exp.company || 'Company'}`;
+        if (exp.duration) candidateProfile += ` (${exp.duration})`;
+        candidateProfile += `\n`;
+        if (exp.description) candidateProfile += `   ${exp.description}\n`;
+      });
+    }
+    
+    if (parsedContent.education && parsedContent.education.length > 0) {
+      candidateProfile += `\n=== EDUCATION ===\n`;
+      parsedContent.education.forEach((edu: any) => {
+        candidateProfile += `- ${edu.degree || 'Degree'} in ${edu.field || 'Field'} from ${edu.institution || 'Institution'}\n`;
+      });
+    }
+    
+    if (parsedContent.certifications && parsedContent.certifications.length > 0) {
+      candidateProfile += `\n=== CERTIFICATIONS ===\n${parsedContent.certifications.join(', ')}\n`;
+    }
+
+    // Build the matching prompt
+    const systemPrompt = `You are an expert job matching AI. Your task is to find the BEST job matches for a candidate based on their resume and preferences.
+
+=== CANDIDATE'S JOB PREFERENCES ===
+- Desired Job Titles: ${preferences.jobTitles?.join(', ') || 'Not specified'}
+- Preferred Locations: ${preferences.locations?.join(', ') || 'Any location'}
 - Remote Preference: ${preferences.remotePreference || 'any'}
-- Salary Range: ${preferences.salaryMin ? `$${preferences.salaryMin}` : 'Not specified'} - ${preferences.salaryMax ? `$${preferences.salaryMax}` : 'Not specified'}
-- Industries: ${preferences.industries?.join(', ') || 'Technology'}
+- Salary Range: ${preferences.salaryMin ? `$${preferences.salaryMin.toLocaleString()}` : 'Open'} - ${preferences.salaryMax ? `$${preferences.salaryMax.toLocaleString()}` : 'Open'}
+- Target Industries: ${preferences.industries?.join(', ') || 'Any industry'}
 
-User Profile:
-- Skills: ${skills?.join(', ') || 'Not specified'}
-- Experience: ${experienceYears || 0} years
+=== CANDIDATE'S PROFILE ===
+- Skills: ${skills.length > 0 ? skills.join(', ') : 'See resume below'}
+- Years of Experience: ${experienceYears || 'See resume below'}
+- Current ATS Score: ${resumeData.atsScore || 'Not calculated'}
+${candidateProfile}
 
-Generate realistic job listings from well-known companies. For each job, calculate a match score (0-100) based on how well it matches the user's profile.
+=== YOUR TASK ===
+1. Analyze the candidate's complete background (skills, experience, education, certifications)
+2. Generate 15 highly targeted job listings that would be EXCELLENT matches
+3. Calculate a precise match score (0-100) based on:
+   - Skill alignment (40%): How well do their skills match job requirements?
+   - Experience level (25%): Is their experience appropriate for the role?
+   - Title/role fit (20%): Does the job title align with their career trajectory?
+   - Location/salary fit (15%): Does it meet their stated preferences?
 
-Respond in JSON format:
+=== MATCHING CRITERIA ===
+- 90-100%: Perfect match - skills, experience, and preferences all align
+- 80-89%: Excellent match - strong alignment with minor gaps
+- 70-79%: Good match - most requirements met
+- 60-69%: Fair match - some alignment but gaps exist
+- Below 60%: Poor match - don't include these
+
+Only include jobs with 60%+ match scores. Prioritize quality over quantity.
+
+=== OUTPUT FORMAT ===
+Respond ONLY with valid JSON (no markdown, no explanation):
 {
   "jobs": [
     {
-      "externalId": "unique-id",
-      "source": "company_website",
-      "title": "Job Title",
-      "company": "Company Name",
+      "externalId": "unique-id-string",
+      "source": "company_careers_page",
+      "title": "Exact Job Title",
+      "company": "Real Company Name",
       "location": "City, State or Remote",
-      "salaryMin": number,
-      "salaryMax": number,
-      "description": "Job description (2-3 sentences)",
-      "requirements": ["requirement1", "requirement2"],
-      "jobType": "full-time|part-time|contract",
-      "postedAt": "ISO date string",
-      "url": "https://example.com/jobs/id",
-      "matchScore": number
+      "salaryMin": 80000,
+      "salaryMax": 120000,
+      "description": "2-3 sentence job description highlighting key responsibilities",
+      "requirements": ["skill1", "skill2", "skill3", "skill4", "skill5"],
+      "jobType": "full-time",
+      "postedAt": "2025-02-01T00:00:00Z",
+      "url": "https://company.com/careers/job-id",
+      "matchScore": 85,
+      "matchReason": "Strong TypeScript/React skills match, 5+ years experience aligns, remote preference satisfied"
     }
   ]
 }`;
+
+    console.log("Sending match request with full resume data...");
+    console.log(`Skills: ${skills.length}, Experience: ${experienceYears}, Has parsed content: ${!!parsedContent}`);
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -89,43 +162,77 @@ Respond in JSON format:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: "Generate job listings based on my preferences." },
+          { role: "user", content: "Find the best job matches for this candidate. Be specific and accurate with match scores." },
         ],
-        temperature: 0.8,
+        temperature: 0.7,
       }),
     });
 
     if (!response.ok) {
       if (response.status === 429) {
         return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again later." }),
+          JSON.stringify({ error: "Rate limit exceeded. Please try again in a few seconds." }),
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      const errorText = await response.text();
+      console.error("AI gateway error:", errorText);
       throw new Error(`AI gateway error: ${response.status}`);
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
 
-    let jobs = [];
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        jobs = parsed.jobs || [];
-      }
-    } catch {
-      console.error("Failed to parse job listings:", content);
+    if (!content) {
+      throw new Error("No response from AI");
     }
 
-    console.log(`Generated ${jobs.length} job matches`);
+    let jobs = [];
+    try {
+      // Try to parse JSON directly first
+      const cleanContent = content.trim();
+      if (cleanContent.startsWith('{')) {
+        const parsed = JSON.parse(cleanContent);
+        jobs = parsed.jobs || [];
+      } else {
+        // Try to extract JSON from markdown code blocks
+        const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[1].trim());
+          jobs = parsed.jobs || [];
+        } else {
+          // Last resort: find JSON object in text
+          const objectMatch = content.match(/\{[\s\S]*\}/);
+          if (objectMatch) {
+            const parsed = JSON.parse(objectMatch[0]);
+            jobs = parsed.jobs || [];
+          }
+        }
+      }
+    } catch (parseError) {
+      console.error("Failed to parse job listings:", parseError);
+      console.error("Raw content:", content.substring(0, 500));
+    }
+
+    // Sort by match score descending
+    jobs.sort((a: any, b: any) => (b.matchScore || 0) - (a.matchScore || 0));
+
+    console.log(`Generated ${jobs.length} job matches. Top score: ${jobs[0]?.matchScore || 'N/A'}`);
 
     return new Response(
-      JSON.stringify({ success: true, jobs }),
+      JSON.stringify({ 
+        success: true, 
+        jobs,
+        matchedWith: {
+          skillsCount: skills.length,
+          experienceYears,
+          hasFullResume: !!fullText,
+          hasParsedContent: Object.keys(parsedContent).length > 0
+        }
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error: unknown) {
