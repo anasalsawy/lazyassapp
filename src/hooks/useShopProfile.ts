@@ -219,6 +219,46 @@ export function useShopProfile() {
     return data;
   }, [callAgent, fetchStatus]);
 
+  // Cancel pending login session
+  const cancelLogin = useCallback(async () => {
+    toast.info("Cancelling login session...");
+    const data = await callAgent("cancel_login");
+    if (data?.success) {
+      toast.success("Session cancelled");
+      setLoginSession(null);
+      fetchStatus();
+    }
+    return data;
+  }, [callAgent, fetchStatus]);
+
+  // Restart a login session (cleanup + fresh start)
+  const restartSession = useCallback(async (site: string) => {
+    toast.info(`Restarting ${site} session...`);
+    const data = await callAgent("restart_session", { site });
+    if (data?.success) {
+      setLoginSession({
+        sessionId: data.sessionId,
+        taskId: data.taskId,
+        liveViewUrl: data.liveViewUrl,
+        site: data.site,
+      });
+      toast.success("Session restarted! Log in to your account.");
+    }
+    return data;
+  }, [callAgent]);
+
+  // Manual session cleanup
+  const cleanupSessions = useCallback(async () => {
+    toast.info("Cleaning up stale sessions...");
+    const data = await callAgent("cleanup_sessions");
+    if (data?.success) {
+      toast.success(data.message || "Sessions cleaned up");
+      setLoginSession(null);
+      fetchStatus();
+    }
+    return data;
+  }, [callAgent, fetchStatus]);
+
   // Set custom proxy
   const setProxy = useCallback(async (proxyServer: string, proxyUsername?: string, proxyPassword?: string) => {
     toast.info("Configuring proxy...");
@@ -306,6 +346,9 @@ export function useShopProfile() {
     createProfile,
     startLogin,
     confirmLogin,
+    cancelLogin,
+    restartSession,
+    cleanupSessions,
     syncOrders,
     syncOrderEmails,
     setProxy,
