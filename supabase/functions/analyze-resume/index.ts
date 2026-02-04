@@ -19,6 +19,7 @@ serve(async (req) => {
     const { resumeId, resumeText: providedText, jobDescription } = await req.json();
 
     let resumeText = providedText;
+    let existingParsedContent: any = null;
 
     // If resumeId is provided but no text, fetch and parse the resume
     if (resumeId && !resumeText) {
@@ -39,8 +40,14 @@ serve(async (req) => {
         );
       }
 
-      // If resume already has parsed content, use it
-      if (resume.parsed_content?.text) {
+      existingParsedContent = resume.parsed_content ?? null;
+
+      // If resume already has extracted text saved, use it
+      if (resume.parsed_content?.rawText) {
+        resumeText = resume.parsed_content.rawText;
+      } else if (resume.parsed_content?.fullText) {
+        resumeText = resume.parsed_content.fullText;
+      } else if (resume.parsed_content?.text) {
         resumeText = resume.parsed_content.text;
       } else if (resume.file_path) {
         // Download the file from storage
@@ -89,10 +96,18 @@ serve(async (req) => {
         
         resumeText = extractedText;
         
-        // Store the extracted text for future use
+        // Store extracted text for future use (without clobbering other fields)
         await supabase
           .from("resumes")
-          .update({ parsed_content: { text: resumeText } })
+          .update({
+            parsed_content: {
+              ...(existingParsedContent ?? {}),
+              rawText: resumeText,
+              fullText: resumeText,
+              text: resumeText,
+              extractedAt: new Date().toISOString(),
+            },
+          })
           .eq("id", resumeId);
       }
     }
@@ -194,6 +209,16 @@ Respond in JSON format with this structure:
 
     // If we have a resumeId, update the resume record with analysis
     if (resumeId) {
+      // If we didn't load the resume earlier (e.g., caller provided resumeText), fetch existing parsed_content to merge safely.
+      if (!existingParsedContent) {
+        const { data: existing } = await supabase
+          .from("resumes")
+          .select("parsed_content")
+          .eq("id", resumeId)
+          .single();
+        existingParsedContent = existing?.parsed_content ?? null;
+      }
+
       await supabase
         .from("resumes")
         .update({
@@ -201,7 +226,12 @@ Respond in JSON format with this structure:
           skills: analysis.skills,
           experience_years: analysis.experienceYears,
           parsed_content: {
+            ...(existingParsedContent ?? {}),
             ...analysis,
+            // Persist the full extracted resume text so job matching can use it reliably.
+            rawText: resumeText,
+            fullText: resumeText,
+            text: resumeText,
             analyzedAt: new Date().toISOString(),
           },
         })
