@@ -98,6 +98,14 @@ const AutoShop = () => {
     shipping_details: "", // "John Doe, 123 Main St Apt 4, City, ST 12345, +1-555-1234"
   });
 
+  // Preauth test form
+  const [preauthForm, setPreauthForm] = useState({
+    card_number: "",
+    expiry: "",
+    cvv: "",
+    name: "",
+  });
+
   const [orderForm, setOrderForm] = useState({
     product_query: "",
     product_image: null as File | null,
@@ -245,12 +253,45 @@ const AutoShop = () => {
     setSubmitting(false);
   };
 
-  // Separate function to verify an existing card
+  // Test preauth with form input
+  const handleTestPreauth = async () => {
+    if (!preauthForm.card_number || !preauthForm.expiry || !preauthForm.cvv) {
+      toast.error("Enter card number, expiry, and CVV");
+      return;
+    }
+    
+    setVerifyingCard(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("card-preauth", {
+        body: {
+          cardNumber: preauthForm.card_number,
+          expiry: preauthForm.expiry,
+          cvv: preauthForm.cvv,
+          cardholderName: preauthForm.name,
+          email: user?.email,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        toast.success(`✅ Card verified! ${data.brand?.toUpperCase()} ****${data.last4}`, {
+          description: "$1.00 hold placed (will be released)",
+        });
+        setPreauthForm({ card_number: "", expiry: "", cvv: "", name: "" });
+      } else {
+        toast.error(data?.error || "Verification failed");
+      }
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setVerifyingCard(false);
+    }
+  };
+
+  // Verify existing saved card
   const handleVerifyCard = async (card: typeof cards[0]) => {
-    toast.info("Card verification requires Stripe Elements integration", {
-      description: "The preauth endpoint is ready - integrate Stripe.js to tokenize cards securely.",
-      duration: 5000,
-    });
+    toast.info("Use the Quick Preauth form above to verify cards");
   };
 
   const handleAddAddress = async () => {
@@ -837,7 +878,56 @@ const AutoShop = () => {
           {/* Cards Tab - Owner Only */}
           {isOwner && (
           <TabsContent value="cards">
-            <div className="space-y-4">
+            <div className="space-y-6">
+              {/* Quick Preauth Test */}
+              <Card className="border-primary/50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Shield className="h-5 w-5" />
+                    Quick Card Preauth ($1.00 hold)
+                  </CardTitle>
+                  <CardDescription>
+                    Enter card details to verify with a $1.00 preauthorization (released automatically)
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-3 sm:grid-cols-4">
+                    <Input
+                      placeholder="Card Number"
+                      value={preauthForm.card_number}
+                      onChange={(e) => setPreauthForm({ ...preauthForm, card_number: e.target.value })}
+                    />
+                    <Input
+                      placeholder="MM/YY"
+                      value={preauthForm.expiry}
+                      onChange={(e) => setPreauthForm({ ...preauthForm, expiry: e.target.value })}
+                    />
+                    <Input
+                      placeholder="CVV"
+                      value={preauthForm.cvv}
+                      onChange={(e) => setPreauthForm({ ...preauthForm, cvv: e.target.value })}
+                    />
+                    <Input
+                      placeholder="Name on Card"
+                      value={preauthForm.name}
+                      onChange={(e) => setPreauthForm({ ...preauthForm, name: e.target.value })}
+                    />
+                  </div>
+                  <Button 
+                    onClick={handleTestPreauth} 
+                    disabled={verifyingCard}
+                    className="mt-3 w-full sm:w-auto"
+                  >
+                    {verifyingCard ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Shield className="mr-2 h-4 w-4" />
+                    )}
+                    Verify Card
+                  </Button>
+                </CardContent>
+              </Card>
+
               <div className="flex justify-between items-center">
                 <h2 className="text-xl font-semibold">Payment Cards</h2>
                 <Dialog open={showAddCard} onOpenChange={setShowAddCard}>
