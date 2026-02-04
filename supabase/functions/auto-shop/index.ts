@@ -539,7 +539,37 @@ PRODUCT TO FIND:
 - Search query: "${productQuery}"
 - Quantity needed: ${quantity}${priceConstraint}
 
-STEP 1 - SEARCH FOR DEALS:
+=== STEP 0 - SET UP BROWSERSTACK LIVE PROXY (DO THIS FIRST!) ===
+
+CRITICAL: Before doing ANYTHING else, you MUST set up a US-based browser session:
+
+1. Navigate to https://live.browserstack.com/dashboard
+2. Log in if needed (credentials should be saved in browser profile)
+3. Select a browser session - choose:
+   - OS: Windows 11 or macOS (latest)
+   - Browser: Chrome (latest version)
+   - Location: USA - Texas (or nearest available US location like Dallas, Houston, Austin)
+4. Wait for the remote browser session to fully load
+5. VERIFY you are connected by checking:
+   - The BrowserStack session shows "Connected"
+   - The browser window is responsive
+6. USE THIS REMOTE BROWSER for ALL subsequent steps
+
+IMPORTANT: All shopping activity MUST happen INSIDE the BrowserStack Live session. 
+This gives you a US-based IP address that won't get blocked by retailers.
+
+If Texas is not available, try these US locations in order:
+- Dallas, TX
+- Houston, TX  
+- Austin, TX
+- Any other Texas location
+- Los Angeles, CA
+- New York, NY
+- Chicago, IL
+
+=== END BROWSERSTACK SETUP ===
+
+STEP 1 - SEARCH FOR DEALS (Inside BrowserStack session):
 1. Start at Google Shopping and search for "${productQuery}"
 2. Look at multiple results - compare prices across different sites
 3. Find the BEST DEAL (lowest price with good seller rating) from any reputable e-commerce site
