@@ -15,6 +15,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Elements } from "@stripe/react-stripe-js";
+import { stripePromise } from "@/lib/stripe";
+import { StripeCardInput } from "@/components/shop/StripeCardInput";
 import { 
   CreditCard, 
   MapPin, 
@@ -98,13 +101,11 @@ const AutoShop = () => {
     shipping_details: "", // "John Doe, 123 Main St Apt 4, City, ST 12345, +1-555-1234"
   });
 
-  // Preauth test form
-  const [preauthForm, setPreauthForm] = useState({
-    card_number: "",
-    expiry: "",
-    cvv: "",
-    name: "",
-  });
+  // Card verification success handler
+  const handleCardVerified = (data: { last4: string; brand: string; paymentIntentId: string }) => {
+    console.log("[AutoShop] Card verified:", data);
+    // Optionally refresh cards list or update UI
+  };
 
   const [orderForm, setOrderForm] = useState({
     product_query: "",
@@ -253,45 +254,10 @@ const AutoShop = () => {
     setSubmitting(false);
   };
 
-  // Test preauth with form input
-  const handleTestPreauth = async () => {
-    if (!preauthForm.card_number || !preauthForm.expiry || !preauthForm.cvv) {
-      toast.error("Enter card number, expiry, and CVV");
-      return;
-    }
-    
-    setVerifyingCard(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("card-preauth", {
-        body: {
-          cardNumber: preauthForm.card_number,
-          expiry: preauthForm.expiry,
-          cvv: preauthForm.cvv,
-          cardholderName: preauthForm.name,
-          email: user?.email,
-        },
-      });
-
-      if (error) throw error;
-
-      if (data?.success) {
-        toast.success(`✅ Card verified! ${data.brand?.toUpperCase()} ****${data.last4}`, {
-          description: "$1.00 hold placed (will be released)",
-        });
-        setPreauthForm({ card_number: "", expiry: "", cvv: "", name: "" });
-      } else {
-        toast.error(data?.error || "Verification failed");
-      }
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setVerifyingCard(false);
-    }
-  };
-
-  // Verify existing saved card
+  // Verify existing saved card - now handled by Stripe Elements
   const handleVerifyCard = async (card: typeof cards[0]) => {
-    toast.info("Use the Quick Preauth form above to verify cards");
+    toast.info("Use the Stripe card form above to verify cards");
+  };
   };
 
   const handleAddAddress = async () => {
@@ -879,52 +845,24 @@ const AutoShop = () => {
           {isOwner && (
           <TabsContent value="cards">
             <div className="space-y-6">
-              {/* Quick Preauth Test */}
+              {/* Stripe Card Verification */}
               <Card className="border-primary/50">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-lg">
                     <Shield className="h-5 w-5" />
-                    Quick Card Preauth ($1.00 hold)
+                    Verify Card ($1.00 hold)
                   </CardTitle>
                   <CardDescription>
-                    Enter card details to verify with a $1.00 preauthorization (released automatically)
+                    Securely verify your card with a $1.00 preauthorization (released automatically in ~7 days)
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid gap-3 sm:grid-cols-4">
-                    <Input
-                      placeholder="Card Number"
-                      value={preauthForm.card_number}
-                      onChange={(e) => setPreauthForm({ ...preauthForm, card_number: e.target.value })}
+                  <Elements stripe={stripePromise}>
+                    <StripeCardInput 
+                      userEmail={user?.email || undefined}
+                      onSuccess={handleCardVerified}
                     />
-                    <Input
-                      placeholder="MM/YY"
-                      value={preauthForm.expiry}
-                      onChange={(e) => setPreauthForm({ ...preauthForm, expiry: e.target.value })}
-                    />
-                    <Input
-                      placeholder="CVV"
-                      value={preauthForm.cvv}
-                      onChange={(e) => setPreauthForm({ ...preauthForm, cvv: e.target.value })}
-                    />
-                    <Input
-                      placeholder="Name on Card"
-                      value={preauthForm.name}
-                      onChange={(e) => setPreauthForm({ ...preauthForm, name: e.target.value })}
-                    />
-                  </div>
-                  <Button 
-                    onClick={handleTestPreauth} 
-                    disabled={verifyingCard}
-                    className="mt-3 w-full sm:w-auto"
-                  >
-                    {verifyingCard ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Shield className="mr-2 h-4 w-4" />
-                    )}
-                    Verify Card
-                  </Button>
+                  </Elements>
                 </CardContent>
               </Card>
 

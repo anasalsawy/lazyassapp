@@ -16,36 +16,21 @@ serve(async (req) => {
       apiVersion: "2025-08-27.basil",
     });
 
-    const { cardNumber, expiry, cvv, cardholderName, email } = await req.json();
+    const { paymentMethodId, cardholderName, email } = await req.json();
 
-    if (!cardNumber || !expiry || !cvv) {
-      throw new Error("Card number, expiry, and CVV are required");
+    if (!paymentMethodId) {
+      throw new Error("PaymentMethod ID is required");
     }
 
-    console.log("[CardPreauth] Processing card for:", { email, cardholderName });
+    console.log("[CardPreauth] Processing PaymentMethod:", paymentMethodId);
 
-    // Parse expiry (MM/YY or MM/YYYY)
-    const [expMonth, expYear] = expiry.split("/").map((s: string) => s.trim());
-    const expMonthNum = parseInt(expMonth, 10);
-    let expYearNum = parseInt(expYear, 10);
-    if (expYearNum < 100) expYearNum += 2000;
-
-    // Create PaymentMethod from raw card details
-    const paymentMethod = await stripe.paymentMethods.create({
-      type: "card",
-      card: {
-        number: cardNumber.replace(/\s/g, ""),
-        exp_month: expMonthNum,
-        exp_year: expYearNum,
-        cvc: cvv,
-      },
-      billing_details: {
-        name: cardholderName || undefined,
-        email: email || undefined,
-      },
+    // Retrieve the PaymentMethod to get card details
+    const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+    console.log("[CardPreauth] PaymentMethod retrieved:", { 
+      id: paymentMethod.id, 
+      brand: paymentMethod.card?.brand,
+      last4: paymentMethod.card?.last4 
     });
-
-    console.log("[CardPreauth] PaymentMethod created:", paymentMethod.id);
 
     // Create or retrieve customer
     let customerId: string;
@@ -65,19 +50,24 @@ serve(async (req) => {
     }
 
     // Attach payment method to customer
-    await stripe.paymentMethods.attach(paymentMethod.id, { customer: customerId });
+    await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId });
+    console.log("[CardPreauth] PaymentMethod attached to customer");
 
     // Create $1.00 preauthorization (hold, not charge)
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: 100,
+      amount: 100, // $1.00 in cents
       currency: "usd",
       customer: customerId,
-      payment_method: paymentMethod.id,
-      capture_method: "manual",
+      payment_method: paymentMethodId,
+      capture_method: "manual", // This creates a hold, not a charge
       confirm: true,
       automatic_payment_methods: { enabled: true, allow_redirects: "never" },
       description: "Card verification - $1.00 preauthorization",
-      metadata: { type: "card_verification", cardholder_name: cardholderName || "" },
+      metadata: { 
+        type: "card_verification", 
+        cardholder_name: cardholderName || "",
+        verified_at: new Date().toISOString(),
+      },
     });
 
     console.log("[CardPreauth] PaymentIntent:", { id: paymentIntent.id, status: paymentIntent.status });
@@ -102,7 +92,12 @@ serve(async (req) => {
     
     if (error.type === "StripeCardError") {
       return new Response(
-        JSON.stringify({ success: false, error: error.message, code: error.code, decline_code: error.decline_code }),
+        JSON.stringify({ 
+          success: false, 
+          error: error.message, 
+          code: error.code, 
+          decline_code: error.decline_code 
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
       );
     }
