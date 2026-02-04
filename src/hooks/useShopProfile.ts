@@ -71,11 +71,42 @@ export function useShopProfile() {
         body: { action, ...body },
       });
 
-      if (error) throw error;
+      if (error) {
+        // Check for insufficient credits error from the response
+        const errorMessage = error.message || "";
+        if (errorMessage.includes("credits") || errorMessage.includes("INSUFFICIENT_CREDITS")) {
+          toast.error("Browser Use API credits insufficient", {
+            description: "Please add credits to your Browser Use account to continue.",
+            duration: 10000,
+          });
+          return { success: false, code: "INSUFFICIENT_CREDITS" };
+        }
+        throw error;
+      }
+      
+      // Also check for error code in successful response (edge function returned 402)
+      if (data?.code === "INSUFFICIENT_CREDITS") {
+        toast.error("Browser Use API credits insufficient", {
+          description: "Please add credits to your Browser Use account to continue.",
+          duration: 10000,
+        });
+        return data;
+      }
+      
       return data;
     } catch (error: unknown) {
       console.error("[ShopProfile]", error);
       const message = error instanceof Error ? error.message : "Agent error";
+      
+      // Final check for credits error
+      if (message.includes("credits") || message.includes("balance")) {
+        toast.error("Browser Use API credits insufficient", {
+          description: "Please add credits to your Browser Use account.",
+          duration: 10000,
+        });
+        return { success: false, code: "INSUFFICIENT_CREDITS" };
+      }
+      
       toast.error(message);
       return null;
     }

@@ -254,6 +254,17 @@ async function handleStartLogin(
 
   if (!taskRes.ok) {
     const error = await taskRes.text();
+    // Check for insufficient credits error
+    if (error.includes("credits") || error.includes("balance") || taskRes.status === 402) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Browser Use API credits are insufficient. Please add credits to your Browser Use account.",
+          code: "INSUFFICIENT_CREDITS",
+        }),
+        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     throw new Error(`Failed to start login: ${error}`);
   }
 
@@ -443,6 +454,26 @@ async function handleStartOrder(
   if (!browserUseResponse.ok) {
     const errorData = await browserUseResponse.text();
     console.error("[AutoShop] Browser Use API error:", errorData);
+    
+    // Check for insufficient credits error
+    if (errorData.includes("credits") || errorData.includes("balance") || browserUseResponse.status === 402) {
+      await supabase
+        .from("auto_shop_orders")
+        .update({ 
+          status: "failed",
+          error_message: "Browser Use API credits are insufficient" 
+        })
+        .eq("id", orderId);
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Browser Use API credits are insufficient. Please add credits to your Browser Use account.",
+          code: "INSUFFICIENT_CREDITS",
+        }),
+        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     
     await supabase
       .from("auto_shop_orders")
