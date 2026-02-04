@@ -12,11 +12,94 @@ serve(async (req) => {
   }
 
   try {
-    const { resumeText, jobDescription } = await req.json();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const { resumeId, resumeText: providedText, jobDescription } = await req.json();
+
+    let resumeText = providedText;
+
+    // If resumeId is provided but no text, fetch and parse the resume
+    if (resumeId && !resumeText) {
+      console.log(`Fetching resume with ID: ${resumeId}`);
+      
+      // Get resume record
+      const { data: resume, error: resumeError } = await supabase
+        .from("resumes")
+        .select("*")
+        .eq("id", resumeId)
+        .single();
+
+      if (resumeError || !resume) {
+        console.error("Resume not found:", resumeError);
+        return new Response(
+          JSON.stringify({ error: "Resume not found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // If resume already has parsed content, use it
+      if (resume.parsed_content?.text) {
+        resumeText = resume.parsed_content.text;
+      } else if (resume.file_path) {
+        // Download the file from storage
+        const { data: fileData, error: downloadError } = await supabase.storage
+          .from("resumes")
+          .download(resume.file_path);
+
+        if (downloadError || !fileData) {
+          console.error("Failed to download resume file:", downloadError);
+          return new Response(
+            JSON.stringify({ error: "Failed to download resume file" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // For PDF files, we'll extract basic text (simplified approach)
+        // In production, you'd use a PDF parsing library
+        const arrayBuffer = await fileData.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        
+        // Try to extract text content from PDF
+        // This is a simplified extraction - for production, use a proper PDF library
+        let extractedText = "";
+        try {
+          // Convert bytes to string and look for text patterns
+          const textDecoder = new TextDecoder("utf-8", { fatal: false });
+          const rawText = textDecoder.decode(bytes);
+          
+          // Extract readable text portions (simplified PDF text extraction)
+          const textMatches = rawText.match(/\(([^)]+)\)/g);
+          if (textMatches) {
+            extractedText = textMatches
+              .map(m => m.slice(1, -1))
+              .filter(t => t.length > 2 && /[a-zA-Z]/.test(t))
+              .join(" ");
+          }
+          
+          // If we couldn't extract much, use filename as context
+          if (extractedText.length < 100) {
+            extractedText = `Resume document: ${resume.original_filename || resume.title}. Please analyze this as a professional resume and provide general optimization suggestions.`;
+          }
+        } catch (e) {
+          console.error("Text extraction error:", e);
+          extractedText = `Resume document: ${resume.original_filename || resume.title}. Please analyze this as a professional resume and provide general optimization suggestions.`;
+        }
+        
+        resumeText = extractedText;
+        
+        // Store the extracted text for future use
+        await supabase
+          .from("resumes")
+          .update({ parsed_content: { text: resumeText } })
+          .eq("id", resumeId);
+      }
+    }
 
     if (!resumeText) {
       return new Response(
-        JSON.stringify({ error: "Resume text is required" }),
+        JSON.stringify({ error: "Resume text is required. Please provide resumeText or a valid resumeId with an uploaded file." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -107,6 +190,22 @@ Respond in JSON format with this structure:
         keywordSuggestions: [],
         matchScore: null,
       };
+    }
+
+    // If we have a resumeId, update the resume record with analysis
+    if (resumeId) {
+      await supabase
+        .from("resumes")
+        .update({
+          ats_score: analysis.atsScore,
+          skills: analysis.skills,
+          experience_years: analysis.experienceYears,
+          parsed_content: {
+            ...analysis,
+            analyzedAt: new Date().toISOString(),
+          },
+        })
+        .eq("id", resumeId);
     }
 
     console.log("Resume analysis completed successfully");
