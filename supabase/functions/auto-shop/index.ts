@@ -1284,6 +1284,9 @@ async function fetchIpWithBrowserUse(
     if (customProxy && bridgeUrl && bridgeApiKey) {
       console.log(`[AutoShop] Routing through bridge for custom proxy: ${customProxy.server}`);
       
+      // For proxy testing, we'll use a simple HTTP health check approach
+      // The bridge's /run-task with a URL will navigate and take screenshot
+      // We need to wait for the task to complete
       const bridgeResponse = await fetch(`${bridgeUrl}/run-task`, {
         method: "POST",
         headers: {
@@ -1291,7 +1294,7 @@ async function fetchIpWithBrowserUse(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          task: "https://httpbin.org/ip",
+          task: "Navigate to https://httpbin.org/ip and extract the IP address from the page. The page shows JSON with an 'origin' field containing the IP. Return ONLY the IP address.",
           proxy: {
             server: customProxy.server,
             username: customProxy.username,
@@ -1310,13 +1313,13 @@ async function fetchIpWithBrowserUse(
       const runId = bridgeResult.run_id;
       console.log(`[AutoShop] Bridge task created: ${runId}`);
 
-      // Poll for result (max 60 seconds)
+      // Poll for result (max 2 minutes - bridge tasks on free tier can be slow)
       let attempts = 0;
-      const maxAttempts = 30;
+      const maxAttempts = 60;
       let taskStatus = "pending";
       let taskOutput = "";
 
-      while (attempts < maxAttempts && taskStatus !== "finished" && taskStatus !== "error") {
+      while (attempts < maxAttempts && !["finished", "error", "failed"].includes(taskStatus)) {
         await new Promise(resolve => setTimeout(resolve, 2000));
         
         const statusRes = await fetch(`${bridgeUrl}/runs/${runId}/status`);
@@ -1324,7 +1327,11 @@ async function fetchIpWithBrowserUse(
         if (statusRes.ok) {
           const statusData = await statusRes.json();
           taskStatus = statusData.status;
-          taskOutput = statusData.output || JSON.stringify(statusData);
+          taskOutput = statusData.output || statusData.screenshot || JSON.stringify(statusData);
+          
+          if (attempts % 5 === 0) {
+            console.log(`[AutoShop] Bridge poll attempt ${attempts + 1}: status=${taskStatus}`);
+          }
         }
         
         attempts++;
