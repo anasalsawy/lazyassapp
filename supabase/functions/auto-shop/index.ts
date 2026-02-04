@@ -325,126 +325,37 @@ async function handleStartLogin(
   };
 
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
-
   const expectedProfileId: string = profile.browser_use_profile_id;
 
-  // Create a SESSION (not task) for manual login - this gives us a proper liveUrl
-  // Always use US proxy for sessions to avoid geo-restrictions
-  // CRITICAL: Include profile_id in BOTH formats to ensure compatibility
-  const buildSessionPayload = (mode: "default" | "compat") => {
-    const base: Record<string, unknown> = {
-      startUrl: loginUrl,
-      keepAlive: true,
-      browserScreenWidth: 1280,
-      browserScreenHeight: 800,
-      proxyCountryCode: "us", // Always use US proxy (lowercase required)
-      // Saving flags (API versions differ)
-      save_browser_data: true,
-      saveBrowserData: true,
-    };
-
-    if (mode === "default") {
-      return {
-        ...base,
-        profileId: expectedProfileId,
-        profile_id: expectedProfileId,
-      };
-    }
-
-    // Compatibility mode: some versions only accept snake_case or different keys
-    return {
-      ...base,
-      profile_id: expectedProfileId,
-      profileId: expectedProfileId,
-      profileID: expectedProfileId,
-      profile: expectedProfileId,
-    };
+  // Per Browser Use API docs (https://docs.cloud.browser-use.com/api-reference/latest-api-v-2/sessions/create-session-sessions-post):
+  // The ONLY accepted key is "profileId" (camelCase, UUID format)
+  // The response does NOT echo back profileId - so we trust the API if it succeeds
+  const sessionPayload = {
+    profileId: expectedProfileId, // CRITICAL: This is the only field the API accepts
+    startUrl: loginUrl,
+    keepAlive: true,
+    browserScreenWidth: 1280,
+    browserScreenHeight: 800,
+    proxyCountryCode: "us",
   };
 
-  const createAndVerifySession = async (mode: "default" | "compat") => {
-    const sessionPayload = buildSessionPayload(mode);
-    console.log(`[AutoShop] Creating session (${mode}) with payload:`, JSON.stringify(sessionPayload));
+  console.log(`[AutoShop] Creating session with profileId=${expectedProfileId}, startUrl=${loginUrl}`);
 
-    const { baseUrl, status, data: sessionData, path: createPath } = await browserUseFetchJsonMultiPath(
-      apiKey,
-      ["/v2/sessions", "/api/v2/sessions"],
-      { method: "POST", body: JSON.stringify(sessionPayload) },
-    );
+  const { data: sessionData } = await browserUseFetchJson(
+    apiKey,
+    "/v2/sessions",
+    { method: "POST", body: JSON.stringify(sessionPayload) },
+  );
 
-    console.log(`[AutoShop] Session create (${mode}) ok via ${baseUrl}${createPath} (status ${status})`);
-    console.log(`[AutoShop] Session create data: ${JSON.stringify(sessionData)}`);
+  console.log(`[AutoShop] Session response:`, JSON.stringify(sessionData));
 
-    const sessionId = (sessionData.id as string) || (sessionData.session_id as string);
-    if (!sessionId) throw new Error("Browser Use session created but returned no session id");
-
-    // The sessions endpoint returns liveUrl (not live_view_url)
-    const liveViewUrl =
-      (sessionData.liveUrl as string) ||
-      (sessionData.live_url as string) ||
-      (sessionData.live_view_url as string) ||
-      `https://browser-use.com/live/${sessionId}`;
-
-    // DO NOT trust create-response; verify by fetching session details
-    let details: BrowserUseJson | null = null;
-    try {
-      const detailsRes = await browserUseFetchJsonMultiPath(
-        apiKey,
-        [`/v2/sessions/${sessionId}`, `/api/v2/sessions/${sessionId}`],
-        { method: "GET" },
-      );
-      details = detailsRes.data;
-      console.log(`[AutoShop] Session details via ${detailsRes.baseUrl}${detailsRes.path}: ${JSON.stringify(details)}`);
-    } catch (e) {
-      console.warn(`[AutoShop] Could not fetch session details for verification:`, e);
-    }
-
-    const attachedProfileId =
-      (details?.profileId as string) ||
-      (details?.profile_id as string) ||
-      (sessionData.profileId as string) ||
-      (sessionData.profile_id as string);
-
-    const attachedOk = attachedProfileId && attachedProfileId === expectedProfileId;
-    if (!attachedOk) {
-      console.error(
-        `[AutoShop] ❌ Session profile mismatch. expected=${expectedProfileId} attached=${attachedProfileId || "none"}`,
-      );
-
-      // Stop the broken session immediately
-      try {
-        await browserUseFetchJsonMultiPath(
-          apiKey,
-          [`/v2/sessions/${sessionId}/stop`, `/api/v2/sessions/${sessionId}/stop`],
-          { method: "POST" },
-        );
-      } catch (stopErr) {
-        console.error(`[AutoShop] Failed to stop broken session:`, stopErr);
-      }
-
-      return { ok: false as const, sessionId, liveViewUrl, attachedProfileId };
-    }
-
-    console.log(`[AutoShop] ✓ Profile verified attached: ${attachedProfileId}`);
-    return { ok: true as const, sessionId, liveViewUrl, attachedProfileId };
-  };
-
-  // Attempt 1: default payload
-  let verified = await createAndVerifySession("default");
-  // Attempt 2: compatibility payload
-  if (!verified.ok) {
-    console.warn(`[AutoShop] Retrying session creation with compatibility payload...`);
-    verified = await createAndVerifySession("compat");
+  const sessionId = (sessionData.id as string) || (sessionData.session_id as string);
+  if (!sessionId) {
+    throw new Error("Browser Use session created but returned no session id");
   }
 
-  if (!verified.ok) {
-    throw new Error(
-      "Session was created but the profile was NOT attached. I stopped the session automatically—please retry.",
-    );
-  }
-
-  const sessionId = verified.sessionId;
-  const liveViewUrl = verified.liveViewUrl;
-  const attachedProfileId = verified.attachedProfileId;
+  // The API uses liveUrl (not live_view_url)
+  const liveViewUrl = (sessionData.liveUrl as string) || `https://browser-use.com/live/${sessionId}`;
 
   // Update pending login
   await supabase
@@ -456,7 +367,7 @@ async function handleStartLogin(
     })
     .eq("user_id", userId);
 
-  console.log(`[AutoShop] Login session started for ${site}: ${sessionId}, liveUrl: ${liveViewUrl}`);
+  console.log(`[AutoShop] Login session started: id=${sessionId}, liveUrl=${liveViewUrl}`);
 
   return new Response(
     JSON.stringify({
@@ -465,7 +376,7 @@ async function handleStartLogin(
       sessionId,
       liveViewUrl,
       site,
-      profileAttached: attachedProfileId, // Return this for debugging
+      profileId: expectedProfileId,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
