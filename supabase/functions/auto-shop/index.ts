@@ -264,24 +264,23 @@ async function handleCreateProfile(
   }
 
   // Create Browser Use profile
-  const profileRes = await fetch("https://api.browser-use.com/api/v2/profiles", {
-    method: "POST",
-    headers: {
-      "X-Browser-Use-API-Key": apiKey,
-      "Content-Type": "application/json",
+  // NOTE: Browser Use has historically supported both `/v2/...` and `/api/v2/...`.
+  // Some environments silently accept the request on one path but omit newer fields.
+  // We try both and log which one succeeded.
+  const profileName = `shop-${userId.substring(0, 8)}`;
+  const profileCreate = await browserUseFetchJsonMultiPath(
+    apiKey,
+    ["/api/v2/profiles", "/v2/profiles"],
+    {
+      method: "POST",
+      body: JSON.stringify({ name: profileName }),
     },
-    body: JSON.stringify({
-      name: `shop-${userId.substring(0, 8)}`,
-    }),
-  });
+  );
 
-  if (!profileRes.ok) {
-    const error = await profileRes.text();
-    throw new Error(`Failed to create profile: ${error}`);
-  }
+  console.log(`[AutoShop] Profile create ok via ${profileCreate.baseUrl}${profileCreate.path}`);
 
-  const profileData = await profileRes.json();
-  const profileId = profileData.id || profileData.profile_id;
+  const profileData = profileCreate.data;
+  const profileId = (profileData.id as string) || (profileData.profile_id as string);
 
   // Upsert the profile record
   await supabase.from("browser_profiles").upsert({
@@ -341,11 +340,17 @@ async function handleStartLogin(
 
   console.log(`[AutoShop] Creating session with profileId=${expectedProfileId}, startUrl=${loginUrl}`);
 
-  const { data: sessionData } = await browserUseFetchJson(
+  // Create session: try both `/api/v2` and `/v2` variants.
+  // Reason: if we hit an older/compat endpoint, it may ignore `profileId` without error.
+  const sessionCreate = await browserUseFetchJsonMultiPath(
     apiKey,
-    "/v2/sessions",
+    ["/api/v2/sessions", "/v2/sessions"],
     { method: "POST", body: JSON.stringify(sessionPayload) },
   );
+
+  console.log(`[AutoShop] Session create ok via ${sessionCreate.baseUrl}${sessionCreate.path}`);
+
+  const sessionData = sessionCreate.data;
 
   console.log(`[AutoShop] Session response:`, JSON.stringify(sessionData));
 
