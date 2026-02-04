@@ -250,7 +250,7 @@ async function handleStartLogin(
       keepAlive: true, // Keep session open for manual login
       browserScreenWidth: 1280,
       browserScreenHeight: 800,
-      proxyCountryCode: "US", // Always use US proxy
+      proxyCountryCode: "us", // Always use US proxy (lowercase required)
     }),
   });
 
