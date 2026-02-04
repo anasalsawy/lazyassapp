@@ -1,31 +1,62 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Building2, MapPin, DollarSign, Sparkles, Heart, Loader2 } from "lucide-react";
+import { Building2, MapPin, DollarSign, Sparkles, Heart, Loader2, Trash2 } from "lucide-react";
 import { useJobs } from "@/hooks/useJobs";
 import { useJobPreferences } from "@/hooks/useJobPreferences";
 import { useResumes } from "@/hooks/useResumes";
 import { useApplications } from "@/hooks/useApplications";
 import { Link } from "react-router-dom";
+import { useToast } from "@/hooks/use-toast";
 
 export const JobMatches = () => {
-  const { jobs, loading, searching, searchJobs, toggleSaved } = useJobs();
+  const { jobs, loading, searching, searchJobs, toggleSaved, clearAllJobs } = useJobs();
   const { preferences } = useJobPreferences();
   const { primaryResume } = useResumes();
   const { createApplication } = useApplications();
+  const { toast } = useToast();
 
   const topJobs = jobs.slice(0, 3);
 
-  const handleSearch = () => {
-    if (preferences) {
-      searchJobs({
-        jobTitles: preferences.job_titles,
-        locations: preferences.locations,
-        remotePreference: preferences.remote_preference,
-        salaryMin: preferences.salary_min,
-        salaryMax: preferences.salary_max,
-        industries: preferences.industries,
-      }, primaryResume?.skills || []);
+  const handleSearch = async () => {
+    if (!primaryResume) {
+      toast({
+        title: "No resume found",
+        description: "Please upload a resume first to match jobs with your skills.",
+        variant: "destructive"
+      });
+      return;
     }
+
+    // Build complete resume data for matching
+    const resumeData = {
+      skills: primaryResume.skills || [],
+      experienceYears: primaryResume.experience_years || 0,
+      parsedContent: primaryResume.parsed_content || null,
+      atsScore: primaryResume.ats_score || null,
+      // We could extract full text from parsed_content if available
+      fullText: primaryResume.parsed_content?.rawText || 
+                primaryResume.parsed_content?.fullText ||
+                ""
+    };
+
+    // Build preferences with fallbacks
+    const jobPrefs = {
+      jobTitles: preferences?.job_titles || [],
+      locations: preferences?.locations || [],
+      remotePreference: preferences?.remote_preference || "any",
+      salaryMin: preferences?.salary_min || null,
+      salaryMax: preferences?.salary_max || null,
+      industries: preferences?.industries || [],
+    };
+
+    console.log("Searching with resume data:", {
+      skillsCount: resumeData.skills?.length,
+      experience: resumeData.experienceYears,
+      hasContent: !!resumeData.parsedContent,
+      atsScore: resumeData.atsScore
+    });
+
+    await searchJobs(jobPrefs, resumeData);
   };
 
   const handleQuickApply = async (jobId: string) => {
@@ -53,6 +84,16 @@ export const JobMatches = () => {
           <Sparkles className="w-4 h-4 text-accent" />
         </div>
         <div className="flex items-center gap-2">
+          {jobs.length > 0 && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={clearAllJobs}
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          )}
           <Button 
             variant="outline" 
             size="sm" 
@@ -62,7 +103,7 @@ export const JobMatches = () => {
             {searching ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Searching...
+                Matching...
               </>
             ) : (
               "Find Jobs"
@@ -74,11 +115,19 @@ export const JobMatches = () => {
         </div>
       </div>
 
+      {!primaryResume && (
+        <div className="mb-4 p-3 bg-warning/10 border border-warning/20 rounded-lg">
+          <p className="text-sm text-warning">
+            Upload a resume to enable intelligent job matching based on your skills and experience.
+          </p>
+        </div>
+      )}
+
       {topJobs.length === 0 ? (
         <div className="text-center py-8">
           <p className="text-muted-foreground mb-4">No job matches yet.</p>
-          <Button onClick={handleSearch} disabled={searching}>
-            {searching ? "Searching..." : "Search for Jobs"}
+          <Button onClick={handleSearch} disabled={searching || !primaryResume}>
+            {searching ? "Matching..." : "Search for Jobs"}
           </Button>
         </div>
       ) : (
@@ -108,9 +157,23 @@ export const JobMatches = () => {
                     />
                   </button>
                   {job.match_score && (
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-success/10">
-                      <span className="text-xs font-bold text-success">{job.match_score}%</span>
-                      <span className="text-xs text-success">match</span>
+                    <div className={`flex items-center gap-1 px-2 py-1 rounded-full ${
+                      job.match_score >= 90 ? "bg-success/20" :
+                      job.match_score >= 80 ? "bg-success/10" :
+                      job.match_score >= 70 ? "bg-warning/10" :
+                      "bg-muted"
+                    }`}>
+                      <span className={`text-xs font-bold ${
+                        job.match_score >= 90 ? "text-success" :
+                        job.match_score >= 80 ? "text-success" :
+                        job.match_score >= 70 ? "text-warning" :
+                        "text-muted-foreground"
+                      }`}>{job.match_score}%</span>
+                      <span className={`text-xs ${
+                        job.match_score >= 80 ? "text-success" :
+                        job.match_score >= 70 ? "text-warning" :
+                        "text-muted-foreground"
+                      }`}>match</span>
                     </div>
                   )}
                 </div>
