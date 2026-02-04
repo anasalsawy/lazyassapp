@@ -1196,57 +1196,30 @@ async function handleSetProxy(
   );
 }
 
+// Helper to look up IP geolocation
+async function getIpGeolocation(ip: string): Promise<{ country: string; city: string; region: string } | null> {
+  try {
+    const res = await fetch(`https://ipinfo.io/${ip}/json`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      country: data.country || "Unknown",
+      city: data.city || "Unknown",
+      region: data.region || "Unknown",
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Test proxy by making a simple request through Browser Use API
-// Helper to fetch IP from Browser Use - creates a SESSION with proxy, then runs task
+// Helper to fetch IP from Browser Use - uses proxyCountryCode for built-in proxy
 async function fetchIpWithBrowserUse(
   apiKey: string,
-  proxyConfig?: Record<string, string>
-): Promise<{ ip: string | null; status: string; error?: string }> {
+  proxyCountryCode?: string // e.g., 'gb' for UK, 'us' for US
+): Promise<{ ip: string | null; status: string; error?: string; geo?: { country: string; city: string; region: string } | null }> {
   try {
-    let sessionId: string | null = null;
-
-    // If proxy is configured, create a session with customProxy first
-    if (proxyConfig) {
-      console.log(`[AutoShop] Creating session with proxy: server=${proxyConfig.server}, username=${proxyConfig.username}`);
-      
-      // Browser Use Cloud API expects proxy config in session
-      const sessionPayload = {
-        customProxy: {
-          server: proxyConfig.server, // Must include http:// prefix
-          ...(proxyConfig.username && { username: proxyConfig.username }),
-          ...(proxyConfig.password && { password: proxyConfig.password }),
-        },
-        keepAlive: false, // Close session after task completes
-      };
-      
-      console.log(`[AutoShop] Session payload:`, JSON.stringify({
-        ...sessionPayload,
-        customProxy: { ...sessionPayload.customProxy, password: sessionPayload.customProxy.password ? "[REDACTED]" : undefined }
-      }, null, 2));
-      
-      const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
-        method: "POST",
-        headers: {
-          "X-Browser-Use-API-Key": apiKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(sessionPayload),
-      });
-
-      if (!sessionRes.ok) {
-        const errorText = await sessionRes.text();
-        console.log(`[AutoShop] Session creation failed: ${errorText}`);
-        return { ip: null, status: "failed", error: `Session creation failed: ${errorText}` };
-      }
-
-      const sessionData = await sessionRes.json();
-      sessionId = sessionData.id;
-      console.log(`[AutoShop] Session created with customProxy: ${sessionId}`);
-    } else {
-      console.log("[AutoShop] Creating task WITHOUT proxy (no session needed)");
-    }
-
-    // Build the task payload
+    // Build the task payload - use proxyCountryCode for built-in proxy routing
     const taskPayload: Record<string, unknown> = {
       task: "Navigate to https://httpbin.org/ip and extract the IP address shown on the page. Return ONLY the IP address, nothing else.",
       startUrl: "https://httpbin.org/ip",
@@ -1254,9 +1227,12 @@ async function fetchIpWithBrowserUse(
       maxSteps: 5,
     };
 
-    // If we created a session with proxy, use it
-    if (sessionId) {
-      taskPayload.sessionId = sessionId;
+    // If proxy country is specified, use Browser Use's built-in proxy
+    if (proxyCountryCode) {
+      taskPayload.proxyCountryCode = proxyCountryCode;
+      console.log(`[AutoShop] Using built-in proxy for country: ${proxyCountryCode}`);
+    } else {
+      console.log("[AutoShop] Creating task WITHOUT proxy");
     }
 
     console.log(`[AutoShop] Task payload:`, JSON.stringify(taskPayload, null, 2));
@@ -1305,9 +1281,19 @@ async function fetchIpWithBrowserUse(
     console.log(`[AutoShop] Task ${taskId} finished with status: ${taskStatus}, output: ${taskOutput}`);
     
     const ipMatch = taskOutput.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+    const ip = ipMatch ? ipMatch[1] : null;
+    
+    // Look up geolocation for the IP
+    let geo = null;
+    if (ip) {
+      geo = await getIpGeolocation(ip);
+      console.log(`[AutoShop] IP ${ip} geolocation: ${geo?.city}, ${geo?.region}, ${geo?.country}`);
+    }
+    
     return { 
-      ip: ipMatch ? ipMatch[1] : null, 
-      status: taskStatus 
+      ip, 
+      status: taskStatus,
+      geo 
     };
   } catch (error) {
     console.log(`[AutoShop] Task error:`, error);
@@ -1343,32 +1329,24 @@ async function handleTestProxy(
     );
   }
 
-  console.log(`[AutoShop] Testing proxy: ${profile.proxy_server}`);
-
-  // Ensure proxy server has protocol prefix (required by Browser Use)
-  let proxyServer = profile.proxy_server;
-  if (!proxyServer.startsWith("http://") && !proxyServer.startsWith("https://") && !proxyServer.startsWith("socks")) {
-    proxyServer = `http://${proxyServer}`;
-  }
-
-  // Build proxy config with proper format for Browser Use Cloud API
-  const proxyConfig: Record<string, string> = {
-    server: proxyServer,
-  };
+  console.log(`[AutoShop] Testing proxy config from profile...`);
+  console.log(`[AutoShop] Proxy server: ${profile.proxy_server}`);
+  console.log(`[AutoShop] Proxy username: ${profile.proxy_username}`);
+  
+  // Extract country code from proxy username if available
+  // Common formats: "user-country-uk" or "user-mob-uk" -> extract "uk"
+  let proxyCountryCode = "gb"; // Default to UK
   if (profile.proxy_username) {
-    proxyConfig.username = profile.proxy_username;
-  }
-  if (profile.proxy_password_enc) {
-    const key = "SHOP_PROXY_KEY_2024";
-    const decoded = atob(profile.proxy_password_enc);
-    let decrypted = "";
-    for (let i = 0; i < decoded.length; i++) {
-      decrypted += String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    const usernameMatch = profile.proxy_username.match(/-([a-z]{2})$/i);
+    if (usernameMatch) {
+      proxyCountryCode = usernameMatch[1].toLowerCase();
+      console.log(`[AutoShop] Extracted country code from username: ${proxyCountryCode}`);
     }
-    proxyConfig.password = decrypted;
   }
   
-  console.log(`[AutoShop] Proxy config: server=${proxyConfig.server}, username=${proxyConfig.username}, hasPassword=${!!proxyConfig.password}`);
+  // NOTE: Browser Use Cloud API custom proxies require Business/Scaleup plan
+  // Using built-in proxyCountryCode instead (supported on all plans)
+  console.log(`[AutoShop] Using Browser Use built-in proxy for country: ${proxyCountryCode}`);
 
   // 3-STEP VERIFICATION: baseline1 → proxy → baseline2
   console.log("[AutoShop] Running 3-step IP verification...");
@@ -1378,9 +1356,9 @@ async function handleTestProxy(
   const baseline1Result = await fetchIpWithBrowserUse(apiKey);
   console.log(`[AutoShop] Baseline 1 IP: ${baseline1Result.ip}`);
 
-  // Step 2: With proxy
-  console.log("[AutoShop] Step 2: Fetching IP with proxy...");
-  const proxyResult = await fetchIpWithBrowserUse(apiKey, proxyConfig);
+  // Step 2: With proxy (using country code for built-in proxy)
+  console.log(`[AutoShop] Step 2: Fetching IP with ${proxyCountryCode.toUpperCase()} proxy...`);
+  const proxyResult = await fetchIpWithBrowserUse(apiKey, proxyCountryCode);
   console.log(`[AutoShop] Proxy IP: ${proxyResult.ip}`);
 
   // Step 3: Baseline again (no proxy) - confirms we can switch back
@@ -1412,8 +1390,11 @@ async function handleTestProxy(
       baselineConsistent,
       allTestsPassed,
       baseline1Ip: baseline1Result.ip,
+      baseline1Geo: baseline1Result.geo,
       proxyIp: proxyResult.ip,
+      proxyGeo: proxyResult.geo,
       baseline2Ip: baseline2Result.ip,
+      baseline2Geo: baseline2Result.geo,
       baseline1Status: baseline1Result.status,
       proxyStatus: proxyResult.status,
       baseline2Status: baseline2Result.status,
