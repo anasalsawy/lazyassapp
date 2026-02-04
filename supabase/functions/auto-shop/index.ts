@@ -1197,23 +1197,66 @@ async function handleSetProxy(
 }
 
 // Test proxy by making a simple request through Browser Use API
-// Helper to fetch IP from Browser Use
+// Helper to fetch IP from Browser Use - creates a SESSION with proxy, then runs task
 async function fetchIpWithBrowserUse(
   apiKey: string,
   proxyConfig?: Record<string, string>
 ): Promise<{ ip: string | null; status: string; error?: string }> {
-  const taskPayload: Record<string, unknown> = {
-    task: "Navigate to https://httpbin.org/ip and extract the IP address shown on the page. Return ONLY the IP address, nothing else.",
-    startUrl: "https://httpbin.org/ip",
-    llm: "browser-use-llm",
-    maxSteps: 5,
-  };
-
-  if (proxyConfig) {
-    taskPayload.proxy = proxyConfig;
-  }
-
   try {
+    let sessionId: string | null = null;
+
+    // If proxy is configured, create a session with customProxy first
+    if (proxyConfig) {
+      console.log(`[AutoShop] Creating session with customProxy...`);
+      
+      const sessionPayload = {
+        customProxy: {
+          server: proxyConfig.server,
+          ...(proxyConfig.username && { username: proxyConfig.username }),
+          ...(proxyConfig.password && { password: proxyConfig.password }),
+        },
+        keepAlive: false, // Close session after task completes
+      };
+      
+      console.log(`[AutoShop] Session payload:`, JSON.stringify(sessionPayload, null, 2));
+      
+      const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
+        method: "POST",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(sessionPayload),
+      });
+
+      if (!sessionRes.ok) {
+        const errorText = await sessionRes.text();
+        console.log(`[AutoShop] Session creation failed: ${errorText}`);
+        return { ip: null, status: "failed", error: `Session creation failed: ${errorText}` };
+      }
+
+      const sessionData = await sessionRes.json();
+      sessionId = sessionData.id;
+      console.log(`[AutoShop] Session created with customProxy: ${sessionId}`);
+    } else {
+      console.log("[AutoShop] Creating task WITHOUT proxy (no session needed)");
+    }
+
+    // Build the task payload
+    const taskPayload: Record<string, unknown> = {
+      task: "Navigate to https://httpbin.org/ip and extract the IP address shown on the page. Return ONLY the IP address, nothing else.",
+      startUrl: "https://httpbin.org/ip",
+      llm: "browser-use-llm",
+      maxSteps: 5,
+    };
+
+    // If we created a session with proxy, use it
+    if (sessionId) {
+      taskPayload.sessionId = sessionId;
+    }
+
+    console.log(`[AutoShop] Task payload:`, JSON.stringify(taskPayload, null, 2));
+    
     const response = await fetch("https://api.browser-use.com/api/v2/tasks", {
       method: "POST",
       headers: {
@@ -1225,11 +1268,13 @@ async function fetchIpWithBrowserUse(
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.log(`[AutoShop] Task creation failed: ${errorText}`);
       return { ip: null, status: "failed", error: errorText };
     }
 
     const result = await response.json();
     const taskId = result.id || result.task_id;
+    console.log(`[AutoShop] Task created: ${taskId}`);
 
     // Poll for result (max 60 seconds)
     let attempts = 0;
@@ -1253,12 +1298,15 @@ async function fetchIpWithBrowserUse(
       attempts++;
     }
 
+    console.log(`[AutoShop] Task ${taskId} finished with status: ${taskStatus}, output: ${taskOutput}`);
+    
     const ipMatch = taskOutput.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
     return { 
       ip: ipMatch ? ipMatch[1] : null, 
       status: taskStatus 
     };
   } catch (error) {
+    console.log(`[AutoShop] Task error:`, error);
     return { 
       ip: null, 
       status: "error", 
