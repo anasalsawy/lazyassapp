@@ -588,9 +588,12 @@ PRODUCT TO FIND:
 - Search query: "${productQuery}"
 - Quantity needed: ${quantity}${priceConstraint}
 
-=== STEP 0 - SET UP BROWSERSTACK LIVE PROXY (DO THIS FIRST!) ===
+=== STEP 0 - SET UP BROWSERSTACK LIVE PROXY (MANDATORY - DO THIS FIRST!) ===
 
-CRITICAL: Before doing ANYTHING else, you MUST set up a US-based browser session:
+🚨 CRITICAL REQUIREMENT: YOU CANNOT PROCEED WITHOUT BROWSERSTACK 🚨
+
+Before doing ANYTHING else, you MUST set up a US-based browser session via BrowserStack Live.
+If BrowserStack fails to open or connect for ANY reason, you MUST NOT continue shopping.
 
 1. Navigate to https://live.browserstack.com/dashboard
 2. Log in if needed (credentials should be saved in browser profile)
@@ -598,14 +601,32 @@ CRITICAL: Before doing ANYTHING else, you MUST set up a US-based browser session
    - OS: Windows 11 or macOS (latest)
    - Browser: Chrome (latest version)
    - Location: USA - Texas (or nearest available US location like Dallas, Houston, Austin)
-4. Wait for the remote browser session to fully load
+4. Wait for the remote browser session to fully load (up to 60 seconds max)
 5. VERIFY you are connected by checking:
    - The BrowserStack session shows "Connected"
-   - The browser window is responsive
-6. USE THIS REMOTE BROWSER for ALL subsequent steps
+   - The browser window is responsive and shows a webpage
+   - You can interact with the remote browser
+
+=== BROWSERSTACK FAILURE PROTOCOL ===
+
+IF BROWSERSTACK FAILS AT ANY POINT, DO NOT CONTINUE:
+
+FAILURE SCENARIOS AND RESPONSES:
+1. **BrowserStack site won't load** → Wait 30 seconds, refresh. If still fails, ABANDON task with message: "BLOCKED: BrowserStack dashboard failed to load. Cannot establish US proxy session."
+
+2. **Login fails** → Try refreshing page once. If still fails, ABANDON with: "BLOCKED: BrowserStack login failed. Please verify BrowserStack credentials are saved in browser profile."
+
+3. **No US sessions available** → Try 3 different US locations (Texas, California, New York). If ALL unavailable, ABANDON with: "BLOCKED: No US BrowserStack sessions available. Try again later."
+
+4. **Session starts but disconnects** → Attempt to reconnect ONCE. If fails, ABANDON with: "BLOCKED: BrowserStack session disconnected and could not reconnect."
+
+5. **Session is extremely slow/unresponsive** (>30 sec per action) → ABANDON with: "BLOCKED: BrowserStack session too slow to complete purchase reliably."
+
+6. **Session crashes mid-task** → Do NOT restart shopping from scratch. ABANDON with: "BLOCKED: BrowserStack session crashed. Order was not completed."
 
 IMPORTANT: All shopping activity MUST happen INSIDE the BrowserStack Live session. 
 This gives you a US-based IP address that won't get blocked by retailers.
+NEVER proceed to Step 1 without a working BrowserStack session.
 
 If Texas is not available, try these US locations in order:
 - Dallas, TX
@@ -615,6 +636,8 @@ If Texas is not available, try these US locations in order:
 - Los Angeles, CA
 - New York, NY
 - Chicago, IL
+
+If NONE of the above work, STOP and report failure.
 
 === END BROWSERSTACK SETUP ===
 
