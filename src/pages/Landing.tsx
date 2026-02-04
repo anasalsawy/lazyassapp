@@ -14,6 +14,8 @@ import {
   FileText,
   Clock
 } from "lucide-react";
+import { FAQ } from "@/components/landing/FAQ";
+import { DemoSection } from "@/components/landing/DemoSection";
 
 export default function Landing() {
   return (
@@ -183,6 +185,9 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Demo Section */}
+      <DemoSection />
+
       {/* Trust Section */}
       <section className="py-20 px-4 bg-secondary/30">
         <div className="container max-w-4xl mx-auto">
@@ -200,6 +205,9 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* FAQ Section */}
+      <FAQ />
 
       {/* CTA */}
       <section className="py-20 px-4">
