@@ -51,6 +51,8 @@ serve(async (req) => {
 
   try {
     const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+    const BRIDGE_URL = Deno.env.get("BRIDGE_URL");
+    const BRIDGE_API_KEY = Deno.env.get("BRIDGE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
@@ -89,7 +91,7 @@ serve(async (req) => {
         return await handleConfirmLogin(supabase, user.id, payload.site || "gmail");
       }
       case "start_order": {
-        return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, supabaseUrl);
+        return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, supabaseUrl, BRIDGE_URL, BRIDGE_API_KEY);
       }
       case "check_order_status": {
         return await handleCheckOrderStatus(supabase, user.id, payload.orderId!, BROWSER_USE_API_KEY);
@@ -104,7 +106,7 @@ serve(async (req) => {
         return await handleSetProxy(supabase, user.id, payload);
       }
       case "test_proxy": {
-        return await handleTestProxy(supabase, user.id, BROWSER_USE_API_KEY);
+        return await handleTestProxy(supabase, user.id, BROWSER_USE_API_KEY, BRIDGE_URL, BRIDGE_API_KEY);
       }
       default:
         throw new Error(`Unknown action: ${action}`);
@@ -334,7 +336,9 @@ async function handleStartOrder(
   user: { id: string; email?: string },
   payload: AutoShopPayload,
   apiKey: string,
-  supabaseUrl: string
+  supabaseUrl: string,
+  bridgeUrl?: string,
+  bridgeApiKey?: string
 ) {
   const { orderId, productQuery, maxPrice, quantity, shippingAddress, paymentCards } = payload;
 
@@ -401,8 +405,9 @@ async function handleStartOrder(
   }
 
   // Add custom proxy if configured
+  let proxyConfig: Record<string, string> | undefined;
   if (profile?.proxy_server) {
-    const proxyConfig: Record<string, string> = {
+    proxyConfig = {
       server: profile.proxy_server,
     };
     if (profile.proxy_username) {
@@ -418,37 +423,89 @@ async function handleStartOrder(
       }
       proxyConfig.password = decrypted;
     }
-    taskPayload.proxy = proxyConfig;
-    console.log(`[AutoShop] Using custom proxy: ${profile.proxy_server}`);
+    console.log(`[AutoShop] Custom proxy configured: ${profile.proxy_server}`);
   }
 
-  const browserUseResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
-    method: "POST",
-    headers: {
-      "X-Browser-Use-API-Key": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(taskPayload),
-  });
-
-  if (!browserUseResponse.ok) {
-    const errorData = await browserUseResponse.text();
-    console.error("[AutoShop] Browser Use API error:", errorData);
+  // Determine whether to use bridge (for custom proxy) or Browser Use Cloud
+  const useBridge = proxyConfig && bridgeUrl && bridgeApiKey;
+  
+  let taskId: string;
+  
+  if (useBridge && proxyConfig) {
+    // Route through self-hosted bridge for custom proxy support
+    console.log(`[AutoShop] Routing through bridge for custom proxy: ${bridgeUrl}`);
     
-    await supabase
-      .from("auto_shop_orders")
-      .update({ 
-        status: "failed",
-        error_message: `Browser Use API error: ${browserUseResponse.status}` 
-      })
-      .eq("id", orderId);
+    const bridgeResponse = await fetch(`${bridgeUrl}/run-task`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${bridgeApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        task: agentInstruction,
+        profile_id: profileId || undefined,
+        proxy: {
+          server: proxyConfig.server,
+          username: proxyConfig.username,
+          password: proxyConfig.password,
+        },
+      }),
+    });
 
-    throw new Error(`Shopping agent error: ${browserUseResponse.status}`);
+    if (!bridgeResponse.ok) {
+      const errorData = await bridgeResponse.text();
+      console.error("[AutoShop] Bridge API error:", errorData);
+      
+      await supabase
+        .from("auto_shop_orders")
+        .update({ 
+          status: "failed",
+          error_message: `Bridge API error: ${bridgeResponse.status}` 
+        })
+        .eq("id", orderId);
+
+      throw new Error(`Shopping agent error (bridge): ${bridgeResponse.status}`);
+    }
+
+    const bridgeResult = await bridgeResponse.json();
+    taskId = bridgeResult.run_id;
+    console.log("[AutoShop] Bridge task submitted:", taskId);
+  } else {
+    // Use Browser Use Cloud API directly
+    if (proxyConfig) {
+      // Note: Custom proxy without bridge will likely fail on non-Business plans
+      taskPayload.proxy = proxyConfig;
+      console.log(`[AutoShop] Using custom proxy (may require Business plan): ${proxyConfig.server}`);
+    }
+
+    const browserUseResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
+      method: "POST",
+      headers: {
+        "X-Browser-Use-API-Key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(taskPayload),
+    });
+
+    if (!browserUseResponse.ok) {
+      const errorData = await browserUseResponse.text();
+      console.error("[AutoShop] Browser Use API error:", errorData);
+      
+      await supabase
+        .from("auto_shop_orders")
+        .update({ 
+          status: "failed",
+          error_message: `Browser Use API error: ${browserUseResponse.status}` 
+        })
+        .eq("id", orderId);
+
+      throw new Error(`Shopping agent error: ${browserUseResponse.status}`);
+    }
+
+    const agentResult = await browserUseResponse.json();
+    taskId = agentResult.id || agentResult.task_id;
+    console.log("[AutoShop] Browser Use task submitted:", taskId);
   }
-
-  const agentResult = await browserUseResponse.json();
-  const taskId = agentResult.id || agentResult.task_id;
-  console.log("[AutoShop] Task submitted:", taskId);
 
   // Update order with task ID
   await supabase
@@ -464,8 +521,8 @@ async function handleStartOrder(
     user_id: user.id,
     agent_name: "auto_shop",
     log_level: "info",
-    message: `Browser Use task submitted: ${taskId}`,
-    metadata: { orderId, taskId, profileId },
+    message: `${useBridge ? 'Bridge' : 'Browser Use'} task submitted: ${taskId}`,
+    metadata: { orderId, taskId, profileId, useBridge },
   });
 
   return new Response(
@@ -475,6 +532,7 @@ async function handleStartOrder(
       orderId,
       taskId,
       status: "searching",
+      routedViaBridge: useBridge,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
@@ -1213,13 +1271,82 @@ async function getIpGeolocation(ip: string): Promise<{ country: string; city: st
 }
 
 // Test proxy by making a simple request through Browser Use API
-// Helper to fetch IP from Browser Use - uses proxyCountryCode for built-in proxy
+// Helper to fetch IP - routes through bridge when custom proxy is needed
 async function fetchIpWithBrowserUse(
   apiKey: string,
-  proxyCountryCode?: string // e.g., 'gb' for UK, 'us' for US
+  proxyCountryCode?: string, // e.g., 'gb' for UK, 'us' for US - for built-in proxy
+  customProxy?: { server: string; username?: string; password?: string }, // for bridge routing
+  bridgeUrl?: string,
+  bridgeApiKey?: string
 ): Promise<{ ip: string | null; status: string; error?: string; geo?: { country: string; city: string; region: string } | null }> {
   try {
-    // Build the task payload - use proxyCountryCode for built-in proxy routing
+    // If custom proxy is provided and bridge is configured, route through bridge
+    if (customProxy && bridgeUrl && bridgeApiKey) {
+      console.log(`[AutoShop] Routing through bridge for custom proxy: ${customProxy.server}`);
+      
+      const bridgeResponse = await fetch(`${bridgeUrl}/run-task`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${bridgeApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          task: "https://httpbin.org/ip",
+          proxy: {
+            server: customProxy.server,
+            username: customProxy.username,
+            password: customProxy.password,
+          },
+        }),
+      });
+
+      if (!bridgeResponse.ok) {
+        const errorText = await bridgeResponse.text();
+        console.log(`[AutoShop] Bridge task creation failed: ${errorText}`);
+        return { ip: null, status: "failed", error: errorText };
+      }
+
+      const bridgeResult = await bridgeResponse.json();
+      const runId = bridgeResult.run_id;
+      console.log(`[AutoShop] Bridge task created: ${runId}`);
+
+      // Poll for result (max 60 seconds)
+      let attempts = 0;
+      const maxAttempts = 30;
+      let taskStatus = "pending";
+      let taskOutput = "";
+
+      while (attempts < maxAttempts && taskStatus !== "finished" && taskStatus !== "error") {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        const statusRes = await fetch(`${bridgeUrl}/runs/${runId}/status`);
+        
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          taskStatus = statusData.status;
+          taskOutput = statusData.output || JSON.stringify(statusData);
+        }
+        
+        attempts++;
+      }
+
+      console.log(`[AutoShop] Bridge task ${runId} finished with status: ${taskStatus}`);
+      
+      // Try to extract IP from screenshot page content (httpbin returns JSON)
+      // The bridge visits the URL and we need to parse the IP from the response
+      const ipMatch = taskOutput.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+      const ip = ipMatch ? ipMatch[1] : null;
+      
+      let geo = null;
+      if (ip) {
+        geo = await getIpGeolocation(ip);
+        console.log(`[AutoShop] Bridge IP ${ip} geolocation: ${geo?.city}, ${geo?.region}, ${geo?.country}`);
+      }
+      
+      return { ip, status: taskStatus, geo };
+    }
+
+    // Otherwise use Browser Use Cloud API with built-in proxy
     const taskPayload: Record<string, unknown> = {
       task: "Navigate to https://httpbin.org/ip and extract the IP address shown on the page. Return ONLY the IP address, nothing else.",
       startUrl: "https://httpbin.org/ip",
@@ -1309,7 +1436,9 @@ async function fetchIpWithBrowserUse(
 async function handleTestProxy(
   supabase: any,
   userId: string,
-  apiKey: string
+  apiKey: string,
+  bridgeUrl?: string,
+  bridgeApiKey?: string
 ) {
   // Get profile with proxy settings
   const { data: profile } = await supabase
@@ -1333,8 +1462,35 @@ async function handleTestProxy(
   console.log(`[AutoShop] Proxy server: ${profile.proxy_server}`);
   console.log(`[AutoShop] Proxy username: ${profile.proxy_username}`);
   
-  // Extract country code from proxy username if available
-  // Common formats: "user-country-uk" or "user-mob-uk" -> extract "uk"
+  // Decrypt proxy password if present
+  let proxyPassword: string | undefined;
+  if (profile.proxy_password_enc) {
+    const key = "SHOP_PROXY_KEY_2024";
+    const decoded = atob(profile.proxy_password_enc);
+    let decrypted = "";
+    for (let i = 0; i < decoded.length; i++) {
+      decrypted += String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    }
+    proxyPassword = decrypted;
+  }
+
+  // Build custom proxy config for bridge routing
+  const customProxy = {
+    server: profile.proxy_server,
+    username: profile.proxy_username || undefined,
+    password: proxyPassword,
+  };
+
+  // Check if bridge is available for custom proxy testing
+  const useBridge = bridgeUrl && bridgeApiKey;
+  
+  if (useBridge) {
+    console.log(`[AutoShop] Using bridge for custom proxy testing: ${bridgeUrl}`);
+  } else {
+    console.log(`[AutoShop] Bridge not configured, falling back to built-in proxy`);
+  }
+
+  // Extract country code from proxy username if available (fallback for non-bridge)
   let proxyCountryCode = "gb"; // Default to UK
   if (profile.proxy_username) {
     const usernameMatch = profile.proxy_username.match(/-([a-z]{2})$/i);
@@ -1343,10 +1499,6 @@ async function handleTestProxy(
       console.log(`[AutoShop] Extracted country code from username: ${proxyCountryCode}`);
     }
   }
-  
-  // NOTE: Browser Use Cloud API custom proxies require Business/Scaleup plan
-  // Using built-in proxyCountryCode instead (supported on all plans)
-  console.log(`[AutoShop] Using Browser Use built-in proxy for country: ${proxyCountryCode}`);
 
   // 3-STEP VERIFICATION: baseline1 → proxy → baseline2
   console.log("[AutoShop] Running 3-step IP verification...");
@@ -1356,9 +1508,15 @@ async function handleTestProxy(
   const baseline1Result = await fetchIpWithBrowserUse(apiKey);
   console.log(`[AutoShop] Baseline 1 IP: ${baseline1Result.ip}`);
 
-  // Step 2: With proxy (using country code for built-in proxy)
-  console.log(`[AutoShop] Step 2: Fetching IP with ${proxyCountryCode.toUpperCase()} proxy...`);
-  const proxyResult = await fetchIpWithBrowserUse(apiKey, proxyCountryCode);
+  // Step 2: With proxy (use bridge if available, otherwise built-in)
+  let proxyResult;
+  if (useBridge) {
+    console.log(`[AutoShop] Step 2: Fetching IP with custom proxy via bridge...`);
+    proxyResult = await fetchIpWithBrowserUse(apiKey, undefined, customProxy, bridgeUrl, bridgeApiKey);
+  } else {
+    console.log(`[AutoShop] Step 2: Fetching IP with ${proxyCountryCode.toUpperCase()} built-in proxy...`);
+    proxyResult = await fetchIpWithBrowserUse(apiKey, proxyCountryCode);
+  }
   console.log(`[AutoShop] Proxy IP: ${proxyResult.ip}`);
 
   // Step 3: Baseline again (no proxy) - confirms we can switch back
