@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useJobAgent } from "@/hooks/useJobAgent";
+import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -56,20 +57,21 @@ export default function JobAgent() {
   const sitesLoggedIn = profile?.sitesLoggedIn || [];
 
   return (
-    <div className="container max-w-6xl mx-auto py-8 px-4 space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Job Agent</h1>
-          <p className="text-muted-foreground">
-            AI-powered job search that applies while you sleep
-          </p>
+    <AppLayout>
+      <div className="container max-w-6xl mx-auto py-8 px-4 space-y-8">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Job Agent</h1>
+            <p className="text-muted-foreground">
+              AI-powered job search that applies while you sleep
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={refetch}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
         </div>
-        <Button variant="outline" size="sm" onClick={refetch}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh
-        </Button>
-      </div>
 
       {/* Setup Section */}
       {!hasProfile && (
@@ -333,6 +335,7 @@ export default function JobAgent() {
           )}
         </TabsContent>
       </Tabs>
-    </div>
+      </div>
+    </AppLayout>
   );
 }

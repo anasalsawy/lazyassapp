@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
+import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -127,8 +128,8 @@ export default function Connections() {
   const allConnected = connectedPlatforms.length >= PLATFORMS.length;
 
   return (
-    <div className="min-h-screen bg-background py-8 px-4">
-      <div className="container max-w-3xl mx-auto">
+    <AppLayout>
+      <div className="container max-w-3xl mx-auto py-8 px-4">
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">Connect Your Accounts</h1>
@@ -287,6 +288,6 @@ export default function Connections() {
           </div>
         )}
       </div>
-    </div>
+    </AppLayout>
   );
 }

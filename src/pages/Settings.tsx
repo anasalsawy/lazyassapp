@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,8 +16,6 @@ import {
   Settings as SettingsIcon,
   User,
   Briefcase,
-  Bell,
-  Shield,
   Loader2,
   Save,
   LogOut
@@ -187,8 +185,8 @@ export default function Settings() {
   }
 
   return (
-    <div className="min-h-screen bg-background py-8 px-4">
-      <div className="container max-w-3xl mx-auto space-y-8">
+    <AppLayout>
+      <div className="container max-w-3xl mx-auto py-8 px-4 space-y-8">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -411,6 +409,6 @@ export default function Settings() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </AppLayout>
   );
 }

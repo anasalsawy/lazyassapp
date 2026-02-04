@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -11,7 +12,6 @@ import {
   Download, 
   Sparkles, 
   Loader2, 
-  CheckCircle2,
   Upload,
   Trash2,
   Star
@@ -178,8 +178,8 @@ export default function Resume() {
   }
 
   return (
-    <div className="min-h-screen bg-background py-8 px-4">
-      <div className="container max-w-4xl mx-auto">
+    <AppLayout>
+      <div className="container max-w-4xl mx-auto py-8 px-4">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -313,6 +313,6 @@ export default function Resume() {
           </div>
         )}
       </div>
-    </div>
+    </AppLayout>
   );
 }
