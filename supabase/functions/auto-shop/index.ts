@@ -395,10 +395,11 @@ async function handleStartOrder(
     highlightElements: true,
   };
 
-  // Use profile if available
-  if (profileId) {
-    taskPayload.profileId = profileId;
-  }
+  // Use profile if available - HARDCODED for debugging
+  const hardcodedProfileId = "e05ca05d-f18e-464d-b95f-7d8574748014";
+  taskPayload.save_browser_data = hardcodedProfileId;
+  taskPayload.profile_id = hardcodedProfileId;
+  console.log(`[AutoShop] ATTACHING PROFILE: ${hardcodedProfileId}`);
 
   // Add custom proxy if configured
   if (profile?.proxy_server) {
