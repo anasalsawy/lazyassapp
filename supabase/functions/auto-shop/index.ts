@@ -237,6 +237,7 @@ async function handleStartLogin(
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
 
   // Create a SESSION (not task) for manual login - this gives us a proper liveUrl
+  // Always use US proxy for sessions to avoid geo-restrictions
   const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
     method: "POST",
     headers: {
@@ -249,6 +250,7 @@ async function handleStartLogin(
       keepAlive: true, // Keep session open for manual login
       browserScreenWidth: 1280,
       browserScreenHeight: 800,
+      proxyCountryCode: "US", // Always use US proxy
     }),
   });
 
