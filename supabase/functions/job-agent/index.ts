@@ -82,11 +82,11 @@ serve(async (req) => {
           );
         }
 
-        // Create profile in Browser Use
-        const profileResponse = await fetch("https://api.browser-use.com/api/v2/profiles", {
+        // Create profile in Browser Use - Note: v1 API uses Bearer auth
+        const profileResponse = await fetch("https://api.browser-use.com/api/v1/browser-profile", {
           method: "POST",
           headers: {
-            "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,
+            "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -126,85 +126,104 @@ serve(async (req) => {
         
         await log("Starting login session...", { site });
 
-        // Get user's profile
-        const { data: profile } = await supabase
+        // Ensure user has a profile record (create if needed)
+        const { data: existingProfile } = await supabase
           .from("browser_profiles")
           .select("*")
           .eq("user_id", user.id)
           .single();
 
-        if (!profile?.browser_use_profile_id) {
-          throw new Error("No profile found. Create one first.");
+        if (!existingProfile) {
+          await supabase.from("browser_profiles").insert({
+            user_id: user.id,
+            status: "pending_login",
+            sites_logged_in: [],
+          });
         }
 
         const siteUrls: Record<string, string> = {
           gmail: "https://mail.google.com",
-          linkedin: "https://linkedin.com/login",
-          indeed: "https://indeed.com/account/login",
-          glassdoor: "https://glassdoor.com/member/login",
+          linkedin: "https://www.linkedin.com/login",
+          indeed: "https://secure.indeed.com/account/login",
+          glassdoor: "https://www.glassdoor.com/member/login",
         };
 
-        const startUrl = siteUrls[site] || site;
+        const startUrl = siteUrls[site] || `https://${site}.com`;
 
-        // Create a session with the profile for user to log in
-        const sessionResponse = await fetch("https://api.browser-use.com/api/v2/sessions", {
+        // Create a task that navigates to the login page and waits for user
+        console.log("Calling Browser Use API with key:", BROWSER_USE_API_KEY?.substring(0, 10) + "...");
+        
+        const taskResponse = await fetch("https://api.browser-use.com/api/v1/run-task", {
           method: "POST",
           headers: {
-            "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,
+            "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            profileId: profile.browser_use_profile_id,
-            persistChanges: true, // Save cookies/sessions after login
+            task: `Navigate to ${startUrl}. This is a login session - wait for the user to manually log in. Do not take any automated actions. Simply observe and report when the user has successfully logged in (when the page shows a logged-in state like an inbox or dashboard).`,
+            save_browser_data: true,
+            highlight_elements: false,
           }),
         });
 
-        if (!sessionResponse.ok) {
-          const error = await sessionResponse.text();
-          throw new Error(`Failed to create session: ${error}`);
+        console.log("Browser Use API response status:", taskResponse.status);
+
+        if (!taskResponse.ok) {
+          const error = await taskResponse.text();
+          console.error("Task creation failed:", error);
+          
+          // Provide better error message
+          if (taskResponse.status === 404) {
+            throw new Error("Browser Use API returned 404. Please verify your BROWSER_USE_API_KEY is valid and has access to the API.");
+          }
+          if (taskResponse.status === 401 || taskResponse.status === 403) {
+            throw new Error("Browser Use API authentication failed. Please check your API key.");
+          }
+          throw new Error(`Browser Use API error (${taskResponse.status}): ${error}`);
         }
 
-        const sessionData = await sessionResponse.json();
-        const sessionId = sessionData.id || sessionData.session_id;
-
-        // Now create a "manual control" task that lets user interact
-        const taskResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
-          method: "POST",
-          headers: {
-            "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            sessionId,
-            task: `Navigate to ${startUrl} and wait for the user to log in. Do not take any action - just observe. When you see the user is logged in (homepage or dashboard), report "LOGIN_COMPLETE".`,
-            startUrl,
-            llm: "browser-use-llm",
-            maxSteps: 5,
-            allowHumanControl: true, // Enable live view for user
-          }),
-        });
-
         const taskData = await taskResponse.json();
+        console.log("Task response:", JSON.stringify(taskData));
+        
         const taskId = taskData.id || taskData.task_id;
-        const liveViewUrl = taskData.live_url || taskData.liveUrl || taskData.stream_url;
+        let liveViewUrl = taskData.live_url || taskData.liveUrl || taskData.stream_url;
+        
+        // If no live URL in initial response, fetch task details
+        if (!liveViewUrl && taskId) {
+          await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3s for task to initialize
+          
+          const detailsResponse = await fetch(`https://api.browser-use.com/api/v1/task/${taskId}`, {
+            method: "GET",
+            headers: {
+              "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
+            },
+          });
+          
+          if (detailsResponse.ok) {
+            const detailsData = await detailsResponse.json();
+            console.log("Task details:", JSON.stringify(detailsData));
+            liveViewUrl = detailsData.live_url || detailsData.liveUrl || detailsData.stream_url;
+          }
+        }
 
         // Store pending login
         await supabase.from("browser_profiles").update({
           pending_login_site: site,
-          pending_session_id: sessionId,
           pending_task_id: taskId,
+          status: "pending_login",
         }).eq("user_id", user.id);
 
-        await log("Login session started", { site, sessionId, taskId });
+        await log("Login session started", { site, taskId, liveViewUrl, hasUrl: !!liveViewUrl });
 
         return new Response(
           JSON.stringify({
             success: true,
-            sessionId,
             taskId,
             liveViewUrl,
             site,
-            message: `Browser opened for ${site}. Log in to save your session.`,
+            message: liveViewUrl 
+              ? `Browser opened for ${site}. Log in to save your session.`
+              : `Login task started for ${site}. Check back in a moment.`,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -350,18 +369,16 @@ DO NOT STOP. Work through all sites methodically. Complete as many applications 
 `;
 
         // Start the agent task
-        const taskResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
+        const taskResponse = await fetch("https://api.browser-use.com/api/v1/run-task", {
           method: "POST",
           headers: {
-            "X-Browser-Use-API-Key": BROWSER_USE_API_KEY,
+            "Authorization": `Bearer ${BROWSER_USE_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            profileId: browserProfile.browser_use_profile_id,
             task: agentInstruction,
-            startUrl: "https://linkedin.com/jobs", // Start with LinkedIn if available
-            llm: "browser-use-llm",
-            maxSteps: 100,
+            save_browser_data: true,
+            max_agent_steps: 100,
           }),
         });
 
