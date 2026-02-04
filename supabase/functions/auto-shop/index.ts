@@ -359,6 +359,13 @@ async function handleStartOrder(
   console.log(`[AutoShop] Using profile: ${profileId || "none"}, Email: ${userEmail}`);
   console.log(`[AutoShop] Sites logged in: ${sitesLoggedIn.join(", ") || "none"}`);
 
+  // Every user must run tasks with their own persistent profile attached
+  if (!profileId) {
+    throw new Error(
+      "No browser profile attached for this user. Please go to Connections and create/attach a profile first."
+    );
+  }
+
   // Update order status
   await supabase
     .from("auto_shop_orders")
@@ -395,11 +402,11 @@ async function handleStartOrder(
     highlightElements: true,
   };
 
-  // Use profile if available - HARDCODED for debugging
-  const hardcodedProfileId = "e05ca05d-f18e-464d-b95f-7d8574748014";
-  taskPayload.save_browser_data = hardcodedProfileId;
-  taskPayload.profile_id = hardcodedProfileId;
-  console.log(`[AutoShop] ATTACHING PROFILE: ${hardcodedProfileId}`);
+  // Attach the authenticated user's persistent profile
+  // Docs use `profileId` (camelCase). We also include `profile_id` for compatibility.
+  taskPayload.profileId = profileId;
+  taskPayload.profile_id = profileId;
+  console.log(`[AutoShop] Attaching profileId: ${profileId}`);
 
   // Add custom proxy if configured
   if (profile?.proxy_server) {
