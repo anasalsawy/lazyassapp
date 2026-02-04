@@ -258,7 +258,6 @@ const AutoShop = () => {
   const handleVerifyCard = async (card: typeof cards[0]) => {
     toast.info("Use the Stripe card form above to verify cards");
   };
-  };
 
   const handleAddAddress = async () => {
     if (!addressForm.address_name || !addressForm.shipping_details) return;
