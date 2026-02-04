@@ -119,11 +119,11 @@ export const useJobs = () => {
     if (!user) return;
 
     setSearching(true);
-    setSearchProgress({ current: 0, total: 100 });
     
     let totalJobsFound = 0;
     let currentBatch = 1;
-    const maxBatches = 4; // Up to 100 jobs (25 per batch)
+    const maxBatches = 10; // Up to 250 jobs (25 per batch)
+    setSearchProgress({ current: 0, total: maxBatches });
     
     try {
       console.log("Starting job search with full resume data:", {
@@ -162,9 +162,8 @@ export const useJobs = () => {
 
         if (error) {
           console.error(`Batch ${currentBatch} error:`, error);
-          // Continue to next batch on error
-          currentBatch++;
-          await new Promise(resolve => setTimeout(resolve, 500)); // Rate limit delay
+          // Retry same batch once after short delay
+          await new Promise(resolve => setTimeout(resolve, 1000));
           continue;
         }
 
@@ -175,13 +174,8 @@ export const useJobs = () => {
           const saved = await saveJobsBatch(user.id, data.jobs);
           totalJobsFound += saved;
           
-          toast({ 
-            title: `Found ${totalJobsFound} jobs`, 
-            description: `Batch ${currentBatch}/${maxBatches} complete...` 
-          });
-
-          // Check if there are more results
-          if (!data.hasMore || data.jobs.length < 20) {
+          // Check if there are more results - be more lenient
+          if (!data.hasMore && data.jobs.length < 10) {
             console.log("No more batches available");
             break;
           }
