@@ -53,16 +53,13 @@ serve(async (req) => {
     await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId });
     console.log("[CardPreauth] PaymentMethod attached to customer");
 
-    // Create $1.00 preauthorization (hold, not charge)
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: 100, // $1.00 in cents
-      currency: "usd",
+    // Use SetupIntent for card validation (no hold, just verification)
+    const setupIntent = await stripe.setupIntents.create({
       customer: customerId,
       payment_method: paymentMethodId,
-      capture_method: "manual", // This creates a hold, not a charge
       confirm: true,
       automatic_payment_methods: { enabled: true, allow_redirects: "never" },
-      description: "Card verification - $1.00 preauthorization",
+      usage: "off_session", // Can charge later without customer present
       metadata: { 
         type: "card_verification", 
         cardholder_name: cardholderName || "",
@@ -70,22 +67,22 @@ serve(async (req) => {
       },
     });
 
-    console.log("[CardPreauth] PaymentIntent:", { id: paymentIntent.id, status: paymentIntent.status });
+    console.log("[CardPreauth] SetupIntent:", { id: setupIntent.id, status: setupIntent.status });
 
-    if (paymentIntent.status === "requires_capture" || paymentIntent.status === "succeeded") {
+    if (setupIntent.status === "succeeded") {
       return new Response(
         JSON.stringify({
           success: true,
-          message: "Card verified with $1.00 preauthorization",
-          paymentIntentId: paymentIntent.id,
-          status: paymentIntent.status,
+          message: "Card verified successfully (no charge)",
+          setupIntentId: setupIntent.id,
+          status: setupIntent.status,
           last4: paymentMethod.card?.last4,
           brand: paymentMethod.card?.brand,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
       );
     } else {
-      throw new Error(`Unexpected status: ${paymentIntent.status}`);
+      throw new Error(`Unexpected status: ${setupIntent.status}`);
     }
   } catch (error: any) {
     console.error("[CardPreauth] Error:", error);

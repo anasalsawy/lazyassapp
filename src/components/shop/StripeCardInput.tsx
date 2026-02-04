@@ -73,12 +73,12 @@ export function StripeCardInput({ userEmail, onSuccess, onError }: StripeCardInp
 
       if (data?.success) {
         toast.success(`✅ Card verified! ${data.brand?.toUpperCase()} ****${data.last4}`, {
-          description: "$1.00 hold placed (will be released in ~7 days)",
+          description: "No charge - card saved for future purchases",
         });
         onSuccess?.({
           last4: data.last4,
           brand: data.brand,
-          paymentIntentId: data.paymentIntentId,
+          paymentIntentId: data.setupIntentId,
         });
         cardElement.clear();
         setCardholderName("");
@@ -144,7 +144,7 @@ export function StripeCardInput({ userEmail, onSuccess, onError }: StripeCardInp
         ) : (
           <>
             <CreditCard className="mr-2 h-4 w-4" />
-            Verify Card ($1.00 hold)
+            Verify Card (no charge)
           </>
         )}
       </Button>
