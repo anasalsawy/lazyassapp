@@ -255,20 +255,27 @@ async function handleStartLogin(
 
   // Create a SESSION (not task) for manual login - this gives us a proper liveUrl
   // Always use US proxy for sessions to avoid geo-restrictions
+  // CRITICAL: Include profile_id in BOTH formats to ensure compatibility
+  const sessionPayload = {
+    profileId: profile.browser_use_profile_id,
+    profile_id: profile.browser_use_profile_id,  // Include snake_case for compatibility
+    startUrl: loginUrl,
+    keepAlive: true, // Keep session open for manual login
+    save_browser_data: true, // Save session data back to profile
+    browserScreenWidth: 1280,
+    browserScreenHeight: 800,
+    proxyCountryCode: "us", // Always use US proxy (lowercase required)
+  };
+  
+  console.log(`[AutoShop] Creating session with payload:`, JSON.stringify(sessionPayload));
+
   const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
     method: "POST",
     headers: {
       "X-Browser-Use-API-Key": apiKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      profileId: profile.browser_use_profile_id,
-      startUrl: loginUrl,
-      keepAlive: true, // Keep session open for manual login
-      browserScreenWidth: 1280,
-      browserScreenHeight: 800,
-      proxyCountryCode: "us", // Always use US proxy (lowercase required)
-    }),
+    body: JSON.stringify(sessionPayload),
   });
 
   console.log(`[AutoShop] Session response status: ${sessionRes.status}`);
@@ -297,6 +304,26 @@ async function handleStartLogin(
   const sessionId = sessionData.id || sessionData.session_id;
   // The sessions endpoint returns liveUrl (not live_view_url)
   const liveViewUrl = sessionData.liveUrl || sessionData.live_url || sessionData.live_view_url || `https://browser-use.com/live/${sessionId}`;
+  
+  // VERIFY the profile was attached
+  const attachedProfileId = sessionData.profileId || sessionData.profile_id;
+  if (!attachedProfileId) {
+    console.error(`[AutoShop] ⚠️ WARNING: Session created but NO profile attached! Session data:`, sessionData);
+    
+    // Try to stop this broken session
+    try {
+      await fetch(`https://api.browser-use.com/api/v2/sessions/${sessionId}/stop`, {
+        method: "POST",
+        headers: { "X-Browser-Use-API-Key": apiKey },
+      });
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop broken session:`, e);
+    }
+    
+    throw new Error("Session was created but profile was NOT attached. Please try again or contact support.");
+  }
+  
+  console.log(`[AutoShop] ✓ Profile verified attached: ${attachedProfileId}`);
 
   // Update pending login
   await supabase
@@ -317,6 +344,7 @@ async function handleStartLogin(
       sessionId,
       liveViewUrl,
       site,
+      profileAttached: attachedProfileId, // Return this for debugging
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
