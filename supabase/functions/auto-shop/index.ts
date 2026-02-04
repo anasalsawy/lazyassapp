@@ -83,12 +83,27 @@ serve(async (req) => {
         return await handleCreateProfile(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "start_login": {
+        // Clean up stale sessions before starting new one
+        await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
         return await handleStartLogin(supabase, user.id, payload.site || "gmail", BROWSER_USE_API_KEY);
       }
       case "confirm_login": {
         return await handleConfirmLogin(supabase, user.id, payload.site || "gmail");
       }
+      case "cancel_login": {
+        return await handleCancelLogin(supabase, user.id, BROWSER_USE_API_KEY);
+      }
+      case "restart_session": {
+        // Force cleanup and restart a fresh session for a site
+        await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BROWSER_USE_API_KEY);
+      }
+      case "cleanup_sessions": {
+        return await handleCleanupSessions(supabase, user.id, BROWSER_USE_API_KEY);
+      }
       case "start_order": {
+        // Clean up before starting order
+        await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
         return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, supabaseUrl);
       }
       case "check_order_status": {
@@ -98,6 +113,8 @@ serve(async (req) => {
         return await handleSyncAllOrders(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "sync_order_emails": {
+        // Clean up before syncing emails
+        await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
         return await handleSyncOrderEmails(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "set_proxy": {
