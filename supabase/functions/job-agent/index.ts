@@ -495,6 +495,64 @@ DO NOT STOP. Work through all sites methodically. Complete as many applications 
         );
       }
 
+      // ============================================
+      // CLEANUP SESSIONS - Close active sessions to free up quota
+      // ============================================
+      case "cleanup_sessions": {
+        await log("Cleaning up active Browser Use sessions...");
+
+        // List all active sessions
+        const listResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions", {
+          method: "GET",
+        });
+
+        if (!listResponse.ok) {
+          const error = await listResponse.text();
+          throw new Error(`Failed to list sessions: ${error}`);
+        }
+
+        const sessionsData = await listResponse.json();
+        console.log("Sessions response:", JSON.stringify(sessionsData));
+        
+        // Handle both array response and object with sessions property
+        const sessionsList = Array.isArray(sessionsData) ? sessionsData : 
+                            (sessionsData.sessions || sessionsData.data || []);
+        
+        const activeSessions = sessionsList.filter(
+          (s: any) => s.status === "active" || s.status === "running"
+        );
+
+        let closedCount = 0;
+        for (const session of activeSessions) {
+          try {
+            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${session.id}/stop`, {
+              method: "POST",
+            });
+            closedCount++;
+            console.log(`Closed session: ${session.id}`);
+          } catch (e) {
+            console.error(`Failed to close session ${session.id}:`, e);
+          }
+        }
+
+        // Clear pending session from profile
+        await supabase.from("browser_profiles").update({
+          pending_session_id: null,
+          pending_task_id: null,
+        }).eq("user_id", user.id);
+
+        await log("Sessions cleaned up", { closedCount, totalActive: activeSessions.length });
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            closedCount,
+            message: `Closed ${closedCount} active session(s). You can now start a new login session.`,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }
