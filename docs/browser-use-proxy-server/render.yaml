@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: browser-use-bridge
+    env: python
+    branch: main
+    buildCommand: "pip install -r requirements.txt && playwright install chromium && playwright install-deps"
+    startCommand: "python main.py"
+    healthCheckPath: "/health"
+    envVars:
+      - key: BRIDGE_API_KEY
+        sync: false

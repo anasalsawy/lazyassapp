@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  bridge:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - BRIDGE_API_KEY=${BRIDGE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./profiles:/app/profiles
+      - ./runs:/app/runs
