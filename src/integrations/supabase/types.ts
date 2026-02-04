@@ -1068,6 +1068,77 @@ export type Database = {
         }
         Relationships: []
       }
+      order_emails: {
+        Row: {
+          body_html: string | null
+          body_text: string | null
+          created_at: string
+          email_type: string | null
+          extracted_data: Json | null
+          from_email: string
+          from_name: string | null
+          gmail_message_id: string
+          id: string
+          is_read: boolean | null
+          order_id: string | null
+          received_at: string
+          snippet: string | null
+          subject: string
+          thread_id: string | null
+          to_email: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body_html?: string | null
+          body_text?: string | null
+          created_at?: string
+          email_type?: string | null
+          extracted_data?: Json | null
+          from_email: string
+          from_name?: string | null
+          gmail_message_id: string
+          id?: string
+          is_read?: boolean | null
+          order_id?: string | null
+          received_at: string
+          snippet?: string | null
+          subject: string
+          thread_id?: string | null
+          to_email?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body_html?: string | null
+          body_text?: string | null
+          created_at?: string
+          email_type?: string | null
+          extracted_data?: Json | null
+          from_email?: string
+          from_name?: string | null
+          gmail_message_id?: string
+          id?: string
+          is_read?: boolean | null
+          order_id?: string | null
+          received_at?: string
+          snippet?: string | null
+          subject?: string
+          thread_id?: string | null
+          to_email?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_emails_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "auto_shop_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       order_tracking: {
         Row: {
           carrier: string | null
