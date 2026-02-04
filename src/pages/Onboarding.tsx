@@ -477,14 +477,19 @@ export default function Onboarding() {
                   <Sparkles className="w-5 h-5" />
                   Resume Optimization
                 </CardTitle>
-                <CardDescription>Our AI is enhancing your resume</CardDescription>
+                <CardDescription>Our AI is enhancing your resume for ATS systems</CardDescription>
               </CardHeader>
               <CardContent>
                 {isOptimizing ? (
                   <div className="text-center py-12">
                     <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto mb-4" />
                     <p className="font-medium">Analyzing and optimizing your resume...</p>
-                    <p className="text-sm text-muted-foreground">This may take a moment</p>
+                    <p className="text-sm text-muted-foreground">Adding keywords, improving formatting, enhancing impact</p>
+                    <div className="flex justify-center gap-2 mt-4">
+                      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" />
+                      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: "0.1s" }} />
+                      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: "0.2s" }} />
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -495,9 +500,25 @@ export default function Onboarding() {
                         <p className="text-sm text-muted-foreground">ATS-friendly keywords added, formatting improved</p>
                       </div>
                     </div>
-                    <div className="p-4 rounded-xl bg-secondary">
-                      <p className="text-sm">{optimizedResume}</p>
+                    <div className="grid gap-3">
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-secondary/50">
+                        <CheckCircle2 className="w-4 h-4 text-success mt-0.5" />
+                        <span className="text-sm">Added ATS-friendly formatting and structure</span>
+                      </div>
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-secondary/50">
+                        <CheckCircle2 className="w-4 h-4 text-success mt-0.5" />
+                        <span className="text-sm">Optimized keywords for your target roles</span>
+                      </div>
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-secondary/50">
+                        <CheckCircle2 className="w-4 h-4 text-success mt-0.5" />
+                        <span className="text-sm">Enhanced bullet points with action verbs and metrics</span>
+                      </div>
                     </div>
+                    {optimizedResume && (
+                      <div className="p-4 rounded-xl bg-card border">
+                        <p className="text-sm">{optimizedResume}</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>

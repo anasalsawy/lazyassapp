@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { ApplicationDrawer } from "@/components/dashboard/ApplicationDrawer";
 import { 
   Briefcase, 
   Send, 
@@ -23,7 +25,9 @@ import {
   XCircle,
   Eye,
   RotateCw,
-  MoreHorizontal
+  MoreHorizontal,
+  Archive,
+  FileText
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -46,6 +50,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.
   "needs-user-action": { label: "Action Needed", color: "bg-warning/20 text-warning", icon: AlertCircle },
 };
 
+type DrawerType = "logs" | "details" | "offer" | "reason" | "resolve";
+
 interface Application {
   id: string;
   job_id: string;
@@ -56,11 +62,15 @@ interface Application {
   status: string;
   status_message: string | null;
   applied_at: string;
+  notes?: string | null;
+  cover_letter?: string | null;
+  extra_metadata?: any;
   job?: {
     title: string;
     company: string;
     location: string | null;
     url: string | null;
+    description?: string | null;
   };
 }
 
@@ -75,6 +85,15 @@ export default function Dashboard() {
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(false);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [processingApps, setProcessingApps] = useState<Set<string>>(new Set());
+  
+  // Bulk selection state
+  const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  
+  // Drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerType, setDrawerType] = useState<DrawerType>("logs");
+  const [selectedApplication, setSelectedApplication] = useState<Application | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -222,6 +241,91 @@ export default function Dashboard() {
     responses: applications.filter(a => ["interview", "offer", "rejected"].includes(a.status)).length,
   };
 
+  // Bulk selection handlers
+  const toggleSelectAll = () => {
+    if (selectedApps.size === applications.length) {
+      setSelectedApps(new Set());
+    } else {
+      setSelectedApps(new Set(applications.map(a => a.id)));
+    }
+  };
+
+  const toggleSelectApp = (appId: string) => {
+    setSelectedApps(prev => {
+      const next = new Set(prev);
+      if (next.has(appId)) {
+        next.delete(appId);
+      } else {
+        next.add(appId);
+      }
+      return next;
+    });
+  };
+
+  // Bulk actions
+  const handleBulkCheckStatus = async () => {
+    if (selectedApps.size === 0) return;
+    setIsBulkProcessing(true);
+    try {
+      const { error } = await supabase.functions.invoke("job-agent", {
+        body: { action: "check_statuses", applicationIds: Array.from(selectedApps) },
+      });
+      if (error) throw error;
+      toast({ title: "Checking statuses...", description: `Checking ${selectedApps.size} applications` });
+      setTimeout(() => {
+        fetchApplications();
+        setIsBulkProcessing(false);
+        setSelectedApps(new Set());
+      }, 5000);
+    } catch (error: any) {
+      setIsBulkProcessing(false);
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const handleBulkArchive = async () => {
+    if (selectedApps.size === 0) return;
+    setIsBulkProcessing(true);
+    try {
+      const { error } = await supabase
+        .from("applications")
+        .delete()
+        .in("id", Array.from(selectedApps));
+      
+      if (error) throw error;
+      toast({ title: "Archived", description: `${selectedApps.size} applications archived` });
+      setSelectedApps(new Set());
+      fetchApplications();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  // Archive single application
+  const handleArchive = async (appId: string) => {
+    try {
+      const { error } = await supabase
+        .from("applications")
+        .delete()
+        .eq("id", appId);
+      
+      if (error) throw error;
+      toast({ title: "Application archived" });
+      fetchApplications();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  // Open drawer with specific type
+  const openDrawer = (app: Application, type: DrawerType) => {
+    setSelectedApplication(app);
+    setDrawerType(type);
+    setDrawerOpen(true);
+  };
+
   const getActionButton = (app: Application) => {
     const isProcessing = processingApps.has(app.id);
     
@@ -250,28 +354,28 @@ export default function Dashboard() {
         );
       case "interview":
         return (
-          <Button size="sm" variant="outline">
+          <Button size="sm" variant="outline" onClick={() => openDrawer(app, "details")}>
             <Eye className="w-4 h-4 mr-1" />
             View Details
           </Button>
         );
       case "offer":
         return (
-          <Button size="sm" variant="outline">
+          <Button size="sm" variant="outline" onClick={() => openDrawer(app, "offer")}>
             <Eye className="w-4 h-4 mr-1" />
             View Offer
           </Button>
         );
       case "rejected":
         return (
-          <Button size="sm" variant="ghost">
+          <Button size="sm" variant="ghost" onClick={() => openDrawer(app, "reason")}>
             <Eye className="w-4 h-4 mr-1" />
             View Reason
           </Button>
         );
       case "needs-user-action":
         return (
-          <Button size="sm" className="bg-warning hover:bg-warning/90">
+          <Button size="sm" className="bg-warning hover:bg-warning/90 text-warning-foreground" onClick={() => openDrawer(app, "resolve")}>
             <AlertCircle className="w-4 h-4 mr-1" />
             Resolve
           </Button>
@@ -370,6 +474,40 @@ export default function Dashboard() {
             </div>
           </CardHeader>
           <CardContent>
+            {/* Bulk Actions Bar */}
+            {selectedApps.size > 0 && (
+              <div className="mb-4 p-3 rounded-lg bg-secondary/50 flex items-center justify-between">
+                <span className="text-sm font-medium">
+                  {selectedApps.size} application{selectedApps.size > 1 ? "s" : ""} selected
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBulkCheckStatus}
+                    disabled={isBulkProcessing}
+                  >
+                    {isBulkProcessing ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-1" />
+                    )}
+                    Check Status
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBulkArchive}
+                    disabled={isBulkProcessing}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Archive className="w-4 h-4 mr-1" />
+                    Archive
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {applications.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <Briefcase className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -378,17 +516,35 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="space-y-3">
+                {/* Select All Header */}
+                <div className="flex items-center gap-3 px-4 py-2 text-sm text-muted-foreground">
+                  <Checkbox
+                    checked={selectedApps.size === applications.length && applications.length > 0}
+                    onCheckedChange={toggleSelectAll}
+                  />
+                  <span>Select all</span>
+                </div>
+                
                 {applications.map((app) => {
                   const statusConfig = STATUS_CONFIG[app.status] || STATUS_CONFIG["applied"];
                   const StatusIcon = statusConfig.icon;
                   const isProcessing = processingApps.has(app.id);
+                  const isSelected = selectedApps.has(app.id);
 
                   return (
                     <div
                       key={app.id}
-                      className="flex items-center justify-between p-4 rounded-xl border border-border hover:bg-secondary/50 transition-colors"
+                      className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${
+                        isSelected ? "border-primary bg-primary/5" : "border-border hover:bg-secondary/50"
+                      }`}
                     >
                       <div className="flex items-center gap-4 min-w-0">
+                        {/* Checkbox */}
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={() => toggleSelectApp(app.id)}
+                        />
+                        
                         {/* Platform icon */}
                         <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
                           <Briefcase className="w-5 h-5 text-primary" />
@@ -446,11 +602,15 @@ export default function Dashboard() {
                                 </a>
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem>
-                              <Eye className="w-4 h-4 mr-2" />
+                            <DropdownMenuItem onClick={() => openDrawer(app, "logs")}>
+                              <FileText className="w-4 h-4 mr-2" />
                               View Logs
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="text-muted-foreground">
+                            <DropdownMenuItem 
+                              onClick={() => handleArchive(app.id)}
+                              className="text-destructive focus:text-destructive"
+                            >
+                              <Archive className="w-4 h-4 mr-2" />
                               Archive
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -463,6 +623,15 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
+
+        {/* Application Drawer */}
+        <ApplicationDrawer
+          application={selectedApplication}
+          type={drawerType}
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          onRefresh={fetchApplications}
+        />
       </div>
     </AppLayout>
   );
