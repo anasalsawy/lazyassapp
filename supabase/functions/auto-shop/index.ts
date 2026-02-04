@@ -44,6 +44,52 @@ interface AutoShopPayload {
   proxyPassword?: string;
 }
 
+type BrowserUseJson = Record<string, unknown>;
+
+const BROWSER_USE_BASE_URLS = [
+  "https://api.browser-use.com",
+  "https://api.cloud.browser-use.com",
+];
+
+async function browserUseFetchJson(
+  apiKey: string,
+  path: string,
+  init: RequestInit,
+): Promise<{ baseUrl: string; status: number; data: BrowserUseJson }> {
+  let lastErrorText = "";
+
+  for (const baseUrl of BROWSER_USE_BASE_URLS) {
+    try {
+      const res = await fetch(`${baseUrl}${path}`, {
+        ...init,
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+          ...(init.headers || {}),
+        },
+      });
+
+      const text = await res.text();
+      lastErrorText = text;
+      if (!res.ok) continue;
+
+      let json: BrowserUseJson = {};
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { raw: text };
+      }
+
+      return { baseUrl, status: res.status, data: json };
+    } catch (e) {
+      lastErrorText = e instanceof Error ? e.message : String(e);
+      continue;
+    }
+  }
+
+  throw new Error(`Browser Use API request failed for ${path}: ${lastErrorText || "unknown error"}`);
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -253,77 +299,121 @@ async function handleStartLogin(
 
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
 
+  const expectedProfileId: string = profile.browser_use_profile_id;
+
   // Create a SESSION (not task) for manual login - this gives us a proper liveUrl
   // Always use US proxy for sessions to avoid geo-restrictions
   // CRITICAL: Include profile_id in BOTH formats to ensure compatibility
-  const sessionPayload = {
-    profileId: profile.browser_use_profile_id,
-    profile_id: profile.browser_use_profile_id,  // Include snake_case for compatibility
-    startUrl: loginUrl,
-    keepAlive: true, // Keep session open for manual login
-    save_browser_data: true, // Save session data back to profile
-    browserScreenWidth: 1280,
-    browserScreenHeight: 800,
-    proxyCountryCode: "us", // Always use US proxy (lowercase required)
+  const buildSessionPayload = (mode: "default" | "compat") => {
+    const base: Record<string, unknown> = {
+      startUrl: loginUrl,
+      keepAlive: true,
+      browserScreenWidth: 1280,
+      browserScreenHeight: 800,
+      proxyCountryCode: "us", // Always use US proxy (lowercase required)
+      // Saving flags (API versions differ)
+      save_browser_data: true,
+      saveBrowserData: true,
+    };
+
+    if (mode === "default") {
+      return {
+        ...base,
+        profileId: expectedProfileId,
+        profile_id: expectedProfileId,
+      };
+    }
+
+    // Compatibility mode: some versions only accept snake_case or different keys
+    return {
+      ...base,
+      profile_id: expectedProfileId,
+      profileId: expectedProfileId,
+      profileID: expectedProfileId,
+      profile: expectedProfileId,
+    };
   };
-  
-  console.log(`[AutoShop] Creating session with payload:`, JSON.stringify(sessionPayload));
 
-  const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
-    method: "POST",
-    headers: {
-      "X-Browser-Use-API-Key": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(sessionPayload),
-  });
+  const createAndVerifySession = async (mode: "default" | "compat") => {
+    const sessionPayload = buildSessionPayload(mode);
+    console.log(`[AutoShop] Creating session (${mode}) with payload:`, JSON.stringify(sessionPayload));
 
-  console.log(`[AutoShop] Session response status: ${sessionRes.status}`);
+    const { baseUrl, status, data: sessionData } = await browserUseFetchJson(
+      apiKey,
+      "/api/v2/sessions",
+      { method: "POST", body: JSON.stringify(sessionPayload) },
+    );
 
-  if (!sessionRes.ok) {
-    const error = await sessionRes.text();
-    console.error(`[AutoShop] Session creation failed: ${error}`);
-    
-    // Check for insufficient credits error
-    if (error.includes("credits") || error.includes("balance") || sessionRes.status === 402) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Browser Use API credits are insufficient. Please add credits to your Browser Use account.",
-          code: "INSUFFICIENT_CREDITS",
-        }),
-        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    throw new Error(`Failed to start login session: ${error}`);
-  }
+    console.log(`[AutoShop] Session create (${mode}) ok via ${baseUrl} (status ${status})`);
+    console.log(`[AutoShop] Session create data: ${JSON.stringify(sessionData)}`);
 
-  const sessionData = await sessionRes.json();
-  console.log(`[AutoShop] Session data: ${JSON.stringify(sessionData)}`);
-  
-  const sessionId = sessionData.id || sessionData.session_id;
-  // The sessions endpoint returns liveUrl (not live_view_url)
-  const liveViewUrl = sessionData.liveUrl || sessionData.live_url || sessionData.live_view_url || `https://browser-use.com/live/${sessionId}`;
-  
-  // VERIFY the profile was attached
-  const attachedProfileId = sessionData.profileId || sessionData.profile_id;
-  if (!attachedProfileId) {
-    console.error(`[AutoShop] ⚠️ WARNING: Session created but NO profile attached! Session data:`, sessionData);
-    
-    // Try to stop this broken session
+    const sessionId = (sessionData.id as string) || (sessionData.session_id as string);
+    if (!sessionId) throw new Error("Browser Use session created but returned no session id");
+
+    // The sessions endpoint returns liveUrl (not live_view_url)
+    const liveViewUrl =
+      (sessionData.liveUrl as string) ||
+      (sessionData.live_url as string) ||
+      (sessionData.live_view_url as string) ||
+      `https://browser-use.com/live/${sessionId}`;
+
+    // DO NOT trust create-response; verify by fetching session details
+    let details: BrowserUseJson | null = null;
     try {
-      await fetch(`https://api.browser-use.com/api/v2/sessions/${sessionId}/stop`, {
-        method: "POST",
-        headers: { "X-Browser-Use-API-Key": apiKey },
-      });
+      const detailsRes = await browserUseFetchJson(
+        apiKey,
+        `/api/v2/sessions/${sessionId}`,
+        { method: "GET" },
+      );
+      details = detailsRes.data;
+      console.log(`[AutoShop] Session details: ${JSON.stringify(details)}`);
     } catch (e) {
-      console.error(`[AutoShop] Failed to stop broken session:`, e);
+      console.warn(`[AutoShop] Could not fetch session details for verification:`, e);
     }
-    
-    throw new Error("Session was created but profile was NOT attached. Please try again or contact support.");
+
+    const attachedProfileId =
+      (details?.profileId as string) ||
+      (details?.profile_id as string) ||
+      (sessionData.profileId as string) ||
+      (sessionData.profile_id as string);
+
+    const attachedOk = attachedProfileId && attachedProfileId === expectedProfileId;
+    if (!attachedOk) {
+      console.error(
+        `[AutoShop] ❌ Session profile mismatch. expected=${expectedProfileId} attached=${attachedProfileId || "none"}`,
+      );
+
+      // Stop the broken session immediately
+      try {
+        await browserUseFetchJson(apiKey, `/api/v2/sessions/${sessionId}/stop`, { method: "POST" });
+      } catch (stopErr) {
+        console.error(`[AutoShop] Failed to stop broken session:`, stopErr);
+      }
+
+      return { ok: false as const, sessionId, liveViewUrl, attachedProfileId };
+    }
+
+    console.log(`[AutoShop] ✓ Profile verified attached: ${attachedProfileId}`);
+    return { ok: true as const, sessionId, liveViewUrl, attachedProfileId };
+  };
+
+  // Attempt 1: default payload
+  let verified = await createAndVerifySession("default");
+  // Attempt 2: compatibility payload
+  if (!verified.ok) {
+    console.warn(`[AutoShop] Retrying session creation with compatibility payload...`);
+    verified = await createAndVerifySession("compat");
   }
-  
-  console.log(`[AutoShop] ✓ Profile verified attached: ${attachedProfileId}`);
+
+  if (!verified.ok) {
+    throw new Error(
+      "Session was created but the profile was NOT attached. I stopped the session automatically—please retry.",
+    );
+  }
+
+  const sessionId = verified.sessionId;
+  const liveViewUrl = verified.liveViewUrl;
+  const attachedProfileId = verified.attachedProfileId;
 
   // Update pending login
   await supabase
