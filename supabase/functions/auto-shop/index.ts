@@ -933,7 +933,7 @@ IMPORTANT:
 - Do NOT click on or open individual emails - just read from the inbox list view
 - Scroll down to load more emails if needed`;
 
-  // Add custom proxy if configured
+  // Add custom proxy if configured - always use US proxy for email sync
   const taskPayload: Record<string, unknown> = {
     task: searchInstruction,
     startUrl: "https://mail.google.com",
@@ -941,6 +941,7 @@ IMPORTANT:
     llm: "browser-use-llm",
     maxSteps: 50,
     highlightElements: true,
+    proxyCountryCode: "us", // Always use US proxy
   };
 
   if (profile?.proxy_server) {
