@@ -1011,6 +1011,7 @@ export type Database = {
           job_type: string | null
           location: string | null
           match_score: number | null
+          platform: string | null
           posted_at: string | null
           requirements: string[] | null
           salary_max: number | null
@@ -1032,6 +1033,7 @@ export type Database = {
           job_type?: string | null
           location?: string | null
           match_score?: number | null
+          platform?: string | null
           posted_at?: string | null
           requirements?: string[] | null
           salary_max?: number | null
@@ -1053,6 +1055,7 @@ export type Database = {
           job_type?: string | null
           location?: string | null
           match_score?: number | null
+          platform?: string | null
           posted_at?: string | null
           requirements?: string[] | null
           salary_max?: number | null
@@ -1342,6 +1345,42 @@ export type Database = {
           notes?: string | null
           password_enc?: string
           site_domain?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      tracking_runs: {
+        Row: {
+          applications_updated: number | null
+          completed_at: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          platforms_checked: string[] | null
+          started_at: string | null
+          status: string | null
+          user_id: string
+        }
+        Insert: {
+          applications_updated?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          platforms_checked?: string[] | null
+          started_at?: string | null
+          status?: string | null
+          user_id: string
+        }
+        Update: {
+          applications_updated?: number | null
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          platforms_checked?: string[] | null
+          started_at?: string | null
+          status?: string | null
           user_id?: string
         }
         Relationships: []
