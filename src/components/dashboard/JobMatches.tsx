@@ -29,17 +29,24 @@ export const JobMatches = () => {
 
     // Build complete resume data for matching - include FULL resume text
     const parsedContent = primaryResume.parsed_content || {};
+    
+    // Extract full text from ALL possible sources - prioritize longest
+    const possibleTexts = [
+      parsedContent?.rawText,
+      parsedContent?.fullText,
+      parsedContent?.text,
+      parsedContent?.content,
+      parsedContent?.resume_text,
+      typeof parsedContent === 'string' ? parsedContent : null,
+    ].filter(Boolean);
+    const fullText = possibleTexts.sort((a, b) => (b?.length || 0) - (a?.length || 0))[0] || "";
+    
     const resumeData = {
       skills: primaryResume.skills || [],
       experienceYears: primaryResume.experience_years || 0,
       parsedContent: parsedContent,
       atsScore: primaryResume.ats_score || null,
-      // Extract full text from all possible sources
-      fullText: parsedContent?.rawText || 
-                parsedContent?.fullText ||
-                parsedContent?.text ||
-                (typeof parsedContent === 'string' ? parsedContent : "") ||
-                ""
+      fullText: fullText,
     };
 
     // Build preferences with fallbacks

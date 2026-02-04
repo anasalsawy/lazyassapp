@@ -107,6 +107,7 @@ serve(async (req) => {
     const jobsPerBatch = 25;
     const startIndex = (batchNumber - 1) * jobsPerBatch + 1;
     const endIndex = batchNumber * jobsPerBatch;
+    const maxBatches = 10; // Support up to 250 jobs
 
     // Build the matching prompt
     const systemPrompt = `You are an expert job matching AI. Your task is to find the BEST job matches for a candidate based on their COMPLETE RESUME and preferences.
@@ -213,7 +214,8 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     }
 
     let jobs = [];
-    let hasMore = batchNumber < 4; // Allow up to 4 batches = 100 jobs
+    // Continue batching as long as we haven't hit the max
+    let hasMore = batchNumber < maxBatches;
     let nextBatch = batchNumber + 1;
 
     try {
