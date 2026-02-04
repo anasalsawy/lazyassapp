@@ -48,7 +48,6 @@ type BrowserUseJson = Record<string, unknown>;
 
 const BROWSER_USE_BASE_URLS = [
   "https://api.browser-use.com",
-  "https://api.cloud.browser-use.com",
 ];
 
 async function browserUseFetchJson(
@@ -56,7 +55,8 @@ async function browserUseFetchJson(
   path: string,
   init: RequestInit,
 ): Promise<{ baseUrl: string; status: number; data: BrowserUseJson }> {
-  let lastErrorText = "";
+  let lastExceptionText = "";
+  let lastHttpError: { baseUrl: string; status: number; text: string } | null = null;
 
   for (const baseUrl of BROWSER_USE_BASE_URLS) {
     try {
@@ -70,8 +70,11 @@ async function browserUseFetchJson(
       });
 
       const text = await res.text();
-      lastErrorText = text;
-      if (!res.ok) continue;
+      if (!res.ok) {
+        // Keep the most recent *HTTP* error (prefer this over DNS/connection errors)
+        lastHttpError = { baseUrl, status: res.status, text };
+        continue;
+      }
 
       let json: BrowserUseJson = {};
       try {
@@ -82,12 +85,36 @@ async function browserUseFetchJson(
 
       return { baseUrl, status: res.status, data: json };
     } catch (e) {
-      lastErrorText = e instanceof Error ? e.message : String(e);
+      lastExceptionText = e instanceof Error ? e.message : String(e);
       continue;
     }
   }
 
-  throw new Error(`Browser Use API request failed for ${path}: ${lastErrorText || "unknown error"}`);
+  if (lastHttpError) {
+    throw new Error(
+      `Browser Use API ${lastHttpError.status} for ${path} via ${lastHttpError.baseUrl}: ${lastHttpError.text || "(empty response)"}`,
+    );
+  }
+
+  throw new Error(`Browser Use API request failed for ${path}: ${lastExceptionText || "unknown error"}`);
+}
+
+async function browserUseFetchJsonMultiPath(
+  apiKey: string,
+  paths: string[],
+  init: RequestInit,
+): Promise<{ baseUrl: string; status: number; data: BrowserUseJson; path: string }> {
+  let lastErr: unknown = null;
+  for (const p of paths) {
+    try {
+      const res = await browserUseFetchJson(apiKey, p, init);
+      return { ...res, path: p };
+    } catch (e) {
+      lastErr = e;
+      continue;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("Browser Use API request failed (all path variants)");
 }
 
 serve(async (req) => {
@@ -338,13 +365,13 @@ async function handleStartLogin(
     const sessionPayload = buildSessionPayload(mode);
     console.log(`[AutoShop] Creating session (${mode}) with payload:`, JSON.stringify(sessionPayload));
 
-    const { baseUrl, status, data: sessionData } = await browserUseFetchJson(
+    const { baseUrl, status, data: sessionData, path: createPath } = await browserUseFetchJsonMultiPath(
       apiKey,
-      "/api/v2/sessions",
+      ["/v2/sessions", "/api/v2/sessions"],
       { method: "POST", body: JSON.stringify(sessionPayload) },
     );
 
-    console.log(`[AutoShop] Session create (${mode}) ok via ${baseUrl} (status ${status})`);
+    console.log(`[AutoShop] Session create (${mode}) ok via ${baseUrl}${createPath} (status ${status})`);
     console.log(`[AutoShop] Session create data: ${JSON.stringify(sessionData)}`);
 
     const sessionId = (sessionData.id as string) || (sessionData.session_id as string);
@@ -360,13 +387,13 @@ async function handleStartLogin(
     // DO NOT trust create-response; verify by fetching session details
     let details: BrowserUseJson | null = null;
     try {
-      const detailsRes = await browserUseFetchJson(
+      const detailsRes = await browserUseFetchJsonMultiPath(
         apiKey,
-        `/api/v2/sessions/${sessionId}`,
+        [`/v2/sessions/${sessionId}`, `/api/v2/sessions/${sessionId}`],
         { method: "GET" },
       );
       details = detailsRes.data;
-      console.log(`[AutoShop] Session details: ${JSON.stringify(details)}`);
+      console.log(`[AutoShop] Session details via ${detailsRes.baseUrl}${detailsRes.path}: ${JSON.stringify(details)}`);
     } catch (e) {
       console.warn(`[AutoShop] Could not fetch session details for verification:`, e);
     }
@@ -385,7 +412,11 @@ async function handleStartLogin(
 
       // Stop the broken session immediately
       try {
-        await browserUseFetchJson(apiKey, `/api/v2/sessions/${sessionId}/stop`, { method: "POST" });
+        await browserUseFetchJsonMultiPath(
+          apiKey,
+          [`/v2/sessions/${sessionId}/stop`, `/api/v2/sessions/${sessionId}/stop`],
+          { method: "POST" },
+        );
       } catch (stopErr) {
         console.error(`[AutoShop] Failed to stop broken session:`, stopErr);
       }
@@ -508,10 +539,11 @@ async function handleCancelLogin(
   if (sessionId) {
     try {
       console.log(`[AutoShop] Stopping session: ${sessionId}`);
-      await fetch(`https://api.browser-use.com/api/v2/sessions/${sessionId}/stop`, {
-        method: "POST",
-        headers: { "X-Browser-Use-API-Key": apiKey },
-      });
+      await browserUseFetchJsonMultiPath(
+        apiKey,
+        [`/v2/sessions/${sessionId}/stop`, `/api/v2/sessions/${sessionId}/stop`],
+        { method: "POST" },
+      );
     } catch (e) {
       console.error(`[AutoShop] Failed to stop session ${sessionId}:`, e);
     }
@@ -522,10 +554,11 @@ async function handleCancelLogin(
   if (taskId) {
     try {
       console.log(`[AutoShop] Stopping task: ${taskId}`);
-      await fetch(`https://api.browser-use.com/api/v2/tasks/${taskId}/stop`, {
-        method: "POST",
-        headers: { "X-Browser-Use-API-Key": apiKey },
-      });
+      await browserUseFetchJsonMultiPath(
+        apiKey,
+        [`/v2/tasks/${taskId}/stop`, `/api/v2/tasks/${taskId}/stop`],
+        { method: "POST" },
+      );
     } catch (e) {
       console.error(`[AutoShop] Failed to stop task ${taskId}:`, e);
     }
@@ -575,11 +608,15 @@ async function cleanupStaleSessions(
   // 1. Stop any pending session recorded in DB
   if (profile.shop_pending_session_id) {
     try {
-      const res = await fetch(`https://api.browser-use.com/api/v2/sessions/${profile.shop_pending_session_id}/stop`, {
-        method: "POST",
-        headers: { "X-Browser-Use-API-Key": apiKey },
-      });
-      if (res.ok) sessionsKilled++;
+      await browserUseFetchJsonMultiPath(
+        apiKey,
+        [
+          `/v2/sessions/${profile.shop_pending_session_id}/stop`,
+          `/api/v2/sessions/${profile.shop_pending_session_id}/stop`,
+        ],
+        { method: "POST" },
+      );
+      sessionsKilled++;
       console.log(`[AutoShop] Stopped pending session: ${profile.shop_pending_session_id}`);
     } catch (e) {
       console.error(`[AutoShop] Failed to stop session:`, e);
@@ -589,11 +626,15 @@ async function cleanupStaleSessions(
   // 2. Stop any pending task recorded in DB
   if (profile.shop_pending_task_id) {
     try {
-      const res = await fetch(`https://api.browser-use.com/api/v2/tasks/${profile.shop_pending_task_id}/stop`, {
-        method: "POST",
-        headers: { "X-Browser-Use-API-Key": apiKey },
-      });
-      if (res.ok) tasksKilled++;
+      await browserUseFetchJsonMultiPath(
+        apiKey,
+        [
+          `/v2/tasks/${profile.shop_pending_task_id}/stop`,
+          `/api/v2/tasks/${profile.shop_pending_task_id}/stop`,
+        ],
+        { method: "POST" },
+      );
+      tasksKilled++;
       console.log(`[AutoShop] Stopped pending task: ${profile.shop_pending_task_id}`);
     } catch (e) {
       console.error(`[AutoShop] Failed to stop task:`, e);
@@ -602,33 +643,33 @@ async function cleanupStaleSessions(
 
   // 3. Try to list and stop any active sessions for this profile from the API
   try {
-    const listRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
-      headers: { "X-Browser-Use-API-Key": apiKey },
-    });
-    
-    if (listRes.ok) {
-      const sessionsList = await listRes.json();
-      const sessions = Array.isArray(sessionsList) ? sessionsList : (sessionsList.sessions || []);
+    const { data: sessionsList } = await browserUseFetchJsonMultiPath(
+      apiKey,
+      ["/v2/sessions", "/api/v2/sessions"],
+      { method: "GET" },
+    );
+
+    const sessions = Array.isArray(sessionsList) ? sessionsList : ((sessionsList.sessions as unknown[]) || []);
       
-      for (const session of sessions) {
-        const sessionStatus = session.status || session.state;
-        const sessionProfileId = session.profileId || session.profile_id;
+    for (const session of sessions as any[]) {
+      const sessionStatus = session.status || session.state;
+      const sessionProfileId = session.profileId || session.profile_id;
         
-        // Only kill sessions for this user's profile that are still running
-        if (sessionProfileId === profile.browser_use_profile_id && 
-            ["running", "pending", "created"].includes(sessionStatus)) {
-          try {
-            const stopRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${session.id}/stop`, {
-              method: "POST",
-              headers: { "X-Browser-Use-API-Key": apiKey },
-            });
-            if (stopRes.ok) {
-              sessionsKilled++;
-              console.log(`[AutoShop] Killed stale session: ${session.id}`);
-            }
-          } catch {
-            // Ignore individual session stop failures
-          }
+      // Only kill sessions for this user's profile that are still running
+      if (
+        sessionProfileId === profile.browser_use_profile_id &&
+        ["running", "pending", "created"].includes(sessionStatus)
+      ) {
+        try {
+          await browserUseFetchJsonMultiPath(
+            apiKey,
+            [`/v2/sessions/${session.id}/stop`, `/api/v2/sessions/${session.id}/stop`],
+            { method: "POST" },
+          );
+          sessionsKilled++;
+          console.log(`[AutoShop] Killed stale session: ${session.id}`);
+        } catch {
+          // Ignore individual session stop failures
         }
       }
     }
@@ -638,33 +679,33 @@ async function cleanupStaleSessions(
 
   // 4. Also check for stale tasks related to this profile
   try {
-    const listRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
-      headers: { "X-Browser-Use-API-Key": apiKey },
-    });
-    
-    if (listRes.ok) {
-      const tasksList = await listRes.json();
-      const tasks = Array.isArray(tasksList) ? tasksList : (tasksList.tasks || []);
+    const { data: tasksList } = await browserUseFetchJsonMultiPath(
+      apiKey,
+      ["/v2/tasks", "/api/v2/tasks"],
+      { method: "GET" },
+    );
+
+    const tasks = Array.isArray(tasksList) ? tasksList : ((tasksList.tasks as unknown[]) || []);
       
-      for (const task of tasks) {
-        const taskStatus = task.status || task.state;
-        const taskProfileId = task.profileId || task.profile_id;
+    for (const task of tasks as any[]) {
+      const taskStatus = task.status || task.state;
+      const taskProfileId = task.profileId || task.profile_id;
         
-        // Only kill tasks for this user's profile that are still running
-        if (taskProfileId === profile.browser_use_profile_id && 
-            ["running", "pending", "created"].includes(taskStatus)) {
-          try {
-            const stopRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${task.id}/stop`, {
-              method: "POST",
-              headers: { "X-Browser-Use-API-Key": apiKey },
-            });
-            if (stopRes.ok) {
-              tasksKilled++;
-              console.log(`[AutoShop] Killed stale task: ${task.id}`);
-            }
-          } catch {
-            // Ignore individual task stop failures
-          }
+      // Only kill tasks for this user's profile that are still running
+      if (
+        taskProfileId === profile.browser_use_profile_id &&
+        ["running", "pending", "created"].includes(taskStatus)
+      ) {
+        try {
+          await browserUseFetchJsonMultiPath(
+            apiKey,
+            [`/v2/tasks/${task.id}/stop`, `/api/v2/tasks/${task.id}/stop`],
+            { method: "POST" },
+          );
+          tasksKilled++;
+          console.log(`[AutoShop] Killed stale task: ${task.id}`);
+        } catch {
+          // Ignore individual task stop failures
         }
       }
     }
