@@ -236,26 +236,30 @@ async function handleStartLogin(
 
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
 
-  // Start browser session with human control
-  const taskRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
+  // Create a SESSION (not task) for manual login - this gives us a proper liveUrl
+  const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
     method: "POST",
     headers: {
       "X-Browser-Use-API-Key": apiKey,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      task: `Navigate to ${loginUrl} and wait for the user to log in manually. Do not interact with the page - just wait.`,
-      startUrl: loginUrl,
       profileId: profile.browser_use_profile_id,
-      allowHumanControl: true,
-      maxSteps: 5,
+      startUrl: loginUrl,
+      keepAlive: true, // Keep session open for manual login
+      browserScreenWidth: 1280,
+      browserScreenHeight: 800,
     }),
   });
 
-  if (!taskRes.ok) {
-    const error = await taskRes.text();
+  console.log(`[AutoShop] Session response status: ${sessionRes.status}`);
+
+  if (!sessionRes.ok) {
+    const error = await sessionRes.text();
+    console.error(`[AutoShop] Session creation failed: ${error}`);
+    
     // Check for insufficient credits error
-    if (error.includes("credits") || error.includes("balance") || taskRes.status === 402) {
+    if (error.includes("credits") || error.includes("balance") || sessionRes.status === 402) {
       return new Response(
         JSON.stringify({
           success: false,
@@ -265,30 +269,32 @@ async function handleStartLogin(
         { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-    throw new Error(`Failed to start login: ${error}`);
+    throw new Error(`Failed to start login session: ${error}`);
   }
 
-  const taskData = await taskRes.json();
-  const taskId = taskData.id || taskData.task_id;
-  const sessionId = taskData.session_id || taskId;
-  const liveViewUrl = taskData.live_view_url || `https://browser-use.com/live/${sessionId}`;
+  const sessionData = await sessionRes.json();
+  console.log(`[AutoShop] Session data: ${JSON.stringify(sessionData)}`);
+  
+  const sessionId = sessionData.id || sessionData.session_id;
+  // The sessions endpoint returns liveUrl (not live_view_url)
+  const liveViewUrl = sessionData.liveUrl || sessionData.live_url || sessionData.live_view_url || `https://browser-use.com/live/${sessionId}`;
 
   // Update pending login
   await supabase
     .from("browser_profiles")
     .update({
       shop_pending_login_site: site,
-      shop_pending_task_id: taskId,
+      shop_pending_task_id: null,
       shop_pending_session_id: sessionId,
     })
     .eq("user_id", userId);
 
-  console.log(`[AutoShop] Login started for ${site}: ${taskId}`);
+  console.log(`[AutoShop] Login session started for ${site}: ${sessionId}, liveUrl: ${liveViewUrl}`);
 
   return new Response(
     JSON.stringify({
       success: true,
-      taskId,
+      taskId: sessionId,
       sessionId,
       liveViewUrl,
       site,
