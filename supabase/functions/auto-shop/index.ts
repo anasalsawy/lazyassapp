@@ -364,6 +364,230 @@ async function handleConfirmLogin(
   );
 }
 
+// Cancel a pending login session and clean up
+// deno-lint-ignore no-explicit-any
+async function handleCancelLogin(
+  supabase: any,
+  userId: string,
+  apiKey: string
+) {
+  // Get profile to find pending session
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+
+  if (!profile) {
+    return new Response(
+      JSON.stringify({ success: true, message: "No profile found" }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Stop the pending session if it exists
+  const sessionId = profile.shop_pending_session_id;
+  if (sessionId) {
+    try {
+      console.log(`[AutoShop] Stopping session: ${sessionId}`);
+      await fetch(`https://api.browser-use.com/api/v2/sessions/${sessionId}/stop`, {
+        method: "POST",
+        headers: { "X-Browser-Use-API-Key": apiKey },
+      });
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop session ${sessionId}:`, e);
+    }
+  }
+
+  // Stop the pending task if it exists
+  const taskId = profile.shop_pending_task_id;
+  if (taskId) {
+    try {
+      console.log(`[AutoShop] Stopping task: ${taskId}`);
+      await fetch(`https://api.browser-use.com/api/v2/tasks/${taskId}/stop`, {
+        method: "POST",
+        headers: { "X-Browser-Use-API-Key": apiKey },
+      });
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop task ${taskId}:`, e);
+    }
+  }
+
+  // Clear pending state
+  await supabase
+    .from("browser_profiles")
+    .update({
+      shop_pending_login_site: null,
+      shop_pending_task_id: null,
+      shop_pending_session_id: null,
+    })
+    .eq("user_id", userId);
+
+  console.log(`[AutoShop] Login cancelled for user ${userId}`);
+
+  return new Response(
+    JSON.stringify({ success: true, message: "Login session cancelled" }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+// Clean up ALL stale sessions and tasks for a user
+// deno-lint-ignore no-explicit-any
+async function cleanupStaleSessions(
+  supabase: any,
+  userId: string,
+  apiKey: string
+): Promise<{ sessionsKilled: number; tasksKilled: number }> {
+  console.log(`[AutoShop] Cleaning up stale sessions for user ${userId}`);
+
+  let sessionsKilled = 0;
+  let tasksKilled = 0;
+
+  // Get the user's browser profile
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("browser_use_profile_id, shop_pending_session_id, shop_pending_task_id")
+    .eq("user_id", userId)
+    .single();
+
+  if (!profile?.browser_use_profile_id) {
+    return { sessionsKilled, tasksKilled };
+  }
+
+  // 1. Stop any pending session recorded in DB
+  if (profile.shop_pending_session_id) {
+    try {
+      const res = await fetch(`https://api.browser-use.com/api/v2/sessions/${profile.shop_pending_session_id}/stop`, {
+        method: "POST",
+        headers: { "X-Browser-Use-API-Key": apiKey },
+      });
+      if (res.ok) sessionsKilled++;
+      console.log(`[AutoShop] Stopped pending session: ${profile.shop_pending_session_id}`);
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop session:`, e);
+    }
+  }
+
+  // 2. Stop any pending task recorded in DB
+  if (profile.shop_pending_task_id) {
+    try {
+      const res = await fetch(`https://api.browser-use.com/api/v2/tasks/${profile.shop_pending_task_id}/stop`, {
+        method: "POST",
+        headers: { "X-Browser-Use-API-Key": apiKey },
+      });
+      if (res.ok) tasksKilled++;
+      console.log(`[AutoShop] Stopped pending task: ${profile.shop_pending_task_id}`);
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop task:`, e);
+    }
+  }
+
+  // 3. Try to list and stop any active sessions for this profile from the API
+  try {
+    const listRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
+      headers: { "X-Browser-Use-API-Key": apiKey },
+    });
+    
+    if (listRes.ok) {
+      const sessionsList = await listRes.json();
+      const sessions = Array.isArray(sessionsList) ? sessionsList : (sessionsList.sessions || []);
+      
+      for (const session of sessions) {
+        const sessionStatus = session.status || session.state;
+        const sessionProfileId = session.profileId || session.profile_id;
+        
+        // Only kill sessions for this user's profile that are still running
+        if (sessionProfileId === profile.browser_use_profile_id && 
+            ["running", "pending", "created"].includes(sessionStatus)) {
+          try {
+            const stopRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${session.id}/stop`, {
+              method: "POST",
+              headers: { "X-Browser-Use-API-Key": apiKey },
+            });
+            if (stopRes.ok) {
+              sessionsKilled++;
+              console.log(`[AutoShop] Killed stale session: ${session.id}`);
+            }
+          } catch {
+            // Ignore individual session stop failures
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`[AutoShop] Failed to list sessions:`, e);
+  }
+
+  // 4. Also check for stale tasks related to this profile
+  try {
+    const listRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
+      headers: { "X-Browser-Use-API-Key": apiKey },
+    });
+    
+    if (listRes.ok) {
+      const tasksList = await listRes.json();
+      const tasks = Array.isArray(tasksList) ? tasksList : (tasksList.tasks || []);
+      
+      for (const task of tasks) {
+        const taskStatus = task.status || task.state;
+        const taskProfileId = task.profileId || task.profile_id;
+        
+        // Only kill tasks for this user's profile that are still running
+        if (taskProfileId === profile.browser_use_profile_id && 
+            ["running", "pending", "created"].includes(taskStatus)) {
+          try {
+            const stopRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${task.id}/stop`, {
+              method: "POST",
+              headers: { "X-Browser-Use-API-Key": apiKey },
+            });
+            if (stopRes.ok) {
+              tasksKilled++;
+              console.log(`[AutoShop] Killed stale task: ${task.id}`);
+            }
+          } catch {
+            // Ignore individual task stop failures
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`[AutoShop] Failed to list tasks:`, e);
+  }
+
+  // 5. Clear pending state in DB
+  await supabase
+    .from("browser_profiles")
+    .update({
+      shop_pending_login_site: null,
+      shop_pending_task_id: null,
+      shop_pending_session_id: null,
+    })
+    .eq("user_id", userId);
+
+  console.log(`[AutoShop] Cleanup complete: ${sessionsKilled} sessions, ${tasksKilled} tasks stopped`);
+
+  return { sessionsKilled, tasksKilled };
+}
+
+// Manual cleanup action handler
+// deno-lint-ignore no-explicit-any
+async function handleCleanupSessions(
+  supabase: any,
+  userId: string,
+  apiKey: string
+) {
+  const result = await cleanupStaleSessions(supabase, userId, apiKey);
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      message: `Cleaned up ${result.sessionsKilled} sessions and ${result.tasksKilled} tasks`,
+      ...result,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
 // deno-lint-ignore no-explicit-any
 async function handleStartOrder(
   supabase: any,
