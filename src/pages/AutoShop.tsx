@@ -2,6 +2,8 @@ import { useState, useRef } from "react";
 import { useAutoShop } from "@/hooks/useAutoShop";
 import { useShopProfile } from "@/hooks/useShopProfile";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 import { Navigate, Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -117,6 +119,63 @@ const AutoShop = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [submitting, setSubmitting] = useState(false);
+  const [verifyingCard, setVerifyingCard] = useState(false);
+
+  // Function to verify card with Stripe $1 preauthorization
+  const verifyCardWithStripe = async (cardDetails: {
+    card_number: string;
+    expiry: string;
+    cvv: string;
+    cardholder_name: string;
+  }) => {
+    try {
+      setVerifyingCard(true);
+      toast.info("Verifying card with $1.00 preauthorization...");
+      
+      // Call the card-preauth edge function
+      // Note: In production, you'd use Stripe.js to create a PaymentMethod first
+      // For now, we'll pass the card details to the edge function
+      const { data, error } = await supabase.functions.invoke("card-preauth", {
+        body: {
+          // In a real implementation, you'd use Stripe.js to tokenize the card
+          // and pass the paymentMethodId here. For demo purposes:
+          cardNumber: cardDetails.card_number,
+          expiry: cardDetails.expiry,
+          cvv: cardDetails.cvv,
+          cardholderName: cardDetails.cardholder_name,
+          email: user?.email,
+        },
+      });
+
+      if (error) {
+        console.error("[CardVerify] Error:", error);
+        toast.error("Card verification failed", {
+          description: error.message,
+        });
+        return false;
+      }
+
+      if (data?.success) {
+        toast.success("Card verified successfully!", {
+          description: "A $1.00 hold was placed and will be released shortly.",
+        });
+        return true;
+      } else {
+        toast.error("Card verification failed", {
+          description: data?.error || "Unable to verify card",
+        });
+        return false;
+      }
+    } catch (err: any) {
+      console.error("[CardVerify] Exception:", err);
+      toast.error("Card verification error", {
+        description: err.message,
+      });
+      return false;
+    } finally {
+      setVerifyingCard(false);
+    }
+  };
 
   if (authLoading) {
     return (
@@ -168,6 +227,10 @@ const AutoShop = () => {
     const parsed = parseCardDetails(cardForm.card_details);
     const billing = parseBillingDetails(cardForm.billing_details);
     
+    // Note: The Stripe preauth requires a PaymentMethod ID from Stripe.js
+    // For now, we save the card without verification
+    // To enable full verification, integrate Stripe Elements on the frontend
+    
     await addCard({
       card_name: cardForm.card_name,
       card_number: parsed.card_number,
@@ -180,6 +243,14 @@ const AutoShop = () => {
     setCardForm({ card_name: "", card_details: "", billing_details: "" });
     setShowAddCard(false);
     setSubmitting(false);
+  };
+
+  // Separate function to verify an existing card
+  const handleVerifyCard = async (card: typeof cards[0]) => {
+    toast.info("Card verification requires Stripe Elements integration", {
+      description: "The preauth endpoint is ready - integrate Stripe.js to tokenize cards securely.",
+      duration: 5000,
+    });
   };
 
   const handleAddAddress = async () => {
@@ -838,9 +909,23 @@ const AutoShop = () => {
                             <p className="text-lg font-mono">{getMaskedCardNumber(card.card_number_enc)}</p>
                             <p className="text-sm text-muted-foreground">{card.cardholder_name}</p>
                           </div>
-                          <Button variant="ghost" size="icon" onClick={() => deleteCard(card.id)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
+                          <div className="flex gap-1">
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => handleVerifyCard(card)}
+                              disabled={verifyingCard}
+                            >
+                              {verifyingCard ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Shield className="h-4 w-4" />
+                              )}
+                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => deleteCard(card.id)}>
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
