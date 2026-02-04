@@ -413,12 +413,14 @@ async function handleStartOrder(
   );
 
   // Call Browser Use Cloud API
+  // Always use US proxy for shopping tasks to avoid geo-restrictions
   const taskPayload: Record<string, unknown> = {
     task: agentInstruction,
     startUrl: "https://www.google.com/shopping",
     llm: "browser-use-llm",
     maxSteps: 100,
     highlightElements: true,
+    proxyCountryCode: "us", // Always use US proxy
   };
 
   // Attach the authenticated user's persistent profile
@@ -931,7 +933,7 @@ IMPORTANT:
 - Do NOT click on or open individual emails - just read from the inbox list view
 - Scroll down to load more emails if needed`;
 
-  // Add custom proxy if configured
+  // Add custom proxy if configured - always use US proxy for email sync
   const taskPayload: Record<string, unknown> = {
     task: searchInstruction,
     startUrl: "https://mail.google.com",
@@ -939,6 +941,7 @@ IMPORTANT:
     llm: "browser-use-llm",
     maxSteps: 50,
     highlightElements: true,
+    proxyCountryCode: "us", // Always use US proxy
   };
 
   if (profile?.proxy_server) {
