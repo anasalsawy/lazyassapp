@@ -1207,18 +1207,22 @@ async function fetchIpWithBrowserUse(
 
     // If proxy is configured, create a session with customProxy first
     if (proxyConfig) {
-      console.log(`[AutoShop] Creating session with customProxy...`);
+      console.log(`[AutoShop] Creating session with proxy: server=${proxyConfig.server}, username=${proxyConfig.username}`);
       
+      // Browser Use Cloud API expects proxy config in session
       const sessionPayload = {
         customProxy: {
-          server: proxyConfig.server,
+          server: proxyConfig.server, // Must include http:// prefix
           ...(proxyConfig.username && { username: proxyConfig.username }),
           ...(proxyConfig.password && { password: proxyConfig.password }),
         },
         keepAlive: false, // Close session after task completes
       };
       
-      console.log(`[AutoShop] Session payload:`, JSON.stringify(sessionPayload, null, 2));
+      console.log(`[AutoShop] Session payload:`, JSON.stringify({
+        ...sessionPayload,
+        customProxy: { ...sessionPayload.customProxy, password: sessionPayload.customProxy.password ? "[REDACTED]" : undefined }
+      }, null, 2));
       
       const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
         method: "POST",
@@ -1341,9 +1345,15 @@ async function handleTestProxy(
 
   console.log(`[AutoShop] Testing proxy: ${profile.proxy_server}`);
 
-  // Build proxy config
+  // Ensure proxy server has protocol prefix (required by Browser Use)
+  let proxyServer = profile.proxy_server;
+  if (!proxyServer.startsWith("http://") && !proxyServer.startsWith("https://") && !proxyServer.startsWith("socks")) {
+    proxyServer = `http://${proxyServer}`;
+  }
+
+  // Build proxy config with proper format for Browser Use Cloud API
   const proxyConfig: Record<string, string> = {
-    server: profile.proxy_server,
+    server: proxyServer,
   };
   if (profile.proxy_username) {
     proxyConfig.username = profile.proxy_username;
@@ -1357,6 +1367,8 @@ async function handleTestProxy(
     }
     proxyConfig.password = decrypted;
   }
+  
+  console.log(`[AutoShop] Proxy config: server=${proxyConfig.server}, username=${proxyConfig.username}, hasPassword=${!!proxyConfig.password}`);
 
   // 3-STEP VERIFICATION: baseline1 → proxy → baseline2
   console.log("[AutoShop] Running 3-step IP verification...");
