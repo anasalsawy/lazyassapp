@@ -208,23 +208,31 @@ export function useShopProfile() {
     return setProxy("", "", "");
   }, [setProxy]);
 
-  // Test proxy connection - runs two tests: baseline (no proxy) and with proxy
+  // Test proxy connection - runs 3-step verification: baseline → proxy → baseline
   const testProxy = useCallback(async () => {
-    toast.info("Testing proxy... Running 2 parallel IP checks (may take 60-90 seconds)");
+    toast.info("Testing proxy... Running 3-step IP verification (may take 2-3 minutes)", {
+      duration: 10000,
+    });
     const data = await callAgent("test_proxy");
     if (data?.success && data.tested) {
-      const baselineIp = data.baselineIp || "unknown";
+      const baseline1Ip = data.baseline1Ip || "unknown";
       const proxyIp = data.proxyIp || "unknown";
+      const baseline2Ip = data.baseline2Ip || "unknown";
       
-      if (data.proxyWorking) {
-        toast.success(`✅ Proxy is working!`, {
-          duration: 15000,
-          description: `Without proxy: ${baselineIp}\nWith proxy: ${proxyIp}`,
+      if (data.allTestsPassed) {
+        toast.success(`✅ Proxy verified!`, {
+          duration: 20000,
+          description: `Step 1 (no proxy): ${baseline1Ip}\nStep 2 (with proxy): ${proxyIp}\nStep 3 (no proxy): ${baseline2Ip}\n\nProxy changes IP and switching works correctly.`,
+        });
+      } else if (data.proxyWorking && !data.baselineConsistent) {
+        toast.warning(`⚠️ Proxy works but baseline inconsistent`, {
+          duration: 20000,
+          description: `Step 1: ${baseline1Ip}\nStep 2 (proxy): ${proxyIp}\nStep 3: ${baseline2Ip}\n\nProxy IP differs but baseline IPs don't match. Network may be unstable.`,
         });
       } else {
         toast.error(`❌ Proxy NOT working`, {
-          duration: 15000,
-          description: `Both IPs same: ${baselineIp} = ${proxyIp}\nCheck your proxy credentials.`,
+          duration: 20000,
+          description: `Step 1: ${baseline1Ip}\nStep 2 (proxy): ${proxyIp}\nStep 3: ${baseline2Ip}\n\nProxy IP matches baseline. Check credentials.`,
         });
       }
     } else if (data?.error) {

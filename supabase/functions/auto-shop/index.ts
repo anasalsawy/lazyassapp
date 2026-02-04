@@ -1310,30 +1310,53 @@ async function handleTestProxy(
     proxyConfig.password = decrypted;
   }
 
-  // Run BOTH tests in parallel - one without proxy (baseline) and one with proxy
-  console.log("[AutoShop] Running parallel IP tests (baseline + proxy)...");
+  // 3-STEP VERIFICATION: baseline1 → proxy → baseline2
+  console.log("[AutoShop] Running 3-step IP verification...");
   
-  const [baselineResult, proxyResult] = await Promise.all([
-    fetchIpWithBrowserUse(apiKey), // No proxy - Browser Use's default IP
-    fetchIpWithBrowserUse(apiKey, proxyConfig), // With proxy
-  ]);
+  // Step 1: Baseline (no proxy)
+  console.log("[AutoShop] Step 1: Fetching baseline IP (no proxy)...");
+  const baseline1Result = await fetchIpWithBrowserUse(apiKey);
+  console.log(`[AutoShop] Baseline 1 IP: ${baseline1Result.ip}`);
 
-  console.log(`[AutoShop] Baseline IP: ${baselineResult.ip}, Proxy IP: ${proxyResult.ip}`);
+  // Step 2: With proxy
+  console.log("[AutoShop] Step 2: Fetching IP with proxy...");
+  const proxyResult = await fetchIpWithBrowserUse(apiKey, proxyConfig);
+  console.log(`[AutoShop] Proxy IP: ${proxyResult.ip}`);
 
+  // Step 3: Baseline again (no proxy) - confirms we can switch back
+  console.log("[AutoShop] Step 3: Fetching baseline IP again (no proxy)...");
+  const baseline2Result = await fetchIpWithBrowserUse(apiKey);
+  console.log(`[AutoShop] Baseline 2 IP: ${baseline2Result.ip}`);
+
+  // Analyze results
   const proxyWorking = 
     proxyResult.status === "finished" && 
     proxyResult.ip !== null &&
-    proxyResult.ip !== baselineResult.ip;
+    baseline1Result.ip !== null &&
+    proxyResult.ip !== baseline1Result.ip;
+
+  const baselineConsistent = 
+    baseline1Result.ip !== null &&
+    baseline2Result.ip !== null &&
+    baseline1Result.ip === baseline2Result.ip;
+
+  const allTestsPassed = proxyWorking && baselineConsistent;
+
+  console.log(`[AutoShop] Test results: proxyWorking=${proxyWorking}, baselineConsistent=${baselineConsistent}`);
 
   return new Response(
     JSON.stringify({ 
       success: true, 
       tested: true,
       proxyWorking,
-      baselineIp: baselineResult.ip,
+      baselineConsistent,
+      allTestsPassed,
+      baseline1Ip: baseline1Result.ip,
       proxyIp: proxyResult.ip,
-      baselineStatus: baselineResult.status,
+      baseline2Ip: baseline2Result.ip,
+      baseline1Status: baseline1Result.status,
       proxyStatus: proxyResult.status,
+      baseline2Status: baseline2Result.status,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
