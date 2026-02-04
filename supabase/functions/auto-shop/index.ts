@@ -48,7 +48,6 @@ type BrowserUseJson = Record<string, unknown>;
 
 const BROWSER_USE_BASE_URLS = [
   "https://api.browser-use.com",
-  "https://api.cloud.browser-use.com",
 ];
 
 async function browserUseFetchJson(
