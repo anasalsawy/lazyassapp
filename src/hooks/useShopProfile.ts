@@ -24,12 +24,34 @@ interface OrderTracking {
   created_at: string;
 }
 
+export interface OrderEmail {
+  id: string;
+  user_id: string;
+  order_id: string | null;
+  gmail_message_id: string;
+  thread_id: string | null;
+  from_email: string;
+  from_name: string | null;
+  to_email: string | null;
+  subject: string;
+  snippet: string | null;
+  body_text: string | null;
+  body_html: string | null;
+  received_at: string;
+  is_read: boolean;
+  email_type: string;
+  extracted_data: Record<string, unknown>;
+  created_at: string;
+}
+
 export function useShopProfile() {
   const { user, session } = useAuth();
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [tracking, setTracking] = useState<OrderTracking[]>([]);
+  const [orderEmails, setOrderEmails] = useState<OrderEmail[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSyncingEmails, setIsSyncingEmails] = useState(false);
   const [loginSession, setLoginSession] = useState<{
     sessionId: string;
     taskId: string;
@@ -69,6 +91,19 @@ export function useShopProfile() {
       setProfile(data.profile);
       setTracking(data.tracking || []);
     }
+    
+    // Also fetch order emails from the database
+    const { data: emails } = await supabase
+      .from("order_emails")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("received_at", { ascending: false })
+      .limit(50);
+    
+    if (emails) {
+      setOrderEmails(emails as OrderEmail[]);
+    }
+    
     setIsLoading(false);
   }, [callAgent, user]);
 
@@ -198,16 +233,42 @@ export function useShopProfile() {
     return data;
   }, [callAgent]);
 
+  // Sync order-related emails from Gmail
+  const syncOrderEmails = useCallback(async () => {
+    if (!user || isSyncingEmails) return;
+    
+    setIsSyncingEmails(true);
+    toast.info("Searching Gmail for order emails... This may take 2-3 minutes.");
+    
+    const data = await callAgent("sync_order_emails");
+    
+    if (data?.success) {
+      toast.success(`Found ${data.inserted} new order emails!`, {
+        description: data.totalFound > 0 ? `Total found: ${data.totalFound}, Skipped duplicates: ${data.skipped}` : undefined,
+      });
+      // Refetch to get new emails
+      await fetchStatus();
+    } else if (data?.error) {
+      toast.error(data.error);
+    }
+    
+    setIsSyncingEmails(false);
+    return data;
+  }, [callAgent, user, isSyncingEmails, fetchStatus]);
+
   return {
     profile,
     tracking,
+    orderEmails,
     isLoading,
     isSyncing,
+    isSyncingEmails,
     loginSession,
     createProfile,
     startLogin,
     confirmLogin,
     syncOrders,
+    syncOrderEmails,
     setProxy,
     clearProxy,
     testProxy,

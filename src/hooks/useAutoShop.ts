@@ -57,6 +57,26 @@ export interface AutoShopOrder {
   completed_at?: string;
 }
 
+export interface OrderEmail {
+  id: string;
+  user_id: string;
+  order_id?: string;
+  gmail_message_id: string;
+  thread_id?: string;
+  from_email: string;
+  from_name?: string;
+  to_email?: string;
+  subject: string;
+  snippet?: string;
+  body_text?: string;
+  body_html?: string;
+  received_at: string;
+  is_read: boolean;
+  email_type: string;
+  extracted_data: Record<string, unknown>;
+  created_at: string;
+}
+
 // Simple XOR encryption for card data (in production, use proper encryption)
 const encryptData = (data: string): string => {
   const key = "autoshop-enc-key";

@@ -65,13 +65,16 @@ const AutoShop = () => {
   const {
     profile: shopProfile,
     tracking,
+    orderEmails,
     isLoading: profileLoading,
     isSyncing,
+    isSyncingEmails,
     loginSession,
     createProfile,
     startLogin,
     confirmLogin,
     syncOrders,
+    syncOrderEmails,
     setProxy,
     clearProxy,
     testProxy,
@@ -316,6 +319,10 @@ const AutoShop = () => {
             <TabsTrigger value="tracking" className="flex items-center gap-2">
               <Truck className="h-4 w-4" />
               Tracking ({tracking.length})
+            </TabsTrigger>
+            <TabsTrigger value="emails" className="flex items-center gap-2">
+              <Mail className="h-4 w-4" />
+              Emails ({orderEmails.length})
             </TabsTrigger>
           </TabsList>
 
@@ -1081,6 +1088,134 @@ const AutoShop = () => {
                                 Track
                               </a>
                             </Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
+          {/* Emails Tab */}
+          <TabsContent value="emails">
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-xl font-semibold">Order Emails</h2>
+                  <p className="text-muted-foreground text-sm">
+                    Emails related to your shopping orders from Gmail
+                  </p>
+                </div>
+                <Button
+                  onClick={syncOrderEmails}
+                  disabled={isSyncingEmails || !shopProfile?.sitesLoggedIn?.includes("gmail")}
+                >
+                  {isSyncingEmails ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="mr-2 h-4 w-4" />
+                      Sync Emails
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {isSyncingEmails && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 flex items-center gap-3 text-sm text-blue-700 dark:text-blue-300">
+                  <Loader2 className="h-5 w-5 animate-spin flex-shrink-0" />
+                  <div>
+                    <p className="font-medium">Searching Gmail for order emails...</p>
+                    <p className="text-xs opacity-80">This may take 2-3 minutes. The agent is browsing your inbox.</p>
+                  </div>
+                </div>
+              )}
+
+              {!shopProfile?.sitesLoggedIn?.includes("gmail") ? (
+                <Card className="py-12">
+                  <CardContent className="text-center">
+                    <Mail className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                    <h3 className="font-medium text-lg">Gmail Not Connected</h3>
+                    <p className="text-muted-foreground mb-4">
+                      Connect your Gmail to sync order-related emails
+                    </p>
+                    <Button variant="outline" onClick={() => setActiveTab("accounts")}>
+                      <Mail className="h-4 w-4 mr-2" />
+                      Connect Gmail
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : orderEmails.length === 0 ? (
+                <Card className="py-12">
+                  <CardContent className="text-center">
+                    <Mail className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                    <h3 className="font-medium text-lg">No order emails synced</h3>
+                    <p className="text-muted-foreground mb-4">
+                      Click "Sync Emails" to search Gmail for order confirmations, shipping updates, and more
+                    </p>
+                    <Button onClick={syncOrderEmails} disabled={isSyncingEmails}>
+                      {isSyncingEmails ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Mail className="mr-2 h-4 w-4" />
+                      )}
+                      Sync Now
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {orderEmails.map((email) => (
+                    <Card key={email.id} className={!email.is_read ? "border-l-4 border-l-primary" : ""}>
+                      <CardContent className="pt-4 pb-4">
+                        <div className="flex justify-between items-start gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge variant={
+                                email.email_type === "confirmation" ? "default" :
+                                email.email_type === "shipping" ? "secondary" :
+                                email.email_type === "tracking" ? "outline" :
+                                "outline"
+                              }>
+                                {email.email_type}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(email.received_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                            <h4 className="font-medium text-sm truncate">{email.subject}</h4>
+                            <p className="text-xs text-muted-foreground truncate">
+                              From: {email.from_name || email.from_email}
+                            </p>
+                            {email.snippet && (
+                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                {email.snippet}
+                              </p>
+                            )}
+                            {email.extracted_data && Object.keys(email.extracted_data).length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {email.extracted_data.orderNumber && (
+                                  <Badge variant="outline" className="text-xs">
+                                    Order: {String(email.extracted_data.orderNumber)}
+                                  </Badge>
+                                )}
+                                {email.extracted_data.trackingNumber && (
+                                  <Badge variant="outline" className="text-xs">
+                                    Tracking: {String(email.extracted_data.trackingNumber)}
+                                  </Badge>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {email.order_id && (
+                            <Badge variant="secondary" className="flex-shrink-0">
+                              Linked
+                            </Badge>
                           )}
                         </div>
                       </CardContent>

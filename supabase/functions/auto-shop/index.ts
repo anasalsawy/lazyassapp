@@ -97,6 +97,9 @@ serve(async (req) => {
       case "sync_all_orders": {
         return await handleSyncAllOrders(supabase, user.id, BROWSER_USE_API_KEY);
       }
+      case "sync_order_emails": {
+        return await handleSyncOrderEmails(supabase, user.id, BROWSER_USE_API_KEY);
+      }
       case "set_proxy": {
         return await handleSetProxy(supabase, user.id, payload);
       }
@@ -750,6 +753,330 @@ async function handleSyncAllOrders(
 
   return new Response(
     JSON.stringify({ success: true, synced: updatedOrders.length, orders: updatedOrders }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
+// Sync order-related emails from Gmail
+// deno-lint-ignore no-explicit-any
+async function handleSyncOrderEmails(
+  supabase: any,
+  userId: string,
+  apiKey: string
+) {
+  // Get browser profile to check if gmail is logged in
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+
+  const profileId = profile?.browser_use_profile_id;
+  const sitesLoggedIn: string[] = Array.isArray(profile?.shop_sites_logged_in) 
+    ? profile.shop_sites_logged_in 
+    : [];
+
+  if (!profileId) {
+    throw new Error("No browser profile found. Create a profile first.");
+  }
+
+  if (!sitesLoggedIn.includes("gmail")) {
+    throw new Error("Gmail not logged in. Please log into Gmail first via Connections.");
+  }
+
+  console.log(`[AutoShop] Syncing order emails for user ${userId}`);
+
+  // Get existing email message IDs to avoid duplicates
+  const { data: existingEmails } = await supabase
+    .from("order_emails")
+    .select("gmail_message_id")
+    .eq("user_id", userId);
+
+  const existingIds = new Set((existingEmails || []).map((e: { gmail_message_id: string }) => e.gmail_message_id));
+
+  // Create a Browser Use task to search Gmail for order-related emails
+  const searchInstruction = `GMAIL ORDER EMAIL EXTRACTION TASK
+
+You are logged into Gmail. Your task is to find and extract all shopping/order related emails.
+
+STEP 1 - NAVIGATE TO GMAIL:
+Go to https://mail.google.com
+
+STEP 2 - SEARCH FOR ORDER EMAILS:
+Use the Gmail search bar to search for:
+"order confirmation OR shipping OR tracking OR delivery OR purchase OR receipt OR invoice"
+
+Also search for emails from common shopping sites:
+"from:amazon OR from:ebay OR from:walmart OR from:target OR from:bestbuy OR from:newegg OR from:etsy OR from:aliexpress OR from:shopify"
+
+STEP 3 - EXTRACT EMAIL DATA:
+For EACH email you find (up to the 20 most recent), extract:
+1. Subject line
+2. From email address
+3. From name
+4. Snippet (first ~100 chars of body)
+5. Date received
+6. A unique message ID (can be from URL or generate one)
+7. Email type: "confirmation" | "shipping" | "tracking" | "receipt" | "promotion" | "other"
+
+If possible, also extract from the email body:
+- Order number/confirmation number
+- Tracking number
+- Estimated delivery date
+- Order total amount
+
+STEP 4 - RETURN RESULTS:
+Return ALL extracted emails as a JSON array in this exact format:
+[
+  {
+    "messageId": "unique_id",
+    "threadId": "thread_id_if_available",
+    "subject": "Your order has shipped!",
+    "fromEmail": "ship-confirm@amazon.com",
+    "fromName": "Amazon",
+    "snippet": "Your package is on the way...",
+    "receivedAt": "2024-01-15T10:30:00Z",
+    "emailType": "shipping",
+    "extractedData": {
+      "orderNumber": "123-4567890",
+      "trackingNumber": "1Z999AA10123456784",
+      "carrier": "UPS",
+      "estimatedDelivery": "2024-01-18"
+    }
+  }
+]
+
+IMPORTANT:
+- Return ONLY the JSON array, no other text
+- Include ALL order-related emails you find (max 20)
+- If you can't access Gmail or find no emails, return: []
+- Do NOT click on or open individual emails - just read from the inbox list view
+- Scroll down to load more emails if needed`;
+
+  // Add custom proxy if configured
+  const taskPayload: Record<string, unknown> = {
+    task: searchInstruction,
+    startUrl: "https://mail.google.com",
+    profileId: profileId,
+    llm: "browser-use-llm",
+    maxSteps: 50,
+    highlightElements: true,
+  };
+
+  if (profile?.proxy_server) {
+    const proxyConfig: Record<string, string> = {
+      server: profile.proxy_server,
+    };
+    if (profile.proxy_username) {
+      proxyConfig.username = profile.proxy_username;
+    }
+    if (profile.proxy_password_enc) {
+      const key = "SHOP_PROXY_KEY_2024";
+      const decoded = atob(profile.proxy_password_enc);
+      let decrypted = "";
+      for (let i = 0; i < decoded.length; i++) {
+        decrypted += String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+      }
+      proxyConfig.password = decrypted;
+    }
+    taskPayload.proxy = proxyConfig;
+  }
+
+  // Start the task
+  const taskRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
+    method: "POST",
+    headers: {
+      "X-Browser-Use-API-Key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(taskPayload),
+  });
+
+  if (!taskRes.ok) {
+    const errorText = await taskRes.text();
+    throw new Error(`Failed to start email sync: ${errorText}`);
+  }
+
+  const taskData = await taskRes.json();
+  const taskId = taskData.id || taskData.task_id;
+  console.log(`[AutoShop] Email sync task started: ${taskId}`);
+
+  // Poll for completion (max 3 minutes)
+  let attempts = 0;
+  const maxAttempts = 90; // 90 * 2 seconds = 3 minutes
+  let taskStatus = "pending";
+  let taskOutput = "";
+
+  while (attempts < maxAttempts && !["finished", "failed", "stopped"].includes(taskStatus)) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const statusRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${taskId}`, {
+      headers: { "X-Browser-Use-API-Key": apiKey },
+    });
+    
+    if (statusRes.ok) {
+      const statusData = await statusRes.json();
+      taskStatus = statusData.status;
+      taskOutput = statusData.output || "";
+    }
+    
+    attempts++;
+  }
+
+  console.log(`[AutoShop] Email sync task ${taskId} finished with status: ${taskStatus}`);
+
+  if (taskStatus !== "finished") {
+    // Log partial status but don't fail
+    await supabase.from("agent_logs").insert({
+      user_id: userId,
+      agent_name: "auto_shop",
+      log_level: "warn",
+      message: `Email sync task incomplete: ${taskStatus}`,
+      metadata: { taskId, attempts },
+    });
+
+    return new Response(
+      JSON.stringify({ 
+        success: false, 
+        error: `Email sync did not complete: ${taskStatus}`,
+        taskId,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Parse the output JSON
+  let emails: Array<{
+    messageId: string;
+    threadId?: string;
+    subject: string;
+    fromEmail: string;
+    fromName?: string;
+    toEmail?: string;
+    snippet?: string;
+    bodyText?: string;
+    bodyHtml?: string;
+    receivedAt: string;
+    emailType?: string;
+    extractedData?: Record<string, unknown>;
+  }> = [];
+
+  try {
+    // Try to extract JSON array from output
+    const jsonMatch = taskOutput.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      emails = JSON.parse(jsonMatch[0]);
+    }
+  } catch (parseError) {
+    console.error("[AutoShop] Failed to parse email output:", parseError);
+    console.log("[AutoShop] Raw output:", taskOutput.substring(0, 500));
+  }
+
+  // Get user's orders to try matching emails
+  const { data: orders } = await supabase
+    .from("auto_shop_orders")
+    .select("id, product_query, selected_deal_site, order_confirmation")
+    .eq("user_id", userId);
+
+  // Insert new emails
+  let inserted = 0;
+  let skipped = 0;
+
+  for (const email of emails) {
+    if (!email.messageId || existingIds.has(email.messageId)) {
+      skipped++;
+      continue;
+    }
+
+    // Try to match to an order
+    let matchedOrderId: string | null = null;
+    if (orders && email.extractedData) {
+      const orderNum = email.extractedData.orderNumber as string | undefined;
+      if (orderNum) {
+        for (const order of orders) {
+          if (order.order_confirmation === orderNum) {
+            matchedOrderId = order.id;
+            break;
+          }
+        }
+      }
+    }
+
+    // Also try fuzzy matching by site name in subject/from
+    if (!matchedOrderId && orders) {
+      for (const order of orders) {
+        if (order.selected_deal_site) {
+          const siteLower = order.selected_deal_site.toLowerCase();
+          const subjectLower = (email.subject || "").toLowerCase();
+          const fromLower = (email.fromEmail || "").toLowerCase();
+          if (subjectLower.includes(siteLower) || fromLower.includes(siteLower)) {
+            matchedOrderId = order.id;
+            break;
+          }
+        }
+      }
+    }
+
+    // Insert the email
+    const { error: insertError } = await supabase
+      .from("order_emails")
+      .insert({
+        user_id: userId,
+        order_id: matchedOrderId,
+        gmail_message_id: email.messageId,
+        thread_id: email.threadId || null,
+        from_email: email.fromEmail,
+        from_name: email.fromName || null,
+        to_email: email.toEmail || null,
+        subject: email.subject,
+        snippet: email.snippet || null,
+        body_text: email.bodyText || null,
+        body_html: email.bodyHtml || null,
+        received_at: email.receivedAt || new Date().toISOString(),
+        email_type: email.emailType || "other",
+        extracted_data: email.extractedData || {},
+      });
+
+    if (insertError) {
+      console.error(`[AutoShop] Failed to insert email:`, insertError);
+    } else {
+      inserted++;
+      existingIds.add(email.messageId);
+
+      // If we extracted tracking info, also update order_tracking table
+      if (email.extractedData?.trackingNumber) {
+        await supabase.from("order_tracking").upsert({
+          user_id: userId,
+          order_id: matchedOrderId,
+          tracking_number: email.extractedData.trackingNumber,
+          carrier: email.extractedData.carrier || null,
+          estimated_delivery: email.extractedData.estimatedDelivery || null,
+          status: "in_transit",
+          email_source: email.fromEmail,
+        }, { onConflict: "tracking_number" });
+      }
+    }
+  }
+
+  // Log the sync
+  await supabase.from("agent_logs").insert({
+    user_id: userId,
+    agent_name: "auto_shop",
+    log_level: "info",
+    message: `Email sync complete: ${inserted} new, ${skipped} skipped`,
+    metadata: { taskId, inserted, skipped, totalFound: emails.length },
+  });
+
+  console.log(`[AutoShop] Email sync: ${inserted} inserted, ${skipped} skipped`);
+
+  return new Response(
+    JSON.stringify({ 
+      success: true, 
+      inserted,
+      skipped,
+      totalFound: emails.length,
+      taskId,
+    }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 }
