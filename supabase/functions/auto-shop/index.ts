@@ -306,14 +306,51 @@ async function handleStartLogin(
   apiKey: string
 ) {
   // Get profile
-  const { data: profile } = await supabase
+  let { data: profile } = await supabase
     .from("browser_profiles")
     .select("*")
     .eq("user_id", userId)
     .single();
 
+  // Auto-create profile if missing
   if (!profile?.browser_use_profile_id) {
-    throw new Error("Create a browser profile first");
+    console.log(`[AutoShop] No profile found, auto-creating for user ${userId}`);
+    
+    const profileName = `shop-${userId.substring(0, 8)}`;
+    const profileCreate = await browserUseFetchJsonMultiPath(
+      apiKey,
+      ["/api/v2/profiles", "/v2/profiles"],
+      {
+        method: "POST",
+        body: JSON.stringify({ name: profileName }),
+      },
+    );
+
+    const profileData = profileCreate.data;
+    const profileId = (profileData.id as string) || (profileData.profile_id as string);
+
+    if (!profileId) {
+      throw new Error("Failed to create Browser Use profile");
+    }
+
+    // Upsert the profile record
+    await supabase.from("browser_profiles").upsert({
+      user_id: userId,
+      browser_use_profile_id: profileId,
+      status: "ready",
+      shop_sites_logged_in: [],
+    }, { onConflict: "user_id" });
+
+    console.log(`[AutoShop] Auto-created profile: ${profileId}`);
+
+    // Re-fetch the profile
+    const { data: newProfile } = await supabase
+      .from("browser_profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
+    
+    profile = newProfile;
   }
 
   const siteUrls: Record<string, string> = {
