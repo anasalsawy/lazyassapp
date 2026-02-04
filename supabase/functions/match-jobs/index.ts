@@ -31,6 +31,8 @@ interface ResumeData {
       field?: string;
     }>;
     certifications?: string[];
+    rawText?: string;
+    fullText?: string;
   };
   fullText?: string;
   atsScore?: number;
@@ -42,7 +44,7 @@ serve(async (req) => {
   }
 
   try {
-    const { preferences, resume } = await req.json();
+    const { preferences, resume, batchNumber = 1 } = await req.json();
 
     if (!preferences) {
       return new Response(
@@ -61,13 +63,19 @@ serve(async (req) => {
     const skills = resumeData.skills || [];
     const experienceYears = resumeData.experienceYears || 0;
     const parsedContent = resumeData.parsedContent || {};
-    const fullText = resumeData.fullText || "";
+    
+    // Get full resume text from multiple sources
+    const fullText = resumeData.fullText || 
+                     parsedContent.fullText || 
+                     parsedContent.rawText || 
+                     "";
 
     // Build a comprehensive candidate profile from resume
     let candidateProfile = "";
     
-    if (fullText) {
-      candidateProfile += `\n=== FULL RESUME TEXT ===\n${fullText}\n`;
+    // CRITICAL: Include the full resume text first for complete context
+    if (fullText && fullText.length > 50) {
+      candidateProfile += `\n=== COMPLETE RESUME TEXT ===\n${fullText}\n`;
     }
     
     if (parsedContent.summary) {
@@ -95,39 +103,51 @@ serve(async (req) => {
       candidateProfile += `\n=== CERTIFICATIONS ===\n${parsedContent.certifications.join(', ')}\n`;
     }
 
+    // Calculate how many jobs to generate per batch
+    const jobsPerBatch = 25;
+    const startIndex = (batchNumber - 1) * jobsPerBatch + 1;
+    const endIndex = batchNumber * jobsPerBatch;
+
     // Build the matching prompt
-    const systemPrompt = `You are an expert job matching AI. Your task is to find the BEST job matches for a candidate based on their resume and preferences.
+    const systemPrompt = `You are an expert job matching AI. Your task is to find the BEST job matches for a candidate based on their COMPLETE RESUME and preferences.
+
+CRITICAL: You MUST analyze the candidate's FULL resume text below to understand their actual skills, experience, and career trajectory. DO NOT ignore any part of the resume.
 
 === CANDIDATE'S JOB PREFERENCES ===
-- Desired Job Titles: ${preferences.jobTitles?.join(', ') || 'Not specified'}
+- Desired Job Titles: ${preferences.jobTitles?.join(', ') || 'Based on resume experience'}
 - Preferred Locations: ${preferences.locations?.join(', ') || 'Any location'}
 - Remote Preference: ${preferences.remotePreference || 'any'}
 - Salary Range: ${preferences.salaryMin ? `$${preferences.salaryMin.toLocaleString()}` : 'Open'} - ${preferences.salaryMax ? `$${preferences.salaryMax.toLocaleString()}` : 'Open'}
-- Target Industries: ${preferences.industries?.join(', ') || 'Any industry'}
+- Target Industries: ${preferences.industries?.join(', ') || 'Based on resume experience'}
 
-=== CANDIDATE'S PROFILE ===
-- Skills: ${skills.length > 0 ? skills.join(', ') : 'See resume below'}
-- Years of Experience: ${experienceYears || 'See resume below'}
+=== CANDIDATE'S EXTRACTED DATA ===
+- Identified Skills: ${skills.length > 0 ? skills.join(', ') : 'Extract from resume below'}
+- Years of Experience: ${experienceYears || 'Determine from resume below'}
 - Current ATS Score: ${resumeData.atsScore || 'Not calculated'}
-${candidateProfile}
+
+=== CANDIDATE'S COMPLETE RESUME ===
+${candidateProfile || 'No resume text provided - use preferences only'}
 
 === YOUR TASK ===
-1. Analyze the candidate's complete background (skills, experience, education, certifications)
-2. Generate 15 highly targeted job listings that would be EXCELLENT matches
-3. Calculate a precise match score (0-100) based on:
-   - Skill alignment (40%): How well do their skills match job requirements?
-   - Experience level (25%): Is their experience appropriate for the role?
-   - Title/role fit (20%): Does the job title align with their career trajectory?
-   - Location/salary fit (15%): Does it meet their stated preferences?
+1. CAREFULLY READ the candidate's complete resume above
+2. IDENTIFY their actual skills, experience level, and career focus from the resume
+3. Generate job listings ${startIndex} through ${endIndex} (batch ${batchNumber}) - exactly ${jobsPerBatch} highly targeted jobs
+4. Each job MUST be relevant to what's actually in their resume, not generic jobs
+5. Calculate precise match scores based on resume-job alignment
 
 === MATCHING CRITERIA ===
-- 90-100%: Perfect match - skills, experience, and preferences all align
-- 80-89%: Excellent match - strong alignment with minor gaps
-- 70-79%: Good match - most requirements met
-- 60-69%: Fair match - some alignment but gaps exist
+- 90-100%: Perfect match - skills, experience, and preferences all align with resume
+- 80-89%: Excellent match - strong alignment with the resume content
+- 70-79%: Good match - most resume skills/experience apply
+- 60-69%: Fair match - some resume alignment but gaps exist
 - Below 60%: Poor match - don't include these
 
-Only include jobs with 60%+ match scores. Prioritize quality over quantity.
+IMPORTANT: 
+- Generate EXACTLY ${jobsPerBatch} diverse job matches
+- Each job should be from a DIFFERENT company
+- Jobs should span the match score range (90%+ down to 60%)
+- Include mix of job levels appropriate for their experience
+- Only include jobs with 60%+ match scores
 
 === OUTPUT FORMAT ===
 Respond ONLY with valid JSON (no markdown, no explanation):
@@ -136,24 +156,26 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     {
       "externalId": "unique-id-string",
       "source": "company_careers_page",
-      "title": "Exact Job Title",
+      "title": "Exact Job Title Based on Resume Skills",
       "company": "Real Company Name",
       "location": "City, State or Remote",
       "salaryMin": 80000,
       "salaryMax": 120000,
-      "description": "2-3 sentence job description highlighting key responsibilities",
-      "requirements": ["skill1", "skill2", "skill3", "skill4", "skill5"],
+      "description": "2-3 sentence job description highlighting key responsibilities relevant to candidate's resume",
+      "requirements": ["skill1_from_resume", "skill2_from_resume", "skill3", "skill4", "skill5"],
       "jobType": "full-time",
       "postedAt": "2025-02-01T00:00:00Z",
       "url": "https://company.com/careers/job-id",
       "matchScore": 85,
-      "matchReason": "Strong TypeScript/React skills match, 5+ years experience aligns, remote preference satisfied"
+      "matchReason": "Specific reason based on candidate's actual resume content"
     }
-  ]
+  ],
+  "hasMore": true,
+  "nextBatch": ${batchNumber + 1}
 }`;
 
-    console.log("Sending match request with full resume data...");
-    console.log(`Skills: ${skills.length}, Experience: ${experienceYears}, Has parsed content: ${!!parsedContent}`);
+    console.log(`Batch ${batchNumber}: Sending match request with full resume data...`);
+    console.log(`Resume text length: ${fullText.length} chars, Skills: ${skills.length}, Experience: ${experienceYears}yrs`);
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -165,7 +187,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: "Find the best job matches for this candidate. Be specific and accurate with match scores." },
+          { role: "user", content: `Generate batch ${batchNumber} of job matches (jobs ${startIndex}-${endIndex}). Base all matches on the candidate's ACTUAL resume content provided above. Be specific about why each job matches their resume.` },
         ],
         temperature: 0.7,
       }),
@@ -191,24 +213,33 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     }
 
     let jobs = [];
+    let hasMore = batchNumber < 4; // Allow up to 4 batches = 100 jobs
+    let nextBatch = batchNumber + 1;
+
     try {
       // Try to parse JSON directly first
       const cleanContent = content.trim();
       if (cleanContent.startsWith('{')) {
         const parsed = JSON.parse(cleanContent);
         jobs = parsed.jobs || [];
+        hasMore = parsed.hasMore ?? hasMore;
+        nextBatch = parsed.nextBatch ?? nextBatch;
       } else {
         // Try to extract JSON from markdown code blocks
         const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[1].trim());
           jobs = parsed.jobs || [];
+          hasMore = parsed.hasMore ?? hasMore;
+          nextBatch = parsed.nextBatch ?? nextBatch;
         } else {
           // Last resort: find JSON object in text
           const objectMatch = content.match(/\{[\s\S]*\}/);
           if (objectMatch) {
             const parsed = JSON.parse(objectMatch[0]);
             jobs = parsed.jobs || [];
+            hasMore = parsed.hasMore ?? hasMore;
+            nextBatch = parsed.nextBatch ?? nextBatch;
           }
         }
       }
@@ -220,16 +251,20 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     // Sort by match score descending
     jobs.sort((a: any, b: any) => (b.matchScore || 0) - (a.matchScore || 0));
 
-    console.log(`Generated ${jobs.length} job matches. Top score: ${jobs[0]?.matchScore || 'N/A'}`);
+    console.log(`Batch ${batchNumber}: Generated ${jobs.length} job matches. Top score: ${jobs[0]?.matchScore || 'N/A'}`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
         jobs,
+        batchNumber,
+        hasMore: hasMore && jobs.length >= 20, // Only continue if we got enough jobs
+        nextBatch,
         matchedWith: {
           skillsCount: skills.length,
           experienceYears,
-          hasFullResume: !!fullText,
+          hasFullResume: fullText.length > 50,
+          resumeTextLength: fullText.length,
           hasParsedContent: Object.keys(parsedContent).length > 0
         }
       }),

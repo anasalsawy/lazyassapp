@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -47,6 +47,7 @@ export const useJobs = () => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
+  const [searchProgress, setSearchProgress] = useState({ current: 0, total: 0 });
   const { toast } = useToast();
 
   useEffect(() => {
@@ -77,6 +78,40 @@ export const useJobs = () => {
     }
   };
 
+  const saveJobsBatch = useCallback(async (userId: string, jobsToSave: any[]) => {
+    const jobsToInsert = jobsToSave.map((job: any) => ({
+      user_id: userId,
+      external_id: job.externalId || `gen-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      source: job.source || "ai_matched",
+      title: job.title,
+      company: job.company,
+      location: job.location,
+      salary_min: job.salaryMin,
+      salary_max: job.salaryMax,
+      description: job.description + (job.matchReason ? `\n\nMatch Reason: ${job.matchReason}` : ""),
+      requirements: job.requirements,
+      job_type: job.jobType,
+      posted_at: job.postedAt,
+      url: job.url,
+      match_score: job.matchScore,
+    }));
+
+    // Use upsert with external_id to avoid duplicates
+    const { error: insertError } = await supabase
+      .from("jobs")
+      .upsert(jobsToInsert, { 
+        onConflict: "user_id,external_id",
+        ignoreDuplicates: true 
+      });
+
+    if (insertError) {
+      console.error("Error saving jobs batch:", insertError);
+      // Don't throw - continue with other batches
+    }
+
+    return jobsToInsert.length;
+  }, []);
+
   const searchJobs = async (
     preferences: JobPreferencesForMatching, 
     resume?: ResumeForMatching
@@ -84,66 +119,94 @@ export const useJobs = () => {
     if (!user) return;
 
     setSearching(true);
+    setSearchProgress({ current: 0, total: 100 });
+    
+    let totalJobsFound = 0;
+    let currentBatch = 1;
+    const maxBatches = 4; // Up to 100 jobs (25 per batch)
+    
     try {
-      console.log("Starting job search with:", {
+      console.log("Starting job search with full resume data:", {
         preferences,
         resumeSkills: resume?.skills?.length || 0,
         hasFullText: !!resume?.fullText,
+        fullTextLength: resume?.fullText?.length || 0,
         hasParsedContent: !!resume?.parsedContent
       });
 
-      const { data, error } = await supabase.functions.invoke("match-jobs", {
-        body: { 
-          preferences,
-          resume: {
-            skills: resume?.skills || [],
-            experienceYears: resume?.experienceYears || 0,
-            parsedContent: resume?.parsedContent || null,
-            fullText: resume?.fullText || "",
-            atsScore: resume?.atsScore || null
-          }
-        },
-      });
+      // Clear existing jobs first for fresh search
+      await supabase
+        .from("jobs")
+        .delete()
+        .eq("user_id", user.id);
 
-      if (error) throw error;
-
-      if (data.success && data.jobs) {
-        console.log(`Received ${data.jobs.length} job matches`, data.matchedWith);
+      // Fetch jobs in batches
+      while (currentBatch <= maxBatches) {
+        setSearchProgress({ current: currentBatch, total: maxBatches });
         
-        // Save matched jobs to database
-        const jobsToInsert = data.jobs.map((job: any) => ({
-          user_id: user.id,
-          external_id: job.externalId,
-          source: job.source,
-          title: job.title,
-          company: job.company,
-          location: job.location,
-          salary_min: job.salaryMin,
-          salary_max: job.salaryMax,
-          description: job.description + (job.matchReason ? `\n\nMatch Reason: ${job.matchReason}` : ""),
-          requirements: job.requirements,
-          job_type: job.jobType,
-          posted_at: job.postedAt,
-          url: job.url,
-          match_score: job.matchScore,
-        }));
-
-        const { error: insertError } = await supabase
-          .from("jobs")
-          .upsert(jobsToInsert, { onConflict: "id" });
-
-        if (insertError) throw insertError;
-
-        await fetchJobs();
+        console.log(`Fetching batch ${currentBatch}/${maxBatches}...`);
         
-        const topScore = data.jobs[0]?.matchScore || 0;
-        toast({ 
-          title: "Jobs matched!", 
-          description: `Found ${data.jobs.length} matches. Best match: ${topScore}%` 
+        const { data, error } = await supabase.functions.invoke("match-jobs", {
+          body: { 
+            preferences,
+            resume: {
+              skills: resume?.skills || [],
+              experienceYears: resume?.experienceYears || 0,
+              parsedContent: resume?.parsedContent || null,
+              fullText: resume?.fullText || "",
+              atsScore: resume?.atsScore || null
+            },
+            batchNumber: currentBatch
+          },
         });
-      } else if (data.error) {
-        throw new Error(data.error);
+
+        if (error) {
+          console.error(`Batch ${currentBatch} error:`, error);
+          // Continue to next batch on error
+          currentBatch++;
+          await new Promise(resolve => setTimeout(resolve, 500)); // Rate limit delay
+          continue;
+        }
+
+        if (data.success && data.jobs && data.jobs.length > 0) {
+          console.log(`Batch ${currentBatch}: Received ${data.jobs.length} jobs`, data.matchedWith);
+          
+          // Save this batch to database
+          const saved = await saveJobsBatch(user.id, data.jobs);
+          totalJobsFound += saved;
+          
+          toast({ 
+            title: `Found ${totalJobsFound} jobs`, 
+            description: `Batch ${currentBatch}/${maxBatches} complete...` 
+          });
+
+          // Check if there are more results
+          if (!data.hasMore || data.jobs.length < 20) {
+            console.log("No more batches available");
+            break;
+          }
+          
+          currentBatch++;
+          
+          // Add delay between batches to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 300));
+        } else if (data.error) {
+          throw new Error(data.error);
+        } else {
+          // No jobs in response, stop fetching
+          break;
+        }
       }
+
+      // Refresh the jobs list
+      await fetchJobs();
+      
+      const topScore = jobs[0]?.match_score || 0;
+      toast({ 
+        title: "Job search complete!", 
+        description: `Found ${totalJobsFound} matches based on your resume.` 
+      });
+      
     } catch (error: any) {
       console.error("Error searching jobs:", error);
       toast({ 
@@ -153,6 +216,7 @@ export const useJobs = () => {
       });
     } finally {
       setSearching(false);
+      setSearchProgress({ current: 0, total: 0 });
     }
   };
 
@@ -216,6 +280,7 @@ export const useJobs = () => {
     jobs, 
     loading, 
     searching,
+    searchProgress,
     searchJobs, 
     toggleSaved, 
     deleteJob,

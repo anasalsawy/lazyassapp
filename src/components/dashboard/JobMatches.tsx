@@ -9,13 +9,13 @@ import { Link } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 
 export const JobMatches = () => {
-  const { jobs, loading, searching, searchJobs, toggleSaved, clearAllJobs } = useJobs();
+  const { jobs, loading, searching, searchProgress, searchJobs, toggleSaved, clearAllJobs } = useJobs();
   const { preferences } = useJobPreferences();
   const { primaryResume } = useResumes();
   const { createApplication } = useApplications();
   const { toast } = useToast();
 
-  const topJobs = jobs.slice(0, 3);
+  const topJobs = jobs.slice(0, 5); // Show more top jobs
 
   const handleSearch = async () => {
     if (!primaryResume) {
@@ -27,15 +27,18 @@ export const JobMatches = () => {
       return;
     }
 
-    // Build complete resume data for matching
+    // Build complete resume data for matching - include FULL resume text
+    const parsedContent = primaryResume.parsed_content || {};
     const resumeData = {
       skills: primaryResume.skills || [],
       experienceYears: primaryResume.experience_years || 0,
-      parsedContent: primaryResume.parsed_content || null,
+      parsedContent: parsedContent,
       atsScore: primaryResume.ats_score || null,
-      // We could extract full text from parsed_content if available
-      fullText: primaryResume.parsed_content?.rawText || 
-                primaryResume.parsed_content?.fullText ||
+      // Extract full text from all possible sources
+      fullText: parsedContent?.rawText || 
+                parsedContent?.fullText ||
+                parsedContent?.text ||
+                (typeof parsedContent === 'string' ? parsedContent : "") ||
                 ""
     };
 
@@ -49,10 +52,11 @@ export const JobMatches = () => {
       industries: preferences?.industries || [],
     };
 
-    console.log("Searching with resume data:", {
+    console.log("Searching with FULL resume data:", {
       skillsCount: resumeData.skills?.length,
       experience: resumeData.experienceYears,
       hasContent: !!resumeData.parsedContent,
+      fullTextLength: resumeData.fullText?.length || 0,
       atsScore: resumeData.atsScore
     });
 
@@ -103,7 +107,9 @@ export const JobMatches = () => {
             {searching ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Matching...
+                {searchProgress.total > 0 
+                  ? `Batch ${searchProgress.current}/${searchProgress.total}...`
+                  : "Matching..."}
               </>
             ) : (
               "Find Jobs"
