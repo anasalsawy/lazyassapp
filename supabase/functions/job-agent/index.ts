@@ -9,6 +9,10 @@ const corsHeaders = {
 // Browser Use Cloud v2 API base URL
 const BROWSER_USE_BASE_URL = "https://api.browser-use.com";
 
+// Browser Use API v2 status values (per official API spec)
+// Task status: started, paused, finished, stopped
+// Session status: active, stopped
+
 /**
  * Helper to call Browser Use Cloud v2 API
  * Uses X-Browser-Use-API-Key header for authentication
@@ -256,10 +260,12 @@ serve(async (req) => {
         if (!profile) throw new Error("No profile found");
 
         // Stop the session to save the profile state
+        // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
         if (profile.pending_session_id) {
           try {
-            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${profile.pending_session_id}/stop`, {
-              method: "POST",
+            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${profile.pending_session_id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ action: "stop" }),
             });
             await log("Session stopped, profile state saved", { sessionId: profile.pending_session_id });
           } catch (e) {
@@ -501,8 +507,8 @@ DO NOT STOP. Work through all sites methodically. Complete as many applications 
       case "cleanup_sessions": {
         await log("Cleaning up active Browser Use sessions...");
 
-        // List all active sessions
-        const listResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions", {
+        // List all active sessions - Browser Use v2 API uses filterBy=active
+        const listResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions?filterBy=active", {
           method: "GET",
         });
 
@@ -514,19 +520,19 @@ DO NOT STOP. Work through all sites methodically. Complete as many applications 
         const sessionsData = await listResponse.json();
         console.log("Sessions response:", JSON.stringify(sessionsData));
         
-        // Handle both array response and object with sessions property
-        const sessionsList = Array.isArray(sessionsData) ? sessionsData : 
-                            (sessionsData.sessions || sessionsData.data || []);
+        // Response format per v2 API: { items: [...], totalItems, pageNumber, pageSize }
+        const sessionsList = sessionsData.items || [];
         
-        const activeSessions = sessionsList.filter(
-          (s: any) => s.status === "active" || s.status === "running"
-        );
+        // Sessions returned by filterBy=active are already active
+        const activeSessions = sessionsList;
 
         let closedCount = 0;
         for (const session of activeSessions) {
           try {
-            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${session.id}/stop`, {
-              method: "POST",
+            // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
+            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${session.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ action: "stop" }),
             });
             closedCount++;
             console.log(`Closed session: ${session.id}`);
