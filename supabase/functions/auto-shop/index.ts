@@ -1552,7 +1552,8 @@ IMPORTANT:
   let taskStatus = "pending";
   let taskOutput = "";
 
-  while (attempts < maxAttempts && !["finished", "failed", "stopped"].includes(taskStatus)) {
+  // Browser Use v2 API: task completes when status is "finished" or "stopped"
+  while (attempts < maxAttempts && !["finished", "stopped"].includes(taskStatus)) {
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     const statusRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${taskId}`, {
