@@ -81,13 +81,18 @@ export function useShopProfile() {
       return null;
     }
 
+    console.log(`[ShopProfile] callAgent: provider=${autoBuyProvider}, action=${action}`);
+
     try {
+      // OSS MODE: Route all calls through the local OSS runner
       if (autoBuyProvider === "oss") {
         if (!user?.id) {
           toast.error("Missing user session");
           return null;
         }
 
+        console.log(`[ShopProfile] OSS mode: calling ${ossRunnerUrl}/run`);
+        
         const response = await fetch(`${ossRunnerUrl}/run`, {
           method: "POST",
           headers: {
@@ -106,9 +111,22 @@ export function useShopProfile() {
         }
 
         const data = await response.json();
+        console.log(`[ShopProfile] OSS response:`, data);
         return data;
       }
 
+      // CLOUD MODE: Only if explicitly configured
+      // HARD GUARD: This code path should never run in OSS mode
+      if (autoBuyProvider !== "cloud") {
+        console.error(`[ShopProfile] BLOCKED: Unknown provider "${autoBuyProvider}", refusing to call Cloud`);
+        toast.error("Invalid provider configuration", {
+          description: `Provider "${autoBuyProvider}" is not recognized. Expected "oss" or "cloud".`,
+        });
+        return null;
+      }
+
+      console.log(`[ShopProfile] CLOUD mode: invoking supabase edge function`);
+      
       const { data, error } = await supabase.functions.invoke("auto-shop", {
         body: { action, ...body },
       });
@@ -140,8 +158,8 @@ export function useShopProfile() {
       console.error("[ShopProfile]", error);
       const message = error instanceof Error ? error.message : "Agent error";
       
-      // Final check for credits error
-      if (message.includes("credits") || message.includes("balance")) {
+      // Final check for credits error (only relevant for Cloud mode)
+      if (autoBuyProvider === "cloud" && (message.includes("credits") || message.includes("balance"))) {
         toast.error("Browser Use API credits insufficient", {
           description: "Please add credits to your Browser Use account.",
           duration: 10000,
