@@ -1371,14 +1371,21 @@ IMPORTANT:
 - Do NOT click on or open individual emails - just read from the inbox list view
 - Scroll down to load more emails if needed`;
 
-  // Add custom proxy if configured - always use US proxy for email sync
-  const taskPayload: Record<string, unknown> = {
-    task: searchInstruction,
-    startUrl: "https://mail.google.com",
+  // ============================================
+  // TWO-STEP PATTERN (same as job-agent):
+  // 1. Create SESSION with profileId first
+  // 2. Create TASK with sessionId
+  // ============================================
+  
+  console.log(`[AutoShop] Creating email sync session with profileId: ${profileId}`);
+  
+  // Build session payload
+  const sessionPayload: Record<string, unknown> = {
     profileId: profileId,
-    llm: "browser-use-llm",
-    maxSteps: 50,
-    highlightElements: true,
+    startUrl: "https://mail.google.com",
+    keepAlive: false, // Auto-close when task completes
+    browserScreenWidth: 1280,
+    browserScreenHeight: 800,
     proxyCountryCode: "us", // Always use US proxy
   };
 
@@ -1398,10 +1405,36 @@ IMPORTANT:
       }
       proxyConfig.password = decrypted;
     }
-    taskPayload.proxy = proxyConfig;
+    sessionPayload.proxy = proxyConfig;
   }
 
-  // Start the task
+  // Step 1: Create session with profile attached
+  const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
+    method: "POST",
+    headers: {
+      "X-Browser-Use-API-Key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(sessionPayload),
+  });
+
+  if (!sessionRes.ok) {
+    const sessionError = await sessionRes.text();
+    console.error("[AutoShop] Email sync session creation failed:", sessionRes.status, sessionError);
+    throw new Error(`Failed to create email sync session: ${sessionError}`);
+  }
+
+  const sessionData = await sessionRes.json();
+  const syncSessionId = sessionData.id;
+  console.log(`[AutoShop] Email sync session created: ${syncSessionId}`);
+
+  // Step 2: Create task within the session
+  const taskPayload = {
+    task: searchInstruction,
+    sessionId: syncSessionId,
+    maxSteps: 50,
+  };
+
   const taskRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
     method: "POST",
     headers: {
@@ -1413,7 +1446,7 @@ IMPORTANT:
 
   if (!taskRes.ok) {
     const errorText = await taskRes.text();
-    throw new Error(`Failed to start email sync: ${errorText}`);
+    throw new Error(`Failed to start email sync task: ${errorText}`);
   }
 
   const taskData = await taskRes.json();
