@@ -47,6 +47,10 @@ export interface OrderEmail {
 
 export function useShopProfile() {
   const { user, session } = useAuth();
+  const autoBuyProvider = import.meta.env.VITE_AUTOBUY_PROVIDER
+    ?? import.meta.env.AUTOBUY_PROVIDER
+    ?? "cloud";
+  const ossRunnerUrl = import.meta.env.VITE_OSS_RUNNER_URL ?? "http://localhost:8081";
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [tracking, setTracking] = useState<OrderTracking[]>([]);
   const [orderEmails, setOrderEmails] = useState<OrderEmail[]>([]);
@@ -68,6 +72,33 @@ export function useShopProfile() {
     }
 
     try {
+      if (autoBuyProvider === "oss") {
+        if (!user?.id) {
+          toast.error("Missing user session");
+          return null;
+        }
+
+        const response = await fetch(`${ossRunnerUrl}/run`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            userId: user.id,
+            action,
+            payload: body,
+          }),
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || "OSS runner error");
+        }
+
+        const data = await response.json();
+        return data;
+      }
+
       const { data, error } = await supabase.functions.invoke("auto-shop", {
         body: { action, ...body },
       });
@@ -111,7 +142,7 @@ export function useShopProfile() {
       toast.error(message);
       return null;
     }
-  }, [session?.access_token]);
+  }, [session?.access_token, autoBuyProvider, ossRunnerUrl, user?.id]);
 
   // Fetch status on mount
   const fetchStatus = useCallback(async () => {
