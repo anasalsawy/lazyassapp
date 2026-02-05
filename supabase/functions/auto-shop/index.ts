@@ -1139,15 +1139,44 @@ If BrowserStack fails to open or connect for ANY reason, you MUST NOT continue s
    - Enter the email address from your browser profile
    - Password: password!
    - Click Sign In
-3. Once logged in, select a browser session - choose:
-   - OS: Windows 11 or macOS (latest)
-   - Browser: Chrome (latest version)
-   - Location: USA - Texas (or nearest available US location like Dallas, Houston, Austin)
+3. Once logged in, select a browser session following the BROWSER SELECTION RULE below
 4. Wait for the remote browser session to fully load (up to 60 seconds max)
 5. VERIFY you are connected by checking:
    - The BrowserStack session shows "Connected"
    - The browser window is responsive and shows a webpage
    - You can interact with the remote browser
+
+=== BROWSER SELECTION RULE (MANDATORY) ===
+
+When choosing a BrowserStack Live session:
+
+🚫 DO NOT use Google Chrome on any OS - this is FORBIDDEN!
+🚫 AVOID all Chromium-based browsers if possible
+
+ALLOWED / PREFERRED OPTIONS (IN ORDER):
+1) ✅ Firefox (latest) on Windows 11  ← STRONGLY PREFERRED
+2) ✅ Firefox (latest) on macOS
+3) ⚠️ Microsoft Edge (latest) ONLY if Firefox is unavailable
+
+FORBIDDEN OPTIONS (DO NOT SELECT THESE):
+❌ Google Chrome (any version, any OS)
+❌ Chrome Beta / Dev
+❌ Any browser that triggers Google Lens, Visual Search, or screen overlays
+
+LOCATION SELECTION:
+- Location: USA - Texas (or nearest available US location like Dallas, Houston, Austin)
+- If Texas unavailable: California, then New York
+
+RATIONALE:
+Chrome triggers persistent Google Lens/Search overlays and browser-level permission popups
+that cannot be reliably dismissed in a remote streamed browser environment.
+Firefox provides a clean, overlay-free experience for automated shopping.
+
+POPUP HANDLING IN FIREFOX/EDGE:
+- Cookie / site consent modals → click "Accept" or "Close" or the X button
+- Browser permission prompts (notifications, location) → press TAB until "Block" or "Don't Allow" is focused, then press ENTER
+- Newsletter popups → click X or "No thanks"
+- Do NOT abandon sessions for normal site popups - handle them and continue
 
 === BROWSERSTACK FAILURE PROTOCOL ===
 
@@ -1160,13 +1189,13 @@ FAILURE SCENARIOS AND RESPONSES:
 1. **BrowserStack site won't load**:
    - First: Wait 15 seconds, refresh
    - If fails again: Try loading a different BrowserStack URL (live.browserstack.com/dashboard OR app.browserstack.com)
-   - If both fail: Try a different browser instance (Chrome ↔ Firefox), or different OS (Windows ↔ macOS)
+   - If both fail: Try a different Firefox instance, or different OS (Windows ↔ macOS)
    - If ALL attempts fail: ABANDON the task and report failure - do NOT proceed without BrowserStack
 
 2. **Login fails**:
    - First: Clear any pre-filled fields, re-enter credentials carefully
    - If fails again: Try the "Forgot Password" flow if email access available
-   - If still fails: Try a different browser instance or restart the session
+   - If still fails: Try a different Firefox instance or restart the session
    - If ALL attempts fail: ABANDON and report the login issue
 
 3. **No US sessions available**:
@@ -1177,26 +1206,26 @@ FAILURE SCENARIOS AND RESPONSES:
 
 4. **Session starts but disconnects mid-use**:
    - First: Wait 10 seconds, try to reconnect
-   - If fails: Try starting a FRESH session (new browser instance, different location)
+   - If fails: Try starting a FRESH session (new Firefox instance, different location)
    - If fresh session also fails: ABANDON the task and report failure
    - If you were mid-checkout when disconnect happened: DO NOT retry that site (cart may be corrupted) - try a different retailer with a fresh session
 
 5. **Session is extremely slow/unresponsive** (>20 sec per action):
    - First: Try switching to a different US location (different server might be faster)
-   - If still slow: End this session, start new session with different browser (Firefox instead of Chrome)
+   - If still slow: End this session, start new session with different Firefox instance or try Edge
    - If new session also slow: Try a different retailer website
    - If ALL websites are slow: ABANDON and report BrowserStack performance issue
 
 6. **Session crashes or freezes**:
    - Do NOT try to recover the crashed session
-   - Immediately start a FRESH session (new browser instance)
+   - Immediately start a FRESH session (new Firefox instance, or try Edge as fallback)
    - If fresh session also crashes: Try different OS (Windows ↔ macOS), different location
    - If still failing: ABANDON and report infrastructure issue
    - If you were mid-purchase: Check email for confirmation before assuming failure
 
 7. **BrowserStack shows CAPTCHA or unusual security check**:
    - First: Complete the CAPTCHA carefully
-   - If CAPTCHA loops (keeps showing new ones): BrowserStack flagged you as bot - try different browser instance
+   - If CAPTCHA loops (keeps showing new ones): BrowserStack flagged you as bot - try different Firefox instance or Edge
    - If new instance also CAPTCHA'd: Try different OS, different location
    - If still CAPTCHA'd: ABANDON and report the issue
 
@@ -1208,10 +1237,11 @@ FAILURE SCENARIOS AND RESPONSES:
 
 === KEY PRINCIPLE: DON'T GET STUCK, BUT NEVER BYPASS BROWSERSTACK ===
 
-- If ANY action fails twice → IMMEDIATELY try a different approach (different browser/location/website)
+- If ANY action fails twice → IMMEDIATELY try a different approach (different Firefox instance/location/website)
+- REMEMBER: Only use Firefox or Edge - NEVER use Chrome (Chrome causes Google Lens overlays)
 - If a website blocks you → Move to next website (there are many options)
 - NEVER loop on the same failed action hoping it will work
-- ALWAYS try alternatives: Browser instance fails → Different instance | Site A fails → Site B | Card 1 fails → Card 2
+- ALWAYS try alternatives: Firefox instance fails → Try Edge | Site A fails → Site B | Card 1 fails → Card 2
 - If ALL alternatives exhausted → ABANDON and report failure
 - **NEVER** shop directly without BrowserStack - if BrowserStack completely fails, abandon the task
 
