@@ -39,8 +39,10 @@ import {
   Truck,
   Settings,
   Globe,
-  Shield
+  Shield,
+  Monitor
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 const SHOP_SITES = [
   { key: "gmail", name: "Gmail", icon: Mail, color: "bg-red-500", description: "Access inbox for codes & shipping updates" },
