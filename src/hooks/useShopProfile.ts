@@ -10,6 +10,7 @@ interface ShopProfile {
   status: string;
   proxyServer: string | null;
   proxyUsername: string | null;
+  useBrowserstack: boolean;
 }
 
 interface OrderTracking {
@@ -279,6 +280,16 @@ export function useShopProfile() {
     return setProxy("", "", "");
   }, [setProxy]);
 
+  // Toggle BrowserStack setting
+  const toggleBrowserstack = useCallback(async (enabled: boolean) => {
+    const data = await callAgent("toggle_browserstack", { useBrowserstack: enabled });
+    if (data?.success) {
+      toast.success(data.message || `BrowserStack ${enabled ? "enabled" : "disabled"}`);
+      fetchStatus();
+    }
+    return data;
+  }, [callAgent, fetchStatus]);
+
   // Test proxy connection - runs 3-step verification: baseline → proxy → baseline
   const testProxy = useCallback(async () => {
     toast.info("Testing proxy... Running 3-step IP verification (may take 2-3 minutes)", {
@@ -354,6 +365,7 @@ export function useShopProfile() {
     setProxy,
     clearProxy,
     testProxy,
+    toggleBrowserstack,
     refetch: fetchStatus,
   };
 }
