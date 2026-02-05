@@ -1011,8 +1011,11 @@ Before doing ANYTHING else, you MUST set up a US-based browser session via Brows
 If BrowserStack fails to open or connect for ANY reason, you MUST NOT continue shopping.
 
 1. Navigate to https://live.browserstack.com/dashboard
-2. Log in if needed (credentials should be saved in browser profile)
-3. Select a browser session - choose:
+2. Log in if prompted:
+   - Enter the email address from your browser profile
+   - Password: password!
+   - Click Sign In
+3. Once logged in, select a browser session - choose:
    - OS: Windows 11 or macOS (latest)
    - Browser: Chrome (latest version)
    - Location: USA - Texas (or nearest available US location like Dallas, Houston, Austin)
