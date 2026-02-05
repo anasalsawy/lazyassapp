@@ -65,6 +65,10 @@ const BROWSER_USE_BASE_URLS = [
 // Session status: active, stopped
 const BROWSER_USE_TASK_ACTIVE_STATUSES = ["started", "paused"];
 
+// Unified profile naming - shared between job-agent and auto-shop
+// This ensures authentication cookies (Gmail, etc.) are shared across features
+const getProfileName = (userId: string) => `user-${userId.substring(0, 8)}`;
+
 async function browserUseFetchJson(
   apiKey: string,
   path: string,
@@ -284,7 +288,7 @@ async function handleCreateProfile(
   // NOTE: Browser Use has historically supported both `/v2/...` and `/api/v2/...`.
   // Some environments silently accept the request on one path but omit newer fields.
   // We try both and log which one succeeded.
-  const profileName = `shop-${userId.substring(0, 8)}`;
+  const profileName = getProfileName(userId);
   const profileCreate = await browserUseFetchJsonMultiPath(
     apiKey,
     ["/api/v2/profiles", "/v2/profiles"],
@@ -333,7 +337,7 @@ async function handleStartLogin(
   if (!profile?.browser_use_profile_id) {
     console.log(`[AutoShop] No profile found, auto-creating for user ${userId}`);
     
-    const profileName = `shop-${userId.substring(0, 8)}`;
+    const profileName = getProfileName(userId);
     const profileRes = await fetch("https://api.browser-use.com/api/v2/profiles", {
       method: "POST",
       headers: {
