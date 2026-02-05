@@ -910,7 +910,8 @@ async function handleStartOrder(
     paymentCards,
     userEmail,
     sitesLoggedIn,
-    supabaseUrl
+    supabaseUrl,
+    profile?.use_browserstack ?? false
   );
 
   // ============================================
