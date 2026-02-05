@@ -42,6 +42,7 @@ interface AutoShopPayload {
   proxyServer?: string;
   proxyUsername?: string;
   proxyPassword?: string;
+  useBrowserstack?: boolean;
 }
 
 type BrowserUseJson = Record<string, unknown>;
@@ -215,6 +216,9 @@ serve(async (req) => {
       }
       case "test_proxy": {
         return await handleTestProxy(supabase, user.id, BROWSER_USE_API_KEY);
+      }
+      case "toggle_browserstack": {
+        return await handleToggleBrowserstack(supabase, user.id, payload.useBrowserstack ?? false);
       }
       default:
         throw new Error(`Unknown action: ${action}`);
