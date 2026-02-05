@@ -60,6 +60,11 @@ const BROWSER_USE_BASE_URLS = [
   "https://api.browser-use.com",
 ];
 
+// Browser Use API v2 status values (per official API spec)
+// Task status: started, paused, finished, stopped
+// Session status: active, stopped
+const BROWSER_USE_TASK_ACTIVE_STATUSES = ["started", "paused"];
+
 async function browserUseFetchJson(
   apiKey: string,
   path: string,
@@ -70,7 +75,9 @@ async function browserUseFetchJson(
 
   for (const baseUrl of BROWSER_USE_BASE_URLS) {
     try {
-      const res = await fetch(`${baseUrl}${path}`, {
+      // Ensure path uses /api/v2 format as per Browser Use Cloud v2 API spec
+      const normalizedPath = path.startsWith("/api/v2") ? path : (path.startsWith("/v2") ? `/api${path}` : `/api/v2${path}`);
+      const res = await fetch(`${baseUrl}${normalizedPath}`, {
         ...init,
         headers: {
           "X-Browser-Use-API-Key": apiKey,
