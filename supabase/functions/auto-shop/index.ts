@@ -612,14 +612,15 @@ async function cleanupStaleSessions(
   // 1. Stop any pending session recorded in DB
   if (profile.shop_pending_session_id) {
     try {
-      await browserUseFetchJsonMultiPath(
-        apiKey,
-        [
-          `/v2/sessions/${profile.shop_pending_session_id}/stop`,
-          `/api/v2/sessions/${profile.shop_pending_session_id}/stop`,
-        ],
-        { method: "POST" },
-      );
+      // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
+      await fetch(`https://api.browser-use.com/api/v2/sessions/${profile.shop_pending_session_id}`, {
+        method: "PATCH",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "stop" }),
+      });
       sessionsKilled++;
       console.log(`[AutoShop] Stopped pending session: ${profile.shop_pending_session_id}`);
     } catch (e) {
@@ -630,14 +631,15 @@ async function cleanupStaleSessions(
   // 2. Stop any pending task recorded in DB
   if (profile.shop_pending_task_id) {
     try {
-      await browserUseFetchJsonMultiPath(
-        apiKey,
-        [
-          `/v2/tasks/${profile.shop_pending_task_id}/stop`,
-          `/api/v2/tasks/${profile.shop_pending_task_id}/stop`,
-        ],
-        { method: "POST" },
-      );
+      // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
+      await fetch(`https://api.browser-use.com/api/v2/tasks/${profile.shop_pending_task_id}`, {
+        method: "PATCH",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "stop" }),
+      });
       tasksKilled++;
       console.log(`[AutoShop] Stopped pending task: ${profile.shop_pending_task_id}`);
     } catch (e) {
@@ -647,29 +649,32 @@ async function cleanupStaleSessions(
 
   // 3. Try to list and stop any active sessions for this profile from the API
   try {
-    const { data: sessionsList } = await browserUseFetchJsonMultiPath(
-      apiKey,
-      ["/v2/sessions", "/api/v2/sessions"],
-      { method: "GET" },
-    );
+    // Browser Use v2 API: Session status is "active" or "stopped"
+    const sessionsRes = await fetch("https://api.browser-use.com/api/v2/sessions?filterBy=active", {
+      headers: { "X-Browser-Use-API-Key": apiKey },
+    });
+    
+    if (!sessionsRes.ok) throw new Error(`Failed to list sessions: ${sessionsRes.status}`);
+    const sessionsList = await sessionsRes.json();
 
-    const sessions = Array.isArray(sessionsList) ? sessionsList : ((sessionsList.sessions as unknown[]) || []);
+    // Response has { items: [...], totalItems, pageNumber, pageSize }
+    const sessions = sessionsList.items || [];
       
     for (const session of sessions as any[]) {
-      const sessionStatus = session.status || session.state;
-      const sessionProfileId = session.profileId || session.profile_id;
-        
-      // Only kill sessions for this user's profile that are still running
-      if (
-        sessionProfileId === profile.browser_use_profile_id &&
-        ["running", "pending", "created"].includes(sessionStatus)
-      ) {
+      // Session status in v2 API: "active" or "stopped"
+      const sessionStatus = session.status;
+      
+      // Only kill sessions that are active
+      if (sessionStatus === "active") {
         try {
-          await browserUseFetchJsonMultiPath(
-            apiKey,
-            [`/v2/sessions/${session.id}/stop`, `/api/v2/sessions/${session.id}/stop`],
-            { method: "POST" },
-          );
+          await fetch(`https://api.browser-use.com/api/v2/sessions/${session.id}`, {
+            method: "PATCH",
+            headers: {
+              "X-Browser-Use-API-Key": apiKey,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ action: "stop" }),
+          });
           sessionsKilled++;
           console.log(`[AutoShop] Killed stale session: ${session.id}`);
         } catch {
@@ -681,31 +686,34 @@ async function cleanupStaleSessions(
     console.error(`[AutoShop] Failed to list sessions:`, e);
   }
 
-  // 4. Also check for stale tasks related to this profile
+  // 4. Also check for stale tasks (status = started or paused)
   try {
-    const { data: tasksList } = await browserUseFetchJsonMultiPath(
-      apiKey,
-      ["/v2/tasks", "/api/v2/tasks"],
-      { method: "GET" },
-    );
+    // Browser Use v2 API: Task status is "started", "paused", "finished", "stopped"
+    const tasksRes = await fetch("https://api.browser-use.com/api/v2/tasks?filterBy=started", {
+      headers: { "X-Browser-Use-API-Key": apiKey },
+    });
+    
+    if (!tasksRes.ok) throw new Error(`Failed to list tasks: ${tasksRes.status}`);
+    const tasksList = await tasksRes.json();
 
-    const tasks = Array.isArray(tasksList) ? tasksList : ((tasksList.tasks as unknown[]) || []);
+    // Response has { items: [...], totalItems, pageNumber, pageSize }
+    const tasks = tasksList.items || [];
       
     for (const task of tasks as any[]) {
-      const taskStatus = task.status || task.state;
-      const taskProfileId = task.profileId || task.profile_id;
-        
-      // Only kill tasks for this user's profile that are still running
-      if (
-        taskProfileId === profile.browser_use_profile_id &&
-        ["running", "pending", "created"].includes(taskStatus)
-      ) {
+      // Task status in v2 API: "started", "paused", "finished", "stopped"
+      const taskStatus = task.status;
+      
+      // Stop tasks that are started or paused (active)
+      if (BROWSER_USE_TASK_ACTIVE_STATUSES.includes(taskStatus)) {
         try {
-          await browserUseFetchJsonMultiPath(
-            apiKey,
-            [`/v2/tasks/${task.id}/stop`, `/api/v2/tasks/${task.id}/stop`],
-            { method: "POST" },
-          );
+          await fetch(`https://api.browser-use.com/api/v2/tasks/${task.id}`, {
+            method: "PATCH",
+            headers: {
+              "X-Browser-Use-API-Key": apiKey,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ action: "stop" }),
+          });
           tasksKilled++;
           console.log(`[AutoShop] Killed stale task: ${task.id}`);
         } catch {
