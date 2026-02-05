@@ -9,6 +9,10 @@ const corsHeaders = {
 // Browser Use Cloud v2 API base URL
 const BROWSER_USE_BASE_URL = "https://api.browser-use.com";
 
+// Unified profile naming - shared between job-agent and auto-shop
+// This ensures authentication cookies (Gmail, etc.) are shared across features
+const getProfileName = (userId: string) => `user-${userId.substring(0, 8)}`;
+
 // Browser Use API v2 status values (per official API spec)
 // Task status: started, paused, finished, stopped
 // Session status: active, stopped
@@ -114,7 +118,7 @@ serve(async (req) => {
         const profileResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/profiles", {
           method: "POST",
           body: JSON.stringify({
-            name: `user-${user.id.substring(0, 8)}`,
+            name: getProfileName(user.id),
           }),
         });
 
@@ -165,7 +169,7 @@ serve(async (req) => {
           const profileResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/profiles", {
             method: "POST",
             body: JSON.stringify({
-              name: `user-${user.id.substring(0, 8)}`,
+              name: getProfileName(user.id),
             }),
           });
 
