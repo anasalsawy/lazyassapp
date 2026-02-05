@@ -804,6 +804,39 @@ const AutoShop = () => {
                 </CardContent>
               </Card>
 
+              {/* BrowserStack Toggle */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Monitor className="h-5 w-5" />
+                    BrowserStack Live (Advanced)
+                  </CardTitle>
+                  <CardDescription>
+                    Route shopping through BrowserStack's remote browsers for additional IP masking. Disabled by default.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div className="space-y-1">
+                      <p className="font-medium">Enable BrowserStack</p>
+                      <p className="text-sm text-muted-foreground">
+                        When enabled, shopping tasks will first connect through BrowserStack Live before visiting retailers.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={shopProfile?.useBrowserstack ?? false}
+                      onCheckedChange={(checked) => toggleBrowserstack(checked)}
+                      disabled={!shopProfile?.hasProfile}
+                    />
+                  </div>
+                  {!shopProfile?.hasProfile && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Create a browser profile first to enable this setting.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Benefits Info */}
               <Card>
                 <CardHeader>
