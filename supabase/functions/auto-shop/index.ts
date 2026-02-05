@@ -535,11 +535,15 @@ async function handleCancelLogin(
   if (sessionId) {
     try {
       console.log(`[AutoShop] Stopping session: ${sessionId}`);
-      await browserUseFetchJsonMultiPath(
-        apiKey,
-        [`/v2/sessions/${sessionId}/stop`, `/api/v2/sessions/${sessionId}/stop`],
-        { method: "POST" },
-      );
+      // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
+      await fetch(`https://api.browser-use.com/api/v2/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "stop" }),
+      });
     } catch (e) {
       console.error(`[AutoShop] Failed to stop session ${sessionId}:`, e);
     }
@@ -550,11 +554,15 @@ async function handleCancelLogin(
   if (taskId) {
     try {
       console.log(`[AutoShop] Stopping task: ${taskId}`);
-      await browserUseFetchJsonMultiPath(
-        apiKey,
-        [`/v2/tasks/${taskId}/stop`, `/api/v2/tasks/${taskId}/stop`],
-        { method: "POST" },
-      );
+      // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
+      await fetch(`https://api.browser-use.com/api/v2/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "stop" }),
+      });
     } catch (e) {
       console.error(`[AutoShop] Failed to stop task ${taskId}:`, e);
     }
