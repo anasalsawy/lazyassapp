@@ -415,5 +415,12 @@ export function useShopProfile() {
     clearProxy,
     testProxy,
     refetch: fetchStatus,
+    // Expose provider info for UI display
+    providerInfo: {
+      provider: autoBuyProvider,
+      isOss: autoBuyProvider === "oss",
+      isCloud: autoBuyProvider === "cloud",
+      ossRunnerUrl: autoBuyProvider === "oss" ? ossRunnerUrl : null,
+    },
   };
 }
