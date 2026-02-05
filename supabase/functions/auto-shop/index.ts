@@ -1139,15 +1139,44 @@ If BrowserStack fails to open or connect for ANY reason, you MUST NOT continue s
    - Enter the email address from your browser profile
    - Password: password!
    - Click Sign In
-3. Once logged in, select a browser session - choose:
-   - OS: Windows 11 or macOS (latest)
-   - Browser: Chrome (latest version)
-   - Location: USA - Texas (or nearest available US location like Dallas, Houston, Austin)
+3. Once logged in, select a browser session following the BROWSER SELECTION RULE below
 4. Wait for the remote browser session to fully load (up to 60 seconds max)
 5. VERIFY you are connected by checking:
    - The BrowserStack session shows "Connected"
    - The browser window is responsive and shows a webpage
    - You can interact with the remote browser
+
+=== BROWSER SELECTION RULE (MANDATORY) ===
+
+When choosing a BrowserStack Live session:
+
+🚫 DO NOT use Google Chrome on any OS - this is FORBIDDEN!
+🚫 AVOID all Chromium-based browsers if possible
+
+ALLOWED / PREFERRED OPTIONS (IN ORDER):
+1) ✅ Firefox (latest) on Windows 11  ← STRONGLY PREFERRED
+2) ✅ Firefox (latest) on macOS
+3) ⚠️ Microsoft Edge (latest) ONLY if Firefox is unavailable
+
+FORBIDDEN OPTIONS (DO NOT SELECT THESE):
+❌ Google Chrome (any version, any OS)
+❌ Chrome Beta / Dev
+❌ Any browser that triggers Google Lens, Visual Search, or screen overlays
+
+LOCATION SELECTION:
+- Location: USA - Texas (or nearest available US location like Dallas, Houston, Austin)
+- If Texas unavailable: California, then New York
+
+RATIONALE:
+Chrome triggers persistent Google Lens/Search overlays and browser-level permission popups
+that cannot be reliably dismissed in a remote streamed browser environment.
+Firefox provides a clean, overlay-free experience for automated shopping.
+
+POPUP HANDLING IN FIREFOX/EDGE:
+- Cookie / site consent modals → click "Accept" or "Close" or the X button
+- Browser permission prompts (notifications, location) → press TAB until "Block" or "Don't Allow" is focused, then press ENTER
+- Newsletter popups → click X or "No thanks"
+- Do NOT abandon sessions for normal site popups - handle them and continue
 
 === BROWSERSTACK FAILURE PROTOCOL ===
 
