@@ -44,12 +44,23 @@ export interface OrderEmail {
   created_at: string;
 }
 
+// Determine provider: OSS is now the default for staging/preview
+// Cloud is only used when explicitly set via VITE_AUTOBUY_PROVIDER=cloud
+const getAutoBuyProvider = (): "oss" | "cloud" => {
+  const envValue = import.meta.env.VITE_AUTOBUY_PROVIDER ?? import.meta.env.AUTOBUY_PROVIDER;
+  // Only use cloud if explicitly set
+  if (envValue === "cloud") return "cloud";
+  // Default to OSS for staging/preview/dev
+  return "oss";
+};
+
 export function useShopProfile() {
   const { user, session } = useAuth();
-  const autoBuyProvider = import.meta.env.VITE_AUTOBUY_PROVIDER
-    ?? import.meta.env.AUTOBUY_PROVIDER
-    ?? "cloud";
+  const autoBuyProvider = getAutoBuyProvider();
   const ossRunnerUrl = import.meta.env.VITE_OSS_RUNNER_URL ?? "http://localhost:8081";
+  
+  // Log active provider on mount for debugging
+  console.log(`[ShopProfile] Active provider: ${autoBuyProvider}`, { ossRunnerUrl });
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [tracking, setTracking] = useState<OrderTracking[]>([]);
   const [orderEmails, setOrderEmails] = useState<OrderEmail[]>([]);
