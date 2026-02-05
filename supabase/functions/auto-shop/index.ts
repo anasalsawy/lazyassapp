@@ -196,8 +196,9 @@ serve(async (req) => {
         return await handleCleanupSessions(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "start_order": {
-        // Clean up before starting order
-        await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
+        // Note: Don't cleanup all sessions before order - only cleanup DB-tracked pending session
+        // to avoid killing legitimate login sessions the user has open
+        await cleanupPendingOrderSession(supabase, user.id, BROWSER_USE_API_KEY);
         return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, supabaseUrl);
       }
       case "check_order_status": {
@@ -207,8 +208,8 @@ serve(async (req) => {
         return await handleSyncAllOrders(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "sync_order_emails": {
-        // Clean up before syncing emails
-        await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
+        // Note: Don't cleanup all sessions before email sync - only cleanup DB-tracked pending session
+        await cleanupPendingOrderSession(supabase, user.id, BROWSER_USE_API_KEY);
         return await handleSyncOrderEmails(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "set_proxy": {
