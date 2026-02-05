@@ -46,6 +46,16 @@ interface AutoShopPayload {
 
 type BrowserUseJson = Record<string, unknown>;
 
+// Fisher-Yates shuffle - randomizes array order to prevent predictable card usage patterns
+function shuffleArray<T>(array: T[]): T[] {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 const BROWSER_USE_BASE_URLS = [
   "https://api.browser-use.com",
 ];
@@ -959,7 +969,11 @@ function buildShoppingAgentInstruction(
     ? `\n- MAXIMUM PRICE: $${maxPrice} - DO NOT buy anything over this price` 
     : "";
 
-  const cardInstructions = cards.map((card, index) => `
+  // IMPORTANT: Shuffle cards to randomize order - prevents predictable patterns
+  const shuffledCards = shuffleArray(cards);
+  console.log(`[AutoShop] Cards shuffled - order randomized for this order`);
+
+  const cardInstructions = shuffledCards.map((card, index) => `
 CARD ${index + 1}:
 - Number: ${card.cardNumber}
 - Expiry: ${card.expiry}
@@ -1147,10 +1161,12 @@ STEP 5 - PAYMENT (TRY CARDS IN ORDER):
 ${cardInstructions}
 
 PAYMENT STRATEGY:
-1. Try CARD 1 first
+⚠️ IMPORTANT: Cards have been RANDOMLY SHUFFLED for this order - use them in the order shown above.
+1. Try CARD 1 first (this is a randomly selected card, not always the same)
 2. If CARD 1 is declined, try CARD 2
-3. If all cards fail on this site, ABANDON this site and try the NEXT BEST DEAL on a DIFFERENT site
-4. Repeat until order is successful or all options exhausted
+3. Continue through all available cards before giving up on a site
+4. If all cards fail on this site, ABANDON this site and try the NEXT BEST DEAL on a DIFFERENT site
+5. Repeat until order is successful or all options exhausted
 
 STEP 6 - COMPLETE ORDER:
 1. Review the order
