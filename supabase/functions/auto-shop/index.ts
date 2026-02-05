@@ -745,6 +745,69 @@ async function cleanupStaleSessions(
   return { sessionsKilled, tasksKilled };
 }
 
+// Light cleanup - only stops the pending ORDER session tracked in DB
+// Does NOT kill all active sessions (preserves login sessions)
+// deno-lint-ignore no-explicit-any
+async function cleanupPendingOrderSession(
+  supabase: any,
+  userId: string,
+  apiKey: string
+): Promise<void> {
+  // Get the user's browser profile
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("shop_pending_session_id, shop_pending_task_id")
+    .eq("user_id", userId)
+    .single();
+
+  if (!profile) return;
+
+  // Only stop the specific pending session/task tracked in the DB
+  // This preserves any login sessions that might be open
+  if (profile.shop_pending_session_id) {
+    try {
+      await fetch(`https://api.browser-use.com/api/v2/sessions/${profile.shop_pending_session_id}`, {
+        method: "PATCH",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "stop" }),
+      });
+      console.log(`[AutoShop] Stopped pending order session: ${profile.shop_pending_session_id}`);
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop pending session:`, e);
+    }
+  }
+
+  if (profile.shop_pending_task_id) {
+    try {
+      await fetch(`https://api.browser-use.com/api/v2/tasks/${profile.shop_pending_task_id}`, {
+        method: "PATCH",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "stop" }),
+      });
+      console.log(`[AutoShop] Stopped pending order task: ${profile.shop_pending_task_id}`);
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop pending task:`, e);
+    }
+  }
+
+  // Clear pending order state (but NOT pending login state)
+  if (profile.shop_pending_session_id || profile.shop_pending_task_id) {
+    await supabase
+      .from("browser_profiles")
+      .update({
+        shop_pending_task_id: null,
+        shop_pending_session_id: null,
+      })
+      .eq("user_id", userId);
+  }
+}
+
 // Manual cleanup action handler
 // deno-lint-ignore no-explicit-any
 async function handleCleanupSessions(
