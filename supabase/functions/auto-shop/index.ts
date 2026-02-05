@@ -1129,10 +1129,10 @@ PRODUCT TO FIND:
 
 === STEP 0 - SET UP BROWSERSTACK LIVE PROXY (MANDATORY - DO THIS FIRST!) ===
 
-🚨 CRITICAL REQUIREMENT: YOU CANNOT PROCEED WITHOUT BROWSERSTACK 🚨
+🚨 CRITICAL REQUIREMENT: START WITH BROWSERSTACK, FALLBACK TO DIRECT BROWSER IF NEEDED 🚨
 
-Before doing ANYTHING else, you MUST set up a US-based browser session via BrowserStack Live.
-If BrowserStack fails to open or connect for ANY reason, you MUST NOT continue shopping.
+Before doing ANYTHING else, ATTEMPT to set up a US-based browser session via BrowserStack Live.
+If BrowserStack fails after exhausting all options, you MAY proceed with DIRECT BROWSER shopping.
 
 1. Navigate to https://live.browserstack.com/dashboard
 2. Log in if prompted:
@@ -1180,7 +1180,7 @@ POPUP HANDLING IN FIREFOX/EDGE:
 
 === BROWSERSTACK FAILURE PROTOCOL ===
 
-IF BROWSERSTACK FAILS AT ANY POINT, FOLLOW THIS PROTOCOL:
+IF BROWSERSTACK FAILS AT ANY POINT, FOLLOW THIS PROTOCOL TO RECOVER OR FALLBACK:
 
 🚨 ANTI-LOOP RULE: NEVER repeat the same failed action more than TWICE. If something fails twice, MOVE ON to a different approach. 🚨
 
@@ -1190,64 +1190,90 @@ FAILURE SCENARIOS AND RESPONSES:
    - First: Wait 15 seconds, refresh
    - If fails again: Try loading a different BrowserStack URL (live.browserstack.com/dashboard OR app.browserstack.com)
    - If both fail: Try a different Firefox instance, or different OS (Windows ↔ macOS)
-   - If ALL attempts fail: ABANDON the task and report failure - do NOT proceed without BrowserStack
+   - If ALL attempts fail: PROCEED TO DIRECT BROWSER FALLBACK (see below)
 
 2. **Login fails**:
    - First: Clear any pre-filled fields, re-enter credentials carefully
    - If fails again: Try the "Forgot Password" flow if email access available
    - If still fails: Try a different Firefox instance or restart the session
-   - If ALL attempts fail: ABANDON and report the login issue
+   - If ALL attempts fail: PROCEED TO DIRECT BROWSER FALLBACK (see below)
 
 3. **No US sessions available**:
    - Try locations in this order: Texas → California → New York → Any US state
    - If NO US locations available: Try Canada or UK as fallback (some sites accept these)
-   - If ALL unavailable: ABANDON the task - do NOT proceed without a valid session
+   - If ALL unavailable: PROCEED TO DIRECT BROWSER FALLBACK (see below)
    - Do NOT wait or loop - immediately move to next option or abandon
 
 4. **Session starts but disconnects mid-use**:
    - First: Wait 10 seconds, try to reconnect
    - If fails: Try starting a FRESH session (new Firefox instance, different location)
-   - If fresh session also fails: ABANDON the task and report failure
+   - If fresh session also fails: PROCEED TO DIRECT BROWSER FALLBACK (see below)
    - If you were mid-checkout when disconnect happened: DO NOT retry that site (cart may be corrupted) - try a different retailer with a fresh session
 
 5. **Session is extremely slow/unresponsive** (>20 sec per action):
    - First: Try switching to a different US location (different server might be faster)
    - If still slow: End this session, start new session with different Firefox instance or try Edge
    - If new session also slow: Try a different retailer website
-   - If ALL websites are slow: ABANDON and report BrowserStack performance issue
+   - If ALL websites are slow: PROCEED TO DIRECT BROWSER FALLBACK (see below)
 
 6. **Session crashes or freezes**:
    - Do NOT try to recover the crashed session
    - Immediately start a FRESH session (new Firefox instance, or try Edge as fallback)
    - If fresh session also crashes: Try different OS (Windows ↔ macOS), different location
-   - If still failing: ABANDON and report infrastructure issue
+   - If still failing: PROCEED TO DIRECT BROWSER FALLBACK (see below)
    - If you were mid-purchase: Check email for confirmation before assuming failure
 
 7. **BrowserStack shows CAPTCHA or unusual security check**:
    - First: Complete the CAPTCHA carefully
    - If CAPTCHA loops (keeps showing new ones): BrowserStack flagged you as bot - try different Firefox instance or Edge
    - If new instance also CAPTCHA'd: Try different OS, different location
-   - If still CAPTCHA'd: ABANDON and report the issue
+   - If still CAPTCHA'd: PROCEED TO DIRECT BROWSER FALLBACK (see below)
 
 8. **Remote browser inside BrowserStack is unresponsive**:
    - The BrowserStack interface loads but the browser window inside doesn't work
    - First: Try clicking "Restart Session" or "New Session"
    - If still broken: End session, start completely new session with different OS (Windows ↔ macOS)
-   - If still fails: ABANDON and report the issue
+   - If still fails: PROCEED TO DIRECT BROWSER FALLBACK (see below)
 
-=== KEY PRINCIPLE: DON'T GET STUCK, BUT NEVER BYPASS BROWSERSTACK ===
+=== DIRECT BROWSER FALLBACK (WHEN BROWSERSTACK COMPLETELY FAILS) ===
+
+🔄 IF ALL BROWSERSTACK OPTIONS ARE EXHAUSTED, USE DIRECT BROWSER:
+
+When to activate fallback:
+- You have tried AT LEAST 2 different BrowserStack configurations (different browsers, locations, or OS)
+- ALL attempts have failed with infrastructure issues (not just website blocks)
+- You are confident this is a BrowserStack service issue, not a retailer block
+
+DIRECT BROWSER SHOPPING PROCEDURE:
+1. Close/abandon the BrowserStack session entirely
+2. Navigate DIRECTLY to shopping sites using the current browser window
+3. Start at Google Shopping: https://www.google.com/shopping
+4. Search for the product and proceed with normal checkout flow
+5. Follow all the same shopping steps (STEP 1-6) but without BrowserStack
+
+⚠️ IMPORTANT NOTES FOR DIRECT BROWSER MODE:
+- You are now using the current browser environment (Browser Use Cloud's built-in US proxy)
+- Some retailers may block or limit functionality based on IP
+- If a site blocks you in direct mode, try a DIFFERENT retailer (don't retry same site)
+- All card/shipping/checkout instructions remain the same
+- Report in final status that you used "DIRECT BROWSER" mode due to BrowserStack failure
+
+=== KEY PRINCIPLE: DON'T GET STUCK ===
 
 - If ANY action fails twice → IMMEDIATELY try a different approach (different Firefox instance/location/website)
-- REMEMBER: Only use Firefox or Edge - NEVER use Chrome (Chrome causes Google Lens overlays)
+- REMEMBER: In BrowserStack, use Firefox or Edge - NEVER use Chrome (Chrome causes Google Lens overlays)
 - If a website blocks you → Move to next website (there are many options)
 - NEVER loop on the same failed action hoping it will work
 - ALWAYS try alternatives: Firefox instance fails → Try Edge | Site A fails → Site B | Card 1 fails → Card 2
-- If ALL alternatives exhausted → ABANDON and report failure
-- **NEVER** shop directly without BrowserStack - if BrowserStack completely fails, abandon the task
+- If ALL BrowserStack alternatives exhausted → SWITCH TO DIRECT BROWSER (not abandon)
+- If DIRECT BROWSER also fails on multiple sites → THEN abandon and report failure
 
-IMPORTANT: All shopping activity MUST happen INSIDE the BrowserStack Live session. 
-This gives you a US-based IP address that won't get blocked by retailers.
-There is NO exception - if BrowserStack fails completely, the task must be abandoned.
+PRIORITY ORDER:
+1. BrowserStack with Firefox on Windows 11 (US location)
+2. BrowserStack with Firefox on macOS (US location)
+3. BrowserStack with Edge (any US location)
+4. BrowserStack with non-US location (Canada/UK)
+5. **DIRECT BROWSER** ← Use current browser if BrowserStack completely unavailable
 
 If Texas is not available, try these US locations in order:
 - Dallas, TX
@@ -1258,7 +1284,7 @@ If Texas is not available, try these US locations in order:
 - New York, NY
 - Chicago, IL
 
-If NONE of the above work, STOP and report failure.
+If NONE of the above work in BrowserStack, switch to DIRECT BROWSER mode.
 
 === END BROWSERSTACK SETUP ===
 
