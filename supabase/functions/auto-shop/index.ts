@@ -260,6 +260,7 @@ async function handleGetStatus(supabase: any, userId: string) {
         status: profile.status,
         proxyServer: profile.proxy_server || null,
         proxyUsername: profile.proxy_username || null,
+        useBrowserstack: profile.use_browserstack ?? false,
       } : null,
       tracking: tracking || [],
     }),
