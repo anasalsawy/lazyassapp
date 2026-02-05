@@ -83,6 +83,7 @@ const AutoShop = () => {
     setProxy,
     clearProxy,
     testProxy,
+    providerInfo,
   } = useShopProfile();
 
   const [activeTab, setActiveTab] = useState("shop");
