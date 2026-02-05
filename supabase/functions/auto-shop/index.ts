@@ -839,6 +839,25 @@ async function handleStartOrder(
     throw new Error("Missing required order data");
   }
 
+  // ============================================
+  // CONCURRENT ORDER LIMIT: Max 6 orders at a time
+  // ============================================
+  const MAX_CONCURRENT_ORDERS = 6;
+  
+  const { data: runningOrders, error: countError } = await supabase
+    .from("auto_shop_orders")
+    .select("id")
+    .eq("user_id", user.id)
+    .in("status", ["pending", "searching", "found_deal", "checkout"]);
+  
+  if (countError) {
+    console.error(`[AutoShop] Failed to count running orders:`, countError);
+  } else if (runningOrders && runningOrders.length >= MAX_CONCURRENT_ORDERS) {
+    throw new Error(`Maximum ${MAX_CONCURRENT_ORDERS} orders can run simultaneously. Please wait for some orders to complete.`);
+  }
+  
+  console.log(`[AutoShop] Running orders: ${runningOrders?.length || 0}/${MAX_CONCURRENT_ORDERS}`);
+
   // Get browser profile
   const { data: profile } = await supabase
     .from("browser_profiles")
