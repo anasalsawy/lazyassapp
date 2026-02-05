@@ -362,7 +362,7 @@ const AutoShop = () => {
               {/* Provider Badge - Shows OSS vs Cloud */}
               <Badge 
                 variant={providerInfo.isOss ? "secondary" : "default"}
-                className={`flex items-center gap-1.5 ${providerInfo.isOss ? "bg-green-100 text-green-800 border-green-300" : "bg-blue-100 text-blue-800 border-blue-300"}`}
+                className="flex items-center gap-1.5"
               >
                 {providerInfo.isOss ? (
                   <>
@@ -381,7 +381,7 @@ const AutoShop = () => {
               AI-powered shopping agent that finds the best deals and places orders for you
             </p>
             {providerInfo.isOss && (
-              <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+              <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                 <Shield className="h-3 w-3" />
                 Running locally via OSS runner at {providerInfo.ossRunnerUrl}
               </p>
