@@ -196,9 +196,8 @@ serve(async (req) => {
         return await handleCleanupSessions(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "start_order": {
-        // Note: Don't cleanup all sessions before order - only cleanup DB-tracked pending session
-        // to avoid killing legitimate login sessions the user has open
-        await cleanupPendingOrderSession(supabase, user.id, BROWSER_USE_API_KEY);
+        // CONCURRENT ORDERS: Do NOT cleanup any sessions before starting new order
+        // Each order gets its own independent session - multiple orders can run simultaneously
         return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, supabaseUrl);
       }
       case "check_order_status": {
@@ -208,8 +207,7 @@ serve(async (req) => {
         return await handleSyncAllOrders(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "sync_order_emails": {
-        // Note: Don't cleanup all sessions before email sync - only cleanup DB-tracked pending session
-        await cleanupPendingOrderSession(supabase, user.id, BROWSER_USE_API_KEY);
+        // CONCURRENT: Do NOT cleanup sessions before email sync
         return await handleSyncOrderEmails(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "set_proxy": {
