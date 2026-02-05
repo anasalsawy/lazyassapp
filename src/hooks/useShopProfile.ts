@@ -44,12 +44,23 @@ export interface OrderEmail {
   created_at: string;
 }
 
+// Determine provider: OSS is now the default for staging/preview
+// Cloud is only used when explicitly set via VITE_AUTOBUY_PROVIDER=cloud
+const getAutoBuyProvider = (): "oss" | "cloud" => {
+  const envValue = import.meta.env.VITE_AUTOBUY_PROVIDER ?? import.meta.env.AUTOBUY_PROVIDER;
+  // Only use cloud if explicitly set
+  if (envValue === "cloud") return "cloud";
+  // Default to OSS for staging/preview/dev
+  return "oss";
+};
+
 export function useShopProfile() {
   const { user, session } = useAuth();
-  const autoBuyProvider = import.meta.env.VITE_AUTOBUY_PROVIDER
-    ?? import.meta.env.AUTOBUY_PROVIDER
-    ?? "cloud";
+  const autoBuyProvider = getAutoBuyProvider();
   const ossRunnerUrl = import.meta.env.VITE_OSS_RUNNER_URL ?? "http://localhost:8081";
+  
+  // Log active provider on mount for debugging
+  console.log(`[ShopProfile] Active provider: ${autoBuyProvider}`, { ossRunnerUrl });
   const [profile, setProfile] = useState<ShopProfile | null>(null);
   const [tracking, setTracking] = useState<OrderTracking[]>([]);
   const [orderEmails, setOrderEmails] = useState<OrderEmail[]>([]);
@@ -70,13 +81,18 @@ export function useShopProfile() {
       return null;
     }
 
+    console.log(`[ShopProfile] callAgent: provider=${autoBuyProvider}, action=${action}`);
+
     try {
+      // OSS MODE: Route all calls through the local OSS runner
       if (autoBuyProvider === "oss") {
         if (!user?.id) {
           toast.error("Missing user session");
           return null;
         }
 
+        console.log(`[ShopProfile] OSS mode: calling ${ossRunnerUrl}/run`);
+        
         const response = await fetch(`${ossRunnerUrl}/run`, {
           method: "POST",
           headers: {
@@ -95,9 +111,22 @@ export function useShopProfile() {
         }
 
         const data = await response.json();
+        console.log(`[ShopProfile] OSS response:`, data);
         return data;
       }
 
+      // CLOUD MODE: Only if explicitly configured
+      // HARD GUARD: This code path should never run in OSS mode
+      if (autoBuyProvider !== "cloud") {
+        console.error(`[ShopProfile] BLOCKED: Unknown provider "${autoBuyProvider}", refusing to call Cloud`);
+        toast.error("Invalid provider configuration", {
+          description: `Provider "${autoBuyProvider}" is not recognized. Expected "oss" or "cloud".`,
+        });
+        return null;
+      }
+
+      console.log(`[ShopProfile] CLOUD mode: invoking supabase edge function`);
+      
       const { data, error } = await supabase.functions.invoke("auto-shop", {
         body: { action, ...body },
       });
@@ -129,8 +158,8 @@ export function useShopProfile() {
       console.error("[ShopProfile]", error);
       const message = error instanceof Error ? error.message : "Agent error";
       
-      // Final check for credits error
-      if (message.includes("credits") || message.includes("balance")) {
+      // Final check for credits error (only relevant for Cloud mode)
+      if (autoBuyProvider === "cloud" && (message.includes("credits") || message.includes("balance"))) {
         toast.error("Browser Use API credits insufficient", {
           description: "Please add credits to your Browser Use account.",
           duration: 10000,
@@ -386,5 +415,12 @@ export function useShopProfile() {
     clearProxy,
     testProxy,
     refetch: fetchStatus,
+    // Expose provider info for UI display
+    providerInfo: {
+      provider: autoBuyProvider,
+      isOss: autoBuyProvider === "oss",
+      isCloud: autoBuyProvider === "cloud",
+      ossRunnerUrl: autoBuyProvider === "oss" ? ossRunnerUrl : null,
+    },
   };
 }
