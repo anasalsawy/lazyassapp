@@ -1729,7 +1729,8 @@ IMPORTANT:
 // Update order from Browser Use task data
 // deno-lint-ignore no-explicit-any
 async function updateOrderFromTask(supabase: any, order: any, taskData: any) {
-  const taskStatus = taskData.status; // "pending", "running", "finished", "failed", "stopped"
+  // Browser Use v2 API Task status: "started", "paused", "finished", "stopped"
+  const taskStatus = taskData.status;
   const output = taskData.output || "";
 
   let newStatus = order.status;
@@ -1763,10 +1764,11 @@ async function updateOrderFromTask(supabase: any, order: any, taskData: any) {
       // Task finished but unclear result - check if it found something
       newStatus = "completed";
     }
-  } else if (taskStatus === "failed" || taskStatus === "stopped") {
+  } else if (taskStatus === "stopped") {
+    // In v2 API, "stopped" means manually stopped - treat as failed
     newStatus = "failed";
     errorMessage = taskData.error || "Task failed or was stopped";
-  } else if (taskStatus === "running") {
+  } else if (taskStatus === "started" || taskStatus === "paused") {
     // Keep as searching/ordering
     if (order.status === "pending") newStatus = "searching";
   }
