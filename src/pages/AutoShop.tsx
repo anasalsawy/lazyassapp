@@ -357,10 +357,35 @@ const AutoShop = () => {
       <div className="container max-w-6xl mx-auto py-8 px-4">
         <div className="mb-8 flex justify-between items-start">
           <div>
-            <h1 className="text-3xl font-bold">🛒 Auto-Shop</h1>
+            <div className="flex items-center gap-3 mb-1">
+              <h1 className="text-3xl font-bold">🛒 Auto-Shop</h1>
+              {/* Provider Badge - Shows OSS vs Cloud */}
+              <Badge 
+                variant={providerInfo.isOss ? "secondary" : "default"}
+                className={`flex items-center gap-1.5 ${providerInfo.isOss ? "bg-green-100 text-green-800 border-green-300" : "bg-blue-100 text-blue-800 border-blue-300"}`}
+              >
+                {providerInfo.isOss ? (
+                  <>
+                    <Zap className="h-3 w-3" />
+                    OSS Mode
+                  </>
+                ) : (
+                  <>
+                    <Globe className="h-3 w-3" />
+                    Cloud Mode
+                  </>
+                )}
+              </Badge>
+            </div>
             <p className="text-muted-foreground mt-1">
               AI-powered shopping agent that finds the best deals and places orders for you
             </p>
+            {providerInfo.isOss && (
+              <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                <Shield className="h-3 w-3" />
+                Running locally via OSS runner at {providerInfo.ossRunnerUrl}
+              </p>
+            )}
           </div>
           <Button variant="outline" asChild>
             <Link to="/jobs">
