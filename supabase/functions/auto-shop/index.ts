@@ -161,7 +161,7 @@ serve(async (req) => {
         return await handleStartLogin(supabase, user.id, payload.site || "gmail", BROWSER_USE_API_KEY);
       }
       case "confirm_login": {
-        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail");
+        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail", BROWSER_USE_API_KEY);
       }
       case "cancel_login": {
         return await handleCancelLogin(supabase, user.id, BROWSER_USE_API_KEY);
@@ -428,7 +428,8 @@ async function handleStartLogin(
 async function handleConfirmLogin(
   supabase: any,
   userId: string,
-  site: string
+  site: string,
+  apiKey: string
 ) {
   // Get profile
   const { data: profile } = await supabase
@@ -438,6 +439,22 @@ async function handleConfirmLogin(
     .single();
 
   if (!profile) throw new Error("Profile not found");
+
+  // CRITICAL: Stop the session to save cookies/auth state back to the profile
+  const sessionId = profile.shop_pending_session_id;
+  if (sessionId) {
+    try {
+      console.log(`[AutoShop] Stopping session ${sessionId} to save auth state to profile`);
+      await browserUseFetchJsonMultiPath(
+        apiKey,
+        [`/api/v2/sessions/${sessionId}/stop`, `/v2/sessions/${sessionId}/stop`],
+        { method: "PUT" },
+      );
+      console.log(`[AutoShop] Session stopped, cookies saved to profile`);
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop session (cookies may not be saved):`, e);
+    }
+  }
 
   // Add site to logged in list
   const currentSites: string[] = Array.isArray(profile.shop_sites_logged_in) 
