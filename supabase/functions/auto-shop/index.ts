@@ -466,13 +466,15 @@ async function handleConfirmLogin(
   const sessionId = profile.shop_pending_session_id;
   if (sessionId) {
     try {
-      console.log(`[AutoShop] Stopping session ${sessionId} to save auth state to profile`);
-      await fetch(`https://api.browser-use.com/api/v2/sessions/${sessionId}/stop`, {
-        method: "POST",
+      // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
+      console.log(`[AutoShop] Stopping session ${sessionId} to save auth state to profile (PATCH)`);
+      await fetch(`https://api.browser-use.com/api/v2/sessions/${sessionId}`, {
+        method: "PATCH",
         headers: {
           "X-Browser-Use-API-Key": apiKey,
           "Content-Type": "application/json",
         },
+        body: JSON.stringify({ action: "stop" }),
       });
       console.log(`[AutoShop] Session stopped, cookies saved to profile`);
     } catch (e) {
