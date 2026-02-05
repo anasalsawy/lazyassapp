@@ -830,6 +830,34 @@ async function handleCleanupSessions(
   );
 }
 
+// Toggle BrowserStack setting
+// deno-lint-ignore no-explicit-any
+async function handleToggleBrowserstack(
+  supabase: any,
+  userId: string,
+  useBrowserstack: boolean
+) {
+  const { error } = await supabase
+    .from("browser_profiles")
+    .update({ use_browserstack: useBrowserstack })
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(`Failed to update BrowserStack setting: ${error.message}`);
+  }
+
+  console.log(`[AutoShop] BrowserStack ${useBrowserstack ? "enabled" : "disabled"} for user ${userId}`);
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      useBrowserstack,
+      message: `BrowserStack ${useBrowserstack ? "enabled" : "disabled"}`,
+    }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
 // deno-lint-ignore no-explicit-any
 async function handleStartOrder(
   supabase: any,
