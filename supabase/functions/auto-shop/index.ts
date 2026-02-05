@@ -1029,22 +1029,70 @@ If BrowserStack fails to open or connect for ANY reason, you MUST NOT continue s
 
 IF BROWSERSTACK FAILS AT ANY POINT, DO NOT CONTINUE:
 
+🚨 ANTI-LOOP RULE: NEVER repeat the same failed action more than TWICE. If something fails twice, MOVE ON. 🚨
+
 FAILURE SCENARIOS AND RESPONSES:
-1. **BrowserStack site won't load** → Wait 30 seconds, refresh. If still fails, ABANDON task with message: "BLOCKED: BrowserStack dashboard failed to load. Cannot establish US proxy session."
 
-2. **Login fails** → Try refreshing page once. If still fails, ABANDON with: "BLOCKED: BrowserStack login failed. Please verify BrowserStack credentials are saved in browser profile."
+1. **BrowserStack site won't load**:
+   - First: Wait 15 seconds, refresh
+   - If fails again: Try loading a different BrowserStack URL (live.browserstack.com/dashboard OR app.browserstack.com)
+   - If both fail: SKIP BrowserStack entirely and try shopping DIRECTLY (some sites work without proxy)
+   - Start with sites you're already logged into - they're less likely to block
 
-3. **No US sessions available** → Try 3 different US locations (Texas, California, New York). If ALL unavailable, ABANDON with: "BLOCKED: No US BrowserStack sessions available. Try again later."
+2. **Login fails**:
+   - First: Clear any pre-filled fields, re-enter credentials carefully
+   - If fails again: Try the "Forgot Password" flow if email access available
+   - If still fails: SKIP BrowserStack and proceed to shop DIRECTLY without the proxy
+   - NOTE: Some retailers work fine without US proxy, especially if already logged in
 
-4. **Session starts but disconnects** → Attempt to reconnect ONCE. If fails, ABANDON with: "BLOCKED: BrowserStack session disconnected and could not reconnect."
+3. **No US sessions available**:
+   - Try locations in this order: Texas → California → New York → Any US state
+   - If NO US locations available: Try Canada or UK as fallback (some sites accept these)
+   - If ALL unavailable: SKIP BrowserStack and shop DIRECTLY
+   - Do NOT wait or loop - immediately move to next option
 
-5. **Session is extremely slow/unresponsive** (>30 sec per action) → ABANDON with: "BLOCKED: BrowserStack session too slow to complete purchase reliably."
+4. **Session starts but disconnects mid-use**:
+   - First: Wait 10 seconds, try to reconnect
+   - If fails: Try starting a FRESH session (new browser instance, different location)
+   - If fresh session also fails: ABANDON BrowserStack and shop DIRECTLY
+   - If you were mid-checkout when disconnect happened: DO NOT retry that site (cart may be corrupted) - start fresh on different retailer
 
-6. **Session crashes mid-task** → Do NOT restart shopping from scratch. ABANDON with: "BLOCKED: BrowserStack session crashed. Order was not completed."
+5. **Session is extremely slow/unresponsive** (>20 sec per action):
+   - First: Try switching to a different US location (different server might be faster)
+   - If still slow: End this session, start new session with different browser (Firefox instead of Chrome)
+   - If new session also slow: SKIP BrowserStack and shop DIRECTLY
+   - Never wait more than 30 seconds for any single action
+
+6. **Session crashes or freezes**:
+   - Do NOT try to recover the crashed session
+   - Immediately start a FRESH session (new browser instance)
+   - If fresh session also crashes: Browser Use infrastructure may be overloaded - shop DIRECTLY
+   - If you were mid-purchase: Check email for confirmation before assuming failure
+
+7. **BrowserStack shows CAPTCHA or unusual security check**:
+   - First: Complete the CAPTCHA carefully
+   - If CAPTCHA loops (keeps showing new ones): BrowserStack flagged you as bot - try different browser instance
+   - If new instance also CAPTCHA'd: SKIP BrowserStack entirely and shop DIRECTLY
+
+8. **Remote browser inside BrowserStack is unresponsive**:
+   - The BrowserStack interface loads but the browser window inside doesn't work
+   - First: Try clicking "Restart Session" or "New Session"
+   - If still broken: End session, start completely new session with different OS (Windows ↔ macOS)
+   - If still fails: SKIP BrowserStack and proceed DIRECTLY
+
+=== KEY PRINCIPLE: DON'T GET STUCK ===
+
+- If ANY action fails twice → IMMEDIATELY try a different approach
+- If BrowserStack is problematic → Shop DIRECTLY (many sites work fine)
+- If a website blocks you → Move to next website (there are many options)
+- NEVER loop on the same failed action hoping it will work
+- NEVER spend more than 2 minutes on any single blocker
+- ALWAYS have a fallback: BrowserStack fails → Direct | Site A fails → Site B | Card 1 fails → Card 2
 
 IMPORTANT: All shopping activity MUST happen INSIDE the BrowserStack Live session. 
 This gives you a US-based IP address that won't get blocked by retailers.
-NEVER proceed to Step 1 without a working BrowserStack session.
+EXCEPTION: If BrowserStack completely fails after 2-3 attempts, you MAY proceed directly 
+and prioritize sites where the user is already logged in (cookies should help bypass geo-blocks).
 
 If Texas is not available, try these US locations in order:
 - Dallas, TX
