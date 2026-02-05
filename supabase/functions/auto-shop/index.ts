@@ -196,8 +196,9 @@ serve(async (req) => {
         return await handleCleanupSessions(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "start_order": {
-        // Clean up before starting order
-        await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
+        // Note: Don't cleanup all sessions before order - only cleanup DB-tracked pending session
+        // to avoid killing legitimate login sessions the user has open
+        await cleanupPendingOrderSession(supabase, user.id, BROWSER_USE_API_KEY);
         return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, supabaseUrl);
       }
       case "check_order_status": {
@@ -207,8 +208,8 @@ serve(async (req) => {
         return await handleSyncAllOrders(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "sync_order_emails": {
-        // Clean up before syncing emails
-        await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
+        // Note: Don't cleanup all sessions before email sync - only cleanup DB-tracked pending session
+        await cleanupPendingOrderSession(supabase, user.id, BROWSER_USE_API_KEY);
         return await handleSyncOrderEmails(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "set_proxy": {
@@ -742,6 +743,69 @@ async function cleanupStaleSessions(
   console.log(`[AutoShop] Cleanup complete: ${sessionsKilled} sessions, ${tasksKilled} tasks stopped`);
 
   return { sessionsKilled, tasksKilled };
+}
+
+// Light cleanup - only stops the pending ORDER session tracked in DB
+// Does NOT kill all active sessions (preserves login sessions)
+// deno-lint-ignore no-explicit-any
+async function cleanupPendingOrderSession(
+  supabase: any,
+  userId: string,
+  apiKey: string
+): Promise<void> {
+  // Get the user's browser profile
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("shop_pending_session_id, shop_pending_task_id")
+    .eq("user_id", userId)
+    .single();
+
+  if (!profile) return;
+
+  // Only stop the specific pending session/task tracked in the DB
+  // This preserves any login sessions that might be open
+  if (profile.shop_pending_session_id) {
+    try {
+      await fetch(`https://api.browser-use.com/api/v2/sessions/${profile.shop_pending_session_id}`, {
+        method: "PATCH",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "stop" }),
+      });
+      console.log(`[AutoShop] Stopped pending order session: ${profile.shop_pending_session_id}`);
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop pending session:`, e);
+    }
+  }
+
+  if (profile.shop_pending_task_id) {
+    try {
+      await fetch(`https://api.browser-use.com/api/v2/tasks/${profile.shop_pending_task_id}`, {
+        method: "PATCH",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "stop" }),
+      });
+      console.log(`[AutoShop] Stopped pending order task: ${profile.shop_pending_task_id}`);
+    } catch (e) {
+      console.error(`[AutoShop] Failed to stop pending task:`, e);
+    }
+  }
+
+  // Clear pending order state (but NOT pending login state)
+  if (profile.shop_pending_session_id || profile.shop_pending_task_id) {
+    await supabase
+      .from("browser_profiles")
+      .update({
+        shop_pending_task_id: null,
+        shop_pending_session_id: null,
+      })
+      .eq("user_id", userId);
+  }
 }
 
 // Manual cleanup action handler
