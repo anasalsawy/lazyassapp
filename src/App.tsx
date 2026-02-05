@@ -9,6 +9,7 @@ import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import Landing from "./pages/Landing";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import Pricing from "./pages/Pricing";
 
 // Protected pages
 import Onboarding from "./pages/Onboarding";
@@ -31,6 +32,7 @@ const App = () => (
           {/* Public routes */}
           <Route path="/" element={<Landing />} />
           <Route path="/auth" element={<Auth />} />
+          <Route path="/pricing" element={<Pricing />} />
           
           {/* Onboarding flow (protected) */}
           <Route
