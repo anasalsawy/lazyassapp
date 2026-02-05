@@ -317,17 +317,22 @@ async function handleStartLogin(
     console.log(`[AutoShop] No profile found, auto-creating for user ${userId}`);
     
     const profileName = `shop-${userId.substring(0, 8)}`;
-    const profileCreate = await browserUseFetchJsonMultiPath(
-      apiKey,
-      ["/api/v2/profiles", "/v2/profiles"],
-      {
-        method: "POST",
-        body: JSON.stringify({ name: profileName }),
+    const profileRes = await fetch("https://api.browser-use.com/api/v2/profiles", {
+      method: "POST",
+      headers: {
+        "X-Browser-Use-API-Key": apiKey,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({ name: profileName }),
+    });
 
-    const profileData = profileCreate.data;
-    const profileId = (profileData.id as string) || (profileData.profile_id as string);
+    if (!profileRes.ok) {
+      const err = await profileRes.text();
+      throw new Error(`Failed to create profile: ${err}`);
+    }
+
+    const profileData = await profileRes.json();
+    const profileId = profileData.id;
 
     if (!profileId) {
       throw new Error("Failed to create Browser Use profile");
@@ -363,41 +368,41 @@ async function handleStartLogin(
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
   const expectedProfileId: string = profile.browser_use_profile_id;
 
-  // Per Browser Use API docs (https://docs.cloud.browser-use.com/api-reference/latest-api-v-2/sessions/create-session-sessions-post):
-  // The ONLY accepted key is "profileId" (camelCase, UUID format)
-  // The response does NOT echo back profileId - so we trust the API if it succeeds
-  const sessionPayload = {
-    profileId: expectedProfileId, // CRITICAL: This is the only field the API accepts
-    startUrl: loginUrl,
-    keepAlive: true,
-    browserScreenWidth: 1280,
-    browserScreenHeight: 800,
-    proxyCountryCode: "us",
-  };
-
+  // Create session with profile - matching job-agent pattern exactly
   console.log(`[AutoShop] Creating session with profileId=${expectedProfileId}, startUrl=${loginUrl}`);
+  
+  const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
+    method: "POST",
+    headers: {
+      "X-Browser-Use-API-Key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      profileId: expectedProfileId,
+      startUrl: loginUrl,
+      keepAlive: true,
+      browserScreenWidth: 1280,
+      browserScreenHeight: 800,
+    }),
+  });
 
-  // Create session: try both `/api/v2` and `/v2` variants.
-  // Reason: if we hit an older/compat endpoint, it may ignore `profileId` without error.
-  const sessionCreate = await browserUseFetchJsonMultiPath(
-    apiKey,
-    ["/api/v2/sessions", "/v2/sessions"],
-    { method: "POST", body: JSON.stringify(sessionPayload) },
-  );
+  console.log(`[AutoShop] Session response status: ${sessionRes.status}`);
 
-  console.log(`[AutoShop] Session create ok via ${sessionCreate.baseUrl}${sessionCreate.path}`);
+  if (!sessionRes.ok) {
+    const err = await sessionRes.text();
+    console.error(`[AutoShop] Session creation failed: ${err}`);
+    throw new Error(`Failed to create session: ${err}`);
+  }
 
-  const sessionData = sessionCreate.data;
-
+  const sessionData = await sessionRes.json();
   console.log(`[AutoShop] Session response:`, JSON.stringify(sessionData));
 
-  const sessionId = (sessionData.id as string) || (sessionData.session_id as string);
+  const sessionId = sessionData.id;
   if (!sessionId) {
     throw new Error("Browser Use session created but returned no session id");
   }
 
-  // The API uses liveUrl (not live_view_url)
-  const liveViewUrl = (sessionData.liveUrl as string) || `https://browser-use.com/live/${sessionId}`;
+  const liveViewUrl = sessionData.liveUrl;
 
   // Update pending login
   await supabase
@@ -440,16 +445,18 @@ async function handleConfirmLogin(
 
   if (!profile) throw new Error("Profile not found");
 
-  // CRITICAL: Stop the session to save cookies/auth state back to the profile
+  // Stop the session to save cookies - matching job-agent pattern (POST not PUT)
   const sessionId = profile.shop_pending_session_id;
   if (sessionId) {
     try {
       console.log(`[AutoShop] Stopping session ${sessionId} to save auth state to profile`);
-      await browserUseFetchJsonMultiPath(
-        apiKey,
-        [`/api/v2/sessions/${sessionId}/stop`, `/v2/sessions/${sessionId}/stop`],
-        { method: "PUT" },
-      );
+      await fetch(`https://api.browser-use.com/api/v2/sessions/${sessionId}/stop`, {
+        method: "POST",
+        headers: {
+          "X-Browser-Use-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+      });
       console.log(`[AutoShop] Session stopped, cookies saved to profile`);
     } catch (e) {
       console.error(`[AutoShop] Failed to stop session (cookies may not be saved):`, e);
