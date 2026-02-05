@@ -473,6 +473,7 @@ export type Database = {
           sites_logged_in: string[] | null
           status: string
           updated_at: string
+          use_browserstack: boolean
           user_id: string
         }
         Insert: {
@@ -493,6 +494,7 @@ export type Database = {
           sites_logged_in?: string[] | null
           status?: string
           updated_at?: string
+          use_browserstack?: boolean
           user_id: string
         }
         Update: {
@@ -513,6 +515,7 @@ export type Database = {
           sites_logged_in?: string[] | null
           status?: string
           updated_at?: string
+          use_browserstack?: boolean
           user_id?: string
         }
         Relationships: []
