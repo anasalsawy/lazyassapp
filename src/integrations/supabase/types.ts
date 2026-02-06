@@ -53,6 +53,45 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_execution_logs: {
+        Row: {
+          agent: string
+          created_at: string
+          gatekeeper_json: Json | null
+          id: string
+          input: string | null
+          model: string
+          output: string | null
+          resume_id: string
+          step: string
+          user_id: string
+        }
+        Insert: {
+          agent: string
+          created_at?: string
+          gatekeeper_json?: Json | null
+          id?: string
+          input?: string | null
+          model: string
+          output?: string | null
+          resume_id: string
+          step: string
+          user_id: string
+        }
+        Update: {
+          agent?: string
+          created_at?: string
+          gatekeeper_json?: Json | null
+          id?: string
+          input?: string | null
+          model?: string
+          output?: string | null
+          resume_id?: string
+          step?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       agent_logs: {
         Row: {
           agent_name: string
