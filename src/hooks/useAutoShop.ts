@@ -4,6 +4,16 @@ import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useToast } from "@/hooks/use-toast";
 
+// Provider detection (same logic as useShopProfile)
+const getAutoBuyProvider = (): "oss" | "cloud" => {
+  const envValue = import.meta.env.VITE_AUTOBUY_PROVIDER ?? import.meta.env.AUTOBUY_PROVIDER;
+  if (envValue === "cloud") return "cloud";
+  return "oss";
+};
+
+const autoBuyProvider = getAutoBuyProvider();
+const ossRunnerUrl = import.meta.env.VITE_OSS_RUNNER_URL ?? "http://localhost:8081";
+
 export interface PaymentCard {
   id: string;
   card_name: string;
