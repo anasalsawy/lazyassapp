@@ -27,18 +27,9 @@ import {
   Search,
   Brain,
   Sparkles,
-  MessageSquare,
 } from "lucide-react";
 
 const SUPPORTED_SITES = [
-  {
-    key: "chatgpt",
-    name: "ChatGPT",
-    icon: Brain,
-    color: "bg-emerald-600",
-    required: true,
-    description: "Required for Deep Research",
-  },
   {
     key: "gmail",
     name: "Gmail",
@@ -97,7 +88,6 @@ export default function JobAgent() {
 
   const hasProfile = profile?.hasProfile;
   const sitesLoggedIn = profile?.sitesLoggedIn || [];
-  const chatgptConnected = sitesLoggedIn.includes("chatgpt");
 
   return (
     <AppLayout>
@@ -107,16 +97,16 @@ export default function JobAgent() {
           <div>
             <h1 className="text-3xl font-bold flex items-center gap-3">
               <Brain className="h-8 w-8 text-primary" />
-              Deep Research Job Agent
+              Smart Job Search
             </h1>
             <p className="text-muted-foreground mt-1">
-              Powered by ChatGPT Deep Research — finds jobs that are deeply
-              compatible with your complete professional profile
+              Our AI deeply analyzes your skills, experience, and career
+              trajectory to find roles that truly match your profile
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={cleanupSessions}>
-              Clear Sessions
+              Reset
             </Button>
             <Button variant="outline" size="sm" onClick={refetch}>
               <RefreshCw className="h-4 w-4 mr-2" />
@@ -131,17 +121,17 @@ export default function JobAgent() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Settings className="h-5 w-5" />
-                Setup Your Job Agent
+                Get Started
               </CardTitle>
               <CardDescription>
-                Create a browser profile to save your login sessions. You'll
-                only need to log in once.
+                Set up your account to enable intelligent job searching. This
+                only takes a moment.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Button onClick={createProfile}>
                 <Zap className="h-4 w-4 mr-2" />
-                Create Browser Profile
+                Activate Job Search
               </Button>
             </CardContent>
           </Card>
@@ -153,8 +143,8 @@ export default function JobAgent() {
             <CardHeader>
               <CardTitle>Connected Accounts</CardTitle>
               <CardDescription>
-                Log in to ChatGPT first (required for Deep Research), then
-                optionally connect job sites for automated applications.
+                Connect your accounts to enable automated applications and
+                email monitoring.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -254,21 +244,20 @@ export default function JobAgent() {
           </Card>
         )}
 
-        {/* Deep Research Launch */}
-        {hasProfile && chatgptConnected && (
+        {/* Job Search Launch */}
+        {hasProfile && (
           <Card className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-primary/20">
             <CardContent className="py-6">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex-1">
                   <h3 className="text-lg font-semibold flex items-center gap-2">
                     <Sparkles className="h-5 w-5 text-primary" />
-                    Deep Research Job Search
+                    Find Your Best Matches
                   </h3>
                   <p className="text-sm text-muted-foreground mt-1">
-                    ChatGPT Deep Research will analyze your complete resume,
-                    career trajectory, and skills — then search the web to find
-                    jobs that are deeply compatible with your unique professional
-                    profile. This is not a keyword search.
+                    Our AI will deeply analyze your resume, career trajectory,
+                    and skills to find roles across the web that truly fit your
+                    profile. This goes far beyond simple keyword matching.
                   </p>
                 </div>
                 <Button
@@ -280,18 +269,18 @@ export default function JobAgent() {
                   {isRunning ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Researching...
+                      Searching...
                     </>
                   ) : (
                     <>
                       <Search className="h-4 w-4 mr-2" />
-                      Start Deep Research
+                      Find Jobs
                     </>
                   )}
                 </Button>
               </div>
 
-              {/* Research Progress */}
+              {/* Search Progress */}
               {researchStatus && (
                 <div className="mt-6 p-4 rounded-lg bg-background/50 border">
                   <div className="flex items-center gap-3 mb-3">
@@ -304,16 +293,11 @@ export default function JobAgent() {
                     )}
                     <span className="font-medium">
                       {researchStatus.status === "running"
-                        ? "Deep Research in Progress"
+                        ? "Analyzing & Searching..."
                         : researchStatus.status === "completed"
-                        ? "Research Complete"
-                        : "Research Failed"}
+                        ? "Search Complete"
+                        : "Search Failed"}
                     </span>
-                    {researchStatus.stepCount && (
-                      <Badge variant="secondary">
-                        {researchStatus.stepCount} steps
-                      </Badge>
-                    )}
                   </div>
 
                   {researchStatus.status === "running" && (
@@ -321,10 +305,10 @@ export default function JobAgent() {
                       <Progress value={undefined} className="h-2" />
                       <p className="text-xs text-muted-foreground">
                         {researchStatus.message ||
-                          "ChatGPT is deeply analyzing your profile and searching the web..."}
+                          "Analyzing your profile and searching across the web for the best matches..."}
                       </p>
                       <p className="text-xs text-muted-foreground/70">
-                        This typically takes 5-10 minutes. You can leave this
+                        This typically takes 5–10 minutes. You can leave this
                         page and come back.
                       </p>
                     </div>
@@ -334,16 +318,16 @@ export default function JobAgent() {
                     <div className="space-y-3">
                       <div className="flex items-center gap-4 text-sm">
                         <span className="text-green-600 font-medium">
-                          {researchStatus.jobsFound} jobs found
+                          {researchStatus.jobsFound} matches found
                         </span>
                         <span className="text-muted-foreground">
-                          {researchStatus.jobsStored} saved to your matches
+                          {researchStatus.jobsStored} saved to your list
                         </span>
                       </div>
                       {researchStatus.researchSummary && (
                         <div className="p-3 bg-muted/50 rounded text-sm">
                           <p className="font-medium text-xs text-muted-foreground mb-1">
-                            Research Summary
+                            Summary
                           </p>
                           <p>{researchStatus.researchSummary}</p>
                         </div>
@@ -372,36 +356,17 @@ export default function JobAgent() {
           </Card>
         )}
 
-        {/* Not ready prompt */}
-        {hasProfile && !chatgptConnected && (
-          <Card className="border-amber-500/50 bg-amber-500/5">
-            <CardContent className="py-6">
-              <div className="flex items-center gap-3">
-                <MessageSquare className="h-6 w-6 text-amber-500" />
-                <div>
-                  <h3 className="font-semibold">Connect ChatGPT First</h3>
-                  <p className="text-sm text-muted-foreground">
-                    ChatGPT is required for Deep Research. Click "Connect" on the
-                    ChatGPT card above and log in to your ChatGPT account. Make
-                    sure you have access to Deep Research (ChatGPT Plus/Pro).
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         {/* Results Tabs */}
         <Tabs defaultValue="jobs" className="w-full">
           <TabsList>
             <TabsTrigger value="jobs">
-              Jobs Found ({recentJobs.length})
+              Matches ({recentJobs.length})
             </TabsTrigger>
             <TabsTrigger value="applications">
               Applications ({recentApplications.length})
             </TabsTrigger>
             <TabsTrigger value="runs">
-              Research Runs ({recentRuns.length})
+              History ({recentRuns.length})
             </TabsTrigger>
           </TabsList>
 
@@ -410,9 +375,10 @@ export default function JobAgent() {
               <Card>
                 <CardContent className="py-12 text-center text-muted-foreground">
                   <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No jobs found yet.</p>
+                  <p>No matches yet.</p>
                   <p className="text-sm mt-1">
-                    Run Deep Research to discover deeply matched opportunities.
+                    Click "Find Jobs" to discover opportunities tailored to your
+                    profile.
                   </p>
                 </CardContent>
               </Card>
@@ -507,7 +473,7 @@ export default function JobAgent() {
             {recentRuns.length === 0 ? (
               <Card>
                 <CardContent className="py-12 text-center text-muted-foreground">
-                  No research runs yet. Click "Start Deep Research" to begin.
+                  No search history yet. Click "Find Jobs" to get started.
                 </CardContent>
               </Card>
             ) : (
@@ -527,8 +493,8 @@ export default function JobAgent() {
                           <div>
                             <p className="font-medium flex items-center gap-2">
                               {run.run_type === "deep_research"
-                                ? "Deep Research"
-                                : "Job Agent"}
+                                ? "Smart Search"
+                                : "Job Search"}
                               <span className="text-xs text-muted-foreground">
                                 {new Date(run.created_at).toLocaleDateString()}{" "}
                                 {new Date(run.created_at).toLocaleTimeString()}
