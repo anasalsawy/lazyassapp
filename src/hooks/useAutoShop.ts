@@ -4,6 +4,16 @@ import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useToast } from "@/hooks/use-toast";
 
+// Provider detection (same logic as useShopProfile)
+const getAutoBuyProvider = (): "oss" | "cloud" => {
+  const envValue = import.meta.env.VITE_AUTOBUY_PROVIDER ?? import.meta.env.AUTOBUY_PROVIDER;
+  if (envValue === "cloud") return "cloud";
+  return "oss";
+};
+
+const autoBuyProvider = getAutoBuyProvider();
+const ossRunnerUrl = import.meta.env.VITE_OSS_RUNNER_URL ?? "http://localhost:8081";
+
 export interface PaymentCard {
   id: string;
   card_name: string;
@@ -310,23 +320,55 @@ export const useAutoShop = () => {
         billingCountry: card.billing_country,
       }));
 
-      // Call the auto-shop edge function
-      const { data: agentResult, error: agentError } = await supabase.functions.invoke(
-        "auto-shop",
-        {
-          body: {
+      // Route based on provider: OSS vs Cloud
+      if (autoBuyProvider === "oss") {
+        console.log(`[AutoShop] OSS mode: calling ${ossRunnerUrl}/run for start_order`);
+        
+        const response = await fetch(`${ossRunnerUrl}/run`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: user.id,
             action: "start_order",
-            orderId: order.id,
-            productQuery: orderData.product_query,
-            maxPrice: orderData.max_price,
-            quantity: orderData.quantity || 1,
-            shippingAddress: selectedAddress,
-            paymentCards: cardDetails,
-          },
-        }
-      );
+            payload: {
+              orderId: order.id,
+              productQuery: orderData.product_query,
+              maxPrice: orderData.max_price,
+              quantity: orderData.quantity || 1,
+              shippingAddress: selectedAddress,
+              paymentCards: cardDetails,
+            },
+          }),
+        });
 
-      if (agentError) throw agentError;
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || "OSS runner error");
+        }
+
+        const agentResult = await response.json();
+        console.log(`[AutoShop] OSS response:`, agentResult);
+      } else {
+        // CLOUD MODE: Call the auto-shop edge function
+        console.log(`[AutoShop] Cloud mode: invoking edge function`);
+        
+        const { data: agentResult, error: agentError } = await supabase.functions.invoke(
+          "auto-shop",
+          {
+            body: {
+              action: "start_order",
+              orderId: order.id,
+              productQuery: orderData.product_query,
+              maxPrice: orderData.max_price,
+              quantity: orderData.quantity || 1,
+              shippingAddress: selectedAddress,
+              paymentCards: cardDetails,
+            },
+          }
+        );
+
+        if (agentError) throw agentError;
+      }
 
       toast({
         title: "🔍 Agent Searching",
@@ -336,7 +378,7 @@ export const useAutoShop = () => {
       fetchData();
       return order;
     } catch (error: any) {
-      console.error("Order error:", error);
+      console.error("[AutoShop] Order error:", error);
       toast({
         title: "Failed to start order",
         description: error.message,
