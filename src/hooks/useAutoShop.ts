@@ -4,16 +4,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useToast } from "@/hooks/use-toast";
 
-// Provider detection (same logic as useShopProfile)
-const getAutoBuyProvider = (): "oss" | "cloud" => {
-  const envValue = import.meta.env.VITE_AUTOBUY_PROVIDER ?? import.meta.env.AUTOBUY_PROVIDER;
-  if (envValue === "cloud") return "cloud";
-  return "oss";
-};
-
-const autoBuyProvider = getAutoBuyProvider();
-const ossRunnerUrl = import.meta.env.VITE_OSS_RUNNER_URL ?? "http://localhost:8081";
-
 export interface PaymentCard {
   id: string;
   card_name: string;
@@ -121,24 +111,19 @@ export const useAutoShop = () => {
     setLoading(true);
 
     try {
-      // Cards: owner's cards are used for everyone
-      // The RLS policy allows family to see owner's cards
       const effectiveOwnerId = ownerId || user.id;
-      
+
       const [cardsRes, addressesRes, ordersRes] = await Promise.all([
-        // Fetch cards from owner (or self if owner)
         supabase
           .from("payment_cards")
           .select("*")
           .eq("user_id", effectiveOwnerId)
           .order("is_default", { ascending: false }),
-        // Addresses can be user's own or from owner
         supabase
           .from("shipping_addresses")
           .select("*")
           .or(`user_id.eq.${user.id},user_id.eq.${effectiveOwnerId}`)
           .order("is_default", { ascending: false }),
-        // Orders are always user's own
         supabase
           .from("auto_shop_orders")
           .select("*")
@@ -262,7 +247,7 @@ export const useAutoShop = () => {
     return true;
   };
 
-  // Order operations
+  // Order operations — all routed through Skyvern edge function
   const startOrder = async (orderData: {
     product_query: string;
     max_price?: number;
@@ -303,10 +288,8 @@ export const useAutoShop = () => {
         description: `Searching for "${orderData.product_query}"...`,
       });
 
-      // Get shipping address details
       const selectedAddress = addresses.find(a => a.id === orderData.shipping_address_id);
-      
-      // Get all card details (decrypted) for the agent
+
       const cardDetails = cards.map(card => ({
         id: card.id,
         cardNumber: decryptData(card.card_number_enc),
@@ -320,55 +303,23 @@ export const useAutoShop = () => {
         billingCountry: card.billing_country,
       }));
 
-      // Route based on provider: OSS vs Cloud
-      if (autoBuyProvider === "oss") {
-        console.log(`[AutoShop] OSS mode: calling ${ossRunnerUrl}/run for start_order`);
-        
-        const response = await fetch(`${ossRunnerUrl}/run`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: user.id,
+      // Route through Skyvern edge function
+      const { data: agentResult, error: agentError } = await supabase.functions.invoke(
+        "auto-shop",
+        {
+          body: {
             action: "start_order",
-            payload: {
-              orderId: order.id,
-              productQuery: orderData.product_query,
-              maxPrice: orderData.max_price,
-              quantity: orderData.quantity || 1,
-              shippingAddress: selectedAddress,
-              paymentCards: cardDetails,
-            },
-          }),
-        });
-
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || "OSS runner error");
+            orderId: order.id,
+            productQuery: orderData.product_query,
+            maxPrice: orderData.max_price,
+            quantity: orderData.quantity || 1,
+            shippingAddress: selectedAddress,
+            paymentCards: cardDetails,
+          },
         }
+      );
 
-        const agentResult = await response.json();
-        console.log(`[AutoShop] OSS response:`, agentResult);
-      } else {
-        // CLOUD MODE: Call the auto-shop edge function
-        console.log(`[AutoShop] Cloud mode: invoking edge function`);
-        
-        const { data: agentResult, error: agentError } = await supabase.functions.invoke(
-          "auto-shop",
-          {
-            body: {
-              action: "start_order",
-              orderId: order.id,
-              productQuery: orderData.product_query,
-              maxPrice: orderData.max_price,
-              quantity: orderData.quantity || 1,
-              shippingAddress: selectedAddress,
-              paymentCards: cardDetails,
-            },
-          }
-        );
-
-        if (agentError) throw agentError;
-      }
+      if (agentError) throw agentError;
 
       toast({
         title: "🔍 Agent Searching",
@@ -404,7 +355,6 @@ export const useAutoShop = () => {
     return true;
   };
 
-  // Get masked card number for display
   const getMaskedCardNumber = (encryptedNumber: string) => {
     try {
       const decrypted = decryptData(encryptedNumber);
