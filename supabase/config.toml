@@ -44,3 +44,6 @@ verify_jwt = false
 
 [functions.job-agent]
 verify_jwt = false
+
+[functions.optimize-resume]
+verify_jwt = false
