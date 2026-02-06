@@ -237,6 +237,33 @@ export function useResumeOptimizer() {
                   }
                   break;
 
+                case "gatekeeper_blocked":
+                  setCurrentStep("gatekeeper_blocked");
+                  setStatus("error");
+                  {
+                    const verdict: GatekeeperVerdict = {
+                      step: event.step,
+                      passed: false,
+                      blocking_issues: event.blocking_issues,
+                    };
+                    setGatekeeperVerdicts((prev) => [...prev, verdict]);
+                    setProgress((prev) => [
+                      ...prev,
+                      {
+                        step: "gatekeeper_blocked",
+                        message: event.message,
+                        gatekeeper: verdict,
+                      },
+                    ]);
+                  }
+                  setError(event.message);
+                  toast({
+                    title: "Pipeline blocked",
+                    description: event.message,
+                    variant: "destructive",
+                  });
+                  break;
+
                 case "complete":
                   setStatus("complete");
                   setCurrentStep("complete");

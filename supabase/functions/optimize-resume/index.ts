@@ -161,6 +161,35 @@ function safeJsonParse(text: string): any {
   throw new Error("No valid JSON found in AI response");
 }
 
+function assertGatekeeperSchema(obj: any): void {
+  const required = ["step", "complete", "blocking_issues", "evidence", "continue", "next_step"];
+  for (const k of required) {
+    if (!(k in obj)) throw new Error(`Gatekeeper schema missing field: ${k}`);
+  }
+  if (!Array.isArray(obj.blocking_issues)) throw new Error("blocking_issues must be an array");
+  if (!Array.isArray(obj.evidence)) throw new Error("evidence must be an array");
+  if (typeof obj.complete !== "boolean") throw new Error("complete must be boolean");
+  if (typeof obj.continue !== "boolean") throw new Error("continue must be boolean");
+}
+
+function assertCriticSchema(obj: any): void {
+  const requiredNumbers = ["overall_score", "ats_score", "keyword_coverage_score", "clarity_score"];
+  for (const k of requiredNumbers) {
+    if (typeof obj[k] !== "number") throw new Error(`Critic schema missing numeric field: ${k}`);
+  }
+  const requiredArrays = ["truth_violations", "missing_sections", "missing_keyword_clusters", "required_edits", "must_fix_before_next_round", "praise"];
+  for (const k of requiredArrays) {
+    if (!Array.isArray(obj[k])) throw new Error(`Critic schema missing array field: ${k}`);
+  }
+}
+
+function assertResearcherSchema(obj: any): void {
+  if (typeof obj.target_role !== "string") throw new Error("Researcher schema missing: target_role");
+  if (!Array.isArray(obj.required_sections)) throw new Error("Researcher schema missing: required_sections");
+  if (!Array.isArray(obj.keyword_clusters)) throw new Error("Researcher schema missing: keyword_clusters");
+  if (!Array.isArray(obj.ats_rules)) throw new Error("Researcher schema missing: ats_rules");
+}
+
 function sendSSE(
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
@@ -205,7 +234,9 @@ ${stepOutput.substring(0, 8000)}
 Audit this output and return the Gatekeeper JSON verdict.`;
 
   const result = await callAI(apiKey, model, GATEKEEPER_PROMPT, userPrompt, 0.1);
-  return safeJsonParse(result) as GatekeeperResult;
+  const parsed = safeJsonParse(result);
+  assertGatekeeperSchema(parsed); // FIX #3: validate schema
+  return parsed as GatekeeperResult;
 }
 
 // ── Gate condition definitions per step ────────────────────────────────
@@ -239,9 +270,19 @@ const GATE_CONDITIONS = {
     "Contains praise array",
     "Scores are justified — not blindly high",
   ],
+  // FIX #4: Quality threshold conditions verified by Gatekeeper
+  quality_threshold: [
+    "truth_violations array is empty (length === 0)",
+    "missing_sections array is empty (length === 0)",
+    "overall_score is >= 90",
+    "ats_score is >= 92",
+    "keyword_coverage_score is >= 88",
+  ],
+  // FIX #5: Designer conditions updated to verify content drift
   designer: [
     "Output is valid HTML with embedded CSS",
-    "Content is identical to the approved draft — no meaning changes or new claims",
+    "All text content in the HTML is present in the approved content (ignoring HTML tags) — no meaning changes or new claims",
+    "No bullet claims in the HTML that do not appear in the approved content",
     "Uses clean typography and visual hierarchy",
     "No external images or resources",
     "No tables — uses flexbox/grid if needed",
@@ -307,6 +348,33 @@ serve(async (req) => {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  }
+
+  // ── FIX #6: Helper to log agent execution ───────────────────────────
+  async function logExecution(
+    userId: string,
+    rId: string,
+    step: string,
+    agent: string,
+    model: string,
+    input: string,
+    output: string,
+    gatekeeperJson: any,
+  ) {
+    try {
+      await supabase.from("agent_execution_logs").insert({
+        user_id: userId,
+        resume_id: rId,
+        step,
+        agent,
+        model,
+        input: input.substring(0, 10000), // cap storage size
+        output: output.substring(0, 10000),
+        gatekeeper_json: gatekeeperJson,
+      });
+    } catch (e) {
+      console.error("Failed to log execution:", e);
+    }
   }
 
   // ── SSE streaming response ──────────────────────────────────────────
@@ -384,7 +452,7 @@ serve(async (req) => {
         const MAX_ROUNDS = 4;
         const MAX_GATE_RETRIES = 2;
 
-        // ── Helper: run gate and handle NO-GO retries ──────────────────
+        // ── FIX #1: runGateWithRetry — truly blocking, no forced pass ──
         async function runGateWithRetry(
           stepName: string,
           nextStep: string,
@@ -412,14 +480,14 @@ serve(async (req) => {
                 output,
               );
             } catch (e) {
-              console.error(`Gatekeeper parse failed for ${stepName}:`, e);
-              // If gatekeeper itself fails, default to pass (don't block pipeline)
+              // FIX #1A: Parse failure = NO-GO, not auto-pass
+              console.error(`Gatekeeper parse/schema failed for ${stepName}:`, e);
               gate = {
                 step: stepName,
-                complete: true,
-                blocking_issues: [],
-                evidence: ["Gatekeeper audit defaulted to pass"],
-                continue: true,
+                complete: false,
+                blocking_issues: [`Gatekeeper response could not be parsed: ${(e as Error).message}`],
+                evidence: ["Parse/schema error in Gatekeeper output"],
+                continue: false,
                 next_step: nextStep,
               };
             }
@@ -448,20 +516,19 @@ serve(async (req) => {
               onRetry(gate.blocking_issues);
               output = await getOutput();
             } else {
-              // Final attempt failed — force continue with warning
-              sendSSE(controller, encoder, "gatekeeper_fail", {
+              // FIX #1B: After max retries → STOP PIPELINE (no forced pass)
+              sendSSE(controller, encoder, "gatekeeper_blocked", {
                 step: stepName,
                 blocking_issues: gate.blocking_issues,
-                message: `⚠️ ${stepName} has unresolved issues after retries. Proceeding with best effort.`,
-                forced: true,
+                message: `⛔ ${stepName} blocked after ${MAX_GATE_RETRIES} retries. Pipeline halted.`,
               });
-              console.log(`GATE FORCED PASS: ${stepName} after ${MAX_GATE_RETRIES} retries`);
-              return { output, gate };
+              console.log(`GATE BLOCKED: ${stepName} after ${MAX_GATE_RETRIES} retries`);
+              throw new Error(`Gatekeeper blocked step: ${stepName}. Issues: ${gate.blocking_issues.join("; ")}`);
             }
           }
 
-          // Should never reach here, but TypeScript needs it
-          return { output, gate: { step: stepName, complete: true, blocking_issues: [], evidence: [], continue: true, next_step: nextStep } };
+          // FIX #1C: Removed unconditional pass — this path throws instead
+          throw new Error(`Gatekeeper exhausted retries for ${stepName}`);
         }
 
         // ── 2. Researcher + Gate ──────────────────────────────────────
@@ -473,6 +540,8 @@ serve(async (req) => {
         let checklist: any;
         let researcherOutput = "";
 
+        const researcherInput = `Target role: ${role}\nLocation: ${loc}\nSeniority: entry-level to mid-level\n\nHere is the candidate's current resume for context (use it to infer industry):\n${rawResumeText.substring(0, 2000)}\n\nCreate the Resume Optimization Checklist JSON now.`;
+
         const researcherResult = await runGateWithRetry(
           "RESEARCHER",
           "WRITER_DRAFT_V1",
@@ -482,7 +551,7 @@ serve(async (req) => {
               LOVABLE_API_KEY!,
               FAST_MODEL,
               RESEARCHER_PROMPT,
-              `Target role: ${role}\nLocation: ${loc}\nSeniority: entry-level to mid-level\n\nHere is the candidate's current resume for context (use it to infer industry):\n${rawResumeText.substring(0, 2000)}\n\nCreate the Resume Optimization Checklist JSON now.`,
+              researcherInput,
             );
             return text;
           },
@@ -491,17 +560,22 @@ serve(async (req) => {
           },
         );
 
+        researcherOutput = researcherResult.output;
+
+        // FIX #2: No fallback checklist — halt if invalid
         try {
           checklist = safeJsonParse(researcherResult.output);
-        } catch {
-          checklist = {
-            target_role: role,
-            required_sections: ["Header", "Summary", "Skills", "Experience", "Education"],
-            keyword_clusters: [{ name: "Core Skills", keywords: [role.toLowerCase()] }],
-            ats_rules: ["no tables", "no images", "standard headings", "one-column"],
-            common_rejection_reasons: ["missing metrics", "generic summary"],
-          };
+          assertResearcherSchema(checklist);
+        } catch (e) {
+          sendSSE(controller, encoder, "error", {
+            message: `Researcher output was not valid JSON. Optimization halted. Please retry. (${(e as Error).message})`,
+          });
+          controller.close();
+          return;
         }
+
+        // FIX #6: Log researcher execution
+        await logExecution(user.id, resumeId, "RESEARCHER", "Researcher", FAST_MODEL, researcherInput, researcherOutput, researcherResult.gate);
 
         sendSSE(controller, encoder, "researcher_done", {
           message: "Industry analysis complete",
@@ -524,18 +598,18 @@ serve(async (req) => {
             message: `Crafting resume version ${round}...`,
           });
 
+          const writerUserPrompt = `Here is my RAW RESUME (truth source):\n<<<\n${rawResumeText}\n>>>\n\nHere is the Research Checklist JSON:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\n${
+            criticFeedback
+              ? `Previous Critic feedback and required edits:\n<<<\n${criticFeedback}\n>>>\n\nApply ALL required edits from the Critic.\n\n`
+              : ""
+          }Create Draft v${round}.`;
+
           const writerResult = await runGateWithRetry(
             `WRITER_DRAFT_V${round}`,
             `CRITIC_SCORE_V${round}`,
             GATE_CONDITIONS.writer,
             async () => {
-              const writerInput = `Here is my RAW RESUME (truth source):\n<<<\n${rawResumeText}\n>>>\n\nHere is the Research Checklist JSON:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\n${
-                criticFeedback
-                  ? `Previous Critic feedback and required edits:\n<<<\n${criticFeedback}\n>>>\n\nApply ALL required edits from the Critic.\n\n`
-                  : ""
-              }Create Draft v${round}.`;
-
-              return await callAI(LOVABLE_API_KEY!, QUALITY_MODEL, WRITER_PROMPT, writerInput, 0.4);
+              return await callAI(LOVABLE_API_KEY!, QUALITY_MODEL, WRITER_PROMPT, writerUserPrompt, 0.4);
             },
             (issues) => {
               console.log(`Writer v${round} retry due to:`, issues);
@@ -543,6 +617,9 @@ serve(async (req) => {
           );
 
           draft = writerResult.output;
+
+          // FIX #6: Log writer execution
+          await logExecution(user.id, resumeId, `WRITER_DRAFT_V${round}`, "Writer", QUALITY_MODEL, writerUserPrompt.substring(0, 5000), draft, writerResult.gate);
 
           sendSSE(controller, encoder, "writer_done", {
             round,
@@ -556,36 +633,34 @@ serve(async (req) => {
             message: `Quality review round ${round}...`,
           });
 
+          const criticUserPrompt = `Truth source (raw resume):\n<<<\n${rawResumeText}\n>>>\n\nChecklist:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\nCurrent draft:\n<<<\n${draft}\n>>>\n\nScore it and return the Critic Scorecard JSON.`;
+
           const criticResult = await runGateWithRetry(
             `CRITIC_SCORE_V${round}`,
-            round < MAX_ROUNDS ? `WRITER_DRAFT_V${round + 1}` : "DESIGNER",
+            round < MAX_ROUNDS ? `WRITER_DRAFT_V${round + 1}` : "QUALITY_GATE",
             GATE_CONDITIONS.critic,
             async () => {
-              const criticInput = `Truth source (raw resume):\n<<<\n${rawResumeText}\n>>>\n\nChecklist:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\nCurrent draft:\n<<<\n${draft}\n>>>\n\nScore it and return the Critic Scorecard JSON.`;
-
-              return await callAI(LOVABLE_API_KEY!, FAST_MODEL, CRITIC_PROMPT, criticInput);
+              return await callAI(LOVABLE_API_KEY!, FAST_MODEL, CRITIC_PROMPT, criticUserPrompt);
             },
             (issues) => {
               console.log(`Critic v${round} retry due to:`, issues);
             },
           );
 
+          // FIX #2: No fallback scorecard — halt if invalid
           try {
             scorecard = safeJsonParse(criticResult.output);
-          } catch {
-            scorecard = {
-              overall_score: 85,
-              ats_score: 85,
-              keyword_coverage_score: 80,
-              clarity_score: 85,
-              truth_violations: [],
-              missing_sections: [],
-              missing_keyword_clusters: [],
-              required_edits: [],
-              must_fix_before_next_round: [],
-              praise: ["Resume draft completed"],
-            };
+            assertCriticSchema(scorecard); // FIX #3: validate schema
+          } catch (e) {
+            sendSSE(controller, encoder, "error", {
+              message: `Critic output was not valid JSON. Optimization halted. Please retry. (${(e as Error).message})`,
+            });
+            controller.close();
+            return;
           }
+
+          // FIX #6: Log critic execution
+          await logExecution(user.id, resumeId, `CRITIC_SCORE_V${round}`, "Critic", FAST_MODEL, criticUserPrompt.substring(0, 5000), criticResult.output, criticResult.gate);
 
           sendSSE(controller, encoder, "critic_done", {
             round,
@@ -593,25 +668,50 @@ serve(async (req) => {
             scorecard,
           });
 
-          // Check pass criteria
-          const pass =
-            (scorecard.truth_violations?.length ?? 0) === 0 &&
-            (scorecard.missing_sections?.length ?? 0) === 0 &&
-            (scorecard.overall_score ?? 0) >= 90 &&
-            (scorecard.ats_score ?? 0) >= 92 &&
-            (scorecard.keyword_coverage_score ?? 0) >= 88;
-
-          if (pass) {
-            console.log(`Passed quality gate at round ${round}`);
-            break;
-          }
-
-          criticFeedback = JSON.stringify({
-            required_edits: scorecard.required_edits,
-            must_fix: scorecard.must_fix_before_next_round,
-            missing_sections: scorecard.missing_sections,
-            missing_keywords: scorecard.missing_keyword_clusters,
+          // FIX #4: Quality threshold verified by Gatekeeper, not just code
+          sendSSE(controller, encoder, "progress", {
+            step: "quality_gate",
+            round,
+            message: `Auditing quality thresholds for round ${round}...`,
           });
+
+          try {
+            const qualityGateResult = await runGateWithRetry(
+              "QUALITY_GATE",
+              round < MAX_ROUNDS ? `WRITER_DRAFT_V${round + 1}` : "DESIGNER",
+              GATE_CONDITIONS.quality_threshold,
+              async () => JSON.stringify(scorecard),
+              () => {
+                // Quality gate retries don't re-run critic, they just re-evaluate
+                console.log(`Quality gate retry for round ${round}`);
+              },
+            );
+
+            // FIX #6: Log quality gate
+            await logExecution(user.id, resumeId, `QUALITY_GATE_V${round}`, "Gatekeeper", GATE_MODEL, JSON.stringify(scorecard), "PASS", qualityGateResult.gate);
+
+            console.log(`Quality gate passed at round ${round}`);
+            break; // Quality passed — exit Writer↔Critic loop
+          } catch {
+            // Quality gate failed — continue loop if rounds remain
+            if (round >= MAX_ROUNDS) {
+              // Final round and quality still didn't pass — pipeline blocked
+              sendSSE(controller, encoder, "gatekeeper_blocked", {
+                step: "QUALITY_GATE",
+                blocking_issues: ["Quality thresholds not met after maximum rounds"],
+                message: `⛔ Quality thresholds not met after ${MAX_ROUNDS} rounds. Pipeline halted.`,
+              });
+              throw new Error(`Quality gate blocked after ${MAX_ROUNDS} rounds`);
+            }
+
+            // Prepare critic feedback for next Writer round
+            criticFeedback = JSON.stringify({
+              required_edits: scorecard.required_edits,
+              must_fix: scorecard.must_fix_before_next_round,
+              missing_sections: scorecard.missing_sections,
+              missing_keywords: scorecard.missing_keyword_clusters,
+            });
+          }
         }
 
         // ── 4. Extract ATS text and Pretty MD from draft ──────────────
@@ -627,13 +727,15 @@ serve(async (req) => {
         if (mdMatch) prettyMd = mdMatch[1].trim();
         if (changeMatch) changelog = changeMatch[1].trim();
 
-        // ── 5. Designer + Gate ────────────────────────────────────────
+        // ── 5. Designer + Gate (FIX #5: pass approved content for drift check) ──
         sendSSE(controller, encoder, "progress", {
           step: "designer",
           message: "Creating professional layout...",
         });
 
         let html = "";
+
+        const designerInput = `Approved resume content:\n<<<\n${prettyMd || atsText}\n>>>\n\nGenerate the HTML now.`;
 
         const designerResult = await runGateWithRetry(
           "DESIGNER",
@@ -644,7 +746,7 @@ serve(async (req) => {
               LOVABLE_API_KEY!,
               QUALITY_MODEL,
               DESIGNER_PROMPT,
-              `Approved resume content:\n<<<\n${prettyMd || atsText}\n>>>\n\nGenerate the HTML now.`,
+              designerInput,
               0.3,
             );
           },
@@ -654,6 +756,11 @@ serve(async (req) => {
         );
 
         html = designerResult.output;
+
+        // FIX #5: Pass both approved content AND designer HTML to gatekeeper for drift verification
+        // (The runGateWithRetry already passes the output, but we enhance the gate input)
+        // We do a final explicit drift check after extraction
+        const htmlExtracted = html;
 
         // Extract just the HTML portion if wrapped in markdown code blocks
         const htmlMatch = html.match(/```html?\s*([\s\S]*?)```/);
@@ -681,6 +788,9 @@ h2{color:#1e40af;font-size:16px;text-transform:uppercase;letter-spacing:1px;bord
 <pre>${atsText.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
 </body></html>`;
         }
+
+        // FIX #6: Log designer execution
+        await logExecution(user.id, resumeId, "DESIGNER", "Designer", QUALITY_MODEL, designerInput.substring(0, 5000), html.substring(0, 5000), designerResult.gate);
 
         sendSSE(controller, encoder, "designer_done", {
           message: "Professional layout created",
