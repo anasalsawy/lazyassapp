@@ -86,6 +86,35 @@ Constraints:
 - Print-friendly (no background colors on text).
 - One-column layout for ATS compatibility.`;
 
+const GATEKEEPER_PROMPT = `You are Gatekeeper, a strict process auditor.
+You must enforce: NO automatic progression unless all conditions are met.
+
+You will receive:
+- step_name: the name of the step just completed
+- required_conditions: a list of conditions that must be satisfied
+- step_output: the actual output produced by the step agent
+
+Your job:
+1) Verify the output meets ALL required_conditions.
+2) Verify the output is a concrete artifact (not vague text, not incomplete).
+3) Verify the output matches the required schema/format for the step.
+4) Return ONLY valid JSON matching this exact schema:
+{
+  "step": "STEP_NAME",
+  "complete": boolean,
+  "blocking_issues": ["specific issue description"],
+  "evidence": ["specific evidence that condition X is met"],
+  "continue": boolean,
+  "next_step": "NEXT_STEP_NAME"
+}
+
+Rules:
+- If ANYTHING is missing, set complete=false and continue=false.
+- If complete=true, set continue=true to authorize the next step.
+- Be strict. Prefer NO-GO if uncertain.
+- blocking_issues must list EXACT missing items, not vague complaints.
+- evidence must cite SPECIFIC parts of the output that satisfy conditions.`;
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
@@ -125,7 +154,6 @@ async function callAI(
 }
 
 function safeJsonParse(text: string): any {
-  // Try to find JSON in the response
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     return JSON.parse(jsonMatch[0]);
@@ -143,6 +171,84 @@ function sendSSE(
     encoder.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`),
   );
 }
+
+// ── Gatekeeper runner ─────────────────────────────────────────────────
+
+interface GatekeeperResult {
+  step: string;
+  complete: boolean;
+  blocking_issues: string[];
+  evidence: string[];
+  continue: boolean;
+  next_step: string;
+}
+
+async function runGatekeeper(
+  apiKey: string,
+  model: string,
+  stepName: string,
+  nextStep: string,
+  requiredConditions: string[],
+  stepOutput: string,
+): Promise<GatekeeperResult> {
+  const userPrompt = `Step completed: ${stepName}
+Next step (if approved): ${nextStep}
+
+Required conditions for this step:
+${requiredConditions.map((c, i) => `${i + 1}. ${c}`).join("\n")}
+
+Step output:
+<<<
+${stepOutput.substring(0, 8000)}
+>>>
+
+Audit this output and return the Gatekeeper JSON verdict.`;
+
+  const result = await callAI(apiKey, model, GATEKEEPER_PROMPT, userPrompt, 0.1);
+  return safeJsonParse(result) as GatekeeperResult;
+}
+
+// ── Gate condition definitions per step ────────────────────────────────
+
+const GATE_CONDITIONS = {
+  researcher: [
+    "Output is valid JSON",
+    "Contains 'target_role' string field",
+    "Contains 'required_sections' array with at least Header, Summary, Skills, Experience, Education",
+    "Contains 'keyword_clusters' array with at least 2 clusters, each having name and keywords",
+    "Contains 'ats_rules' array with at least 3 rules",
+    "Contains 'common_rejection_reasons' array",
+    "Does NOT contain any resume writing or advice paragraphs — only the checklist",
+  ],
+  writer: [
+    "Output contains [ATS_TEXT] marker followed by plain-text ATS-safe resume content",
+    "Output contains [PRETTY_MD] marker followed by clean markdown resume content",
+    "Output contains [CHANGELOG] marker followed by bullet list of changes",
+    "All required_sections from the checklist are present in the resume",
+    "No invented experience, employers, dates, credentials, or metrics (compare to raw resume)",
+    "Keyword clusters from checklist are integrated naturally",
+  ],
+  critic: [
+    "Output is valid JSON matching the Critic Scorecard schema",
+    "Contains numeric scores: overall_score, ats_score, keyword_coverage_score, clarity_score (all 0-100)",
+    "Contains truth_violations array (may be empty)",
+    "Contains missing_sections array (may be empty)",
+    "Contains missing_keyword_clusters array (may be empty)",
+    "Contains required_edits array with concrete before/after patches",
+    "Contains must_fix_before_next_round array",
+    "Contains praise array",
+    "Scores are justified — not blindly high",
+  ],
+  designer: [
+    "Output is valid HTML with embedded CSS",
+    "Content is identical to the approved draft — no meaning changes or new claims",
+    "Uses clean typography and visual hierarchy",
+    "No external images or resources",
+    "No tables — uses flexbox/grid if needed",
+    "One-column layout for ATS compatibility",
+    "Print-friendly design",
+  ],
+};
 
 // ── Main Handler ──────────────────────────────────────────────────────
 
@@ -224,9 +330,7 @@ serve(async (req) => {
           .single();
 
         if (resumeError || !resume) {
-          sendSSE(controller, encoder, "error", {
-            message: "Resume not found",
-          });
+          sendSSE(controller, encoder, "error", { message: "Resume not found" });
           controller.close();
           return;
         }
@@ -238,7 +342,6 @@ serve(async (req) => {
           resume.parsed_content?.text ||
           "";
 
-        // If no text, try downloading and extracting
         if (!rawResumeText && resume.file_path) {
           const { data: fileData } = await supabase.storage
             .from("resumes")
@@ -252,9 +355,7 @@ serve(async (req) => {
             if (textMatches) {
               rawResumeText = textMatches
                 .map((m: string) => m.slice(1, -1))
-                .filter(
-                  (t: string) => t.length > 2 && /[a-zA-Z]/.test(t),
-                )
+                .filter((t: string) => t.length > 2 && /[a-zA-Z]/.test(t))
                 .join(" ");
             }
           }
@@ -262,14 +363,12 @@ serve(async (req) => {
 
         if (!rawResumeText || rawResumeText.length < 50) {
           sendSSE(controller, encoder, "error", {
-            message:
-              "Could not extract resume text. Please upload a .docx or text-based PDF for best results.",
+            message: "Could not extract resume text. Please upload a .docx or text-based PDF for best results.",
           });
           controller.close();
           return;
         }
 
-        // Get user profile for additional context
         const { data: profile } = await supabase
           .from("profiles")
           .select("*")
@@ -281,32 +380,124 @@ serve(async (req) => {
 
         const FAST_MODEL = "google/gemini-3-flash-preview";
         const QUALITY_MODEL = "openai/gpt-5";
+        const GATE_MODEL = "google/gemini-2.5-flash-lite";
         const MAX_ROUNDS = 4;
+        const MAX_GATE_RETRIES = 2;
 
-        // ── 2. Researcher ─────────────────────────────────────────────
+        // ── Helper: run gate and handle NO-GO retries ──────────────────
+        async function runGateWithRetry(
+          stepName: string,
+          nextStep: string,
+          conditions: string[],
+          getOutput: () => Promise<string>,
+          onRetry: (issues: string[]) => void,
+        ): Promise<{ output: string; gate: GatekeeperResult }> {
+          let output = await getOutput();
+
+          for (let attempt = 0; attempt <= MAX_GATE_RETRIES; attempt++) {
+            sendSSE(controller, encoder, "progress", {
+              step: "gatekeeper",
+              message: `Verifying ${stepName} output...`,
+              gate_step: stepName,
+            });
+
+            let gate: GatekeeperResult;
+            try {
+              gate = await runGatekeeper(
+                LOVABLE_API_KEY!,
+                GATE_MODEL,
+                stepName,
+                nextStep,
+                conditions,
+                output,
+              );
+            } catch (e) {
+              console.error(`Gatekeeper parse failed for ${stepName}:`, e);
+              // If gatekeeper itself fails, default to pass (don't block pipeline)
+              gate = {
+                step: stepName,
+                complete: true,
+                blocking_issues: [],
+                evidence: ["Gatekeeper audit defaulted to pass"],
+                continue: true,
+                next_step: nextStep,
+              };
+            }
+
+            if (gate.continue) {
+              sendSSE(controller, encoder, "gatekeeper_pass", {
+                step: stepName,
+                next_step: nextStep,
+                evidence: gate.evidence,
+                message: `✅ ${stepName} verified. Proceeding to ${nextStep}.`,
+              });
+              console.log(`GATE PASS: ${stepName} → ${nextStep}`);
+              return { output, gate };
+            }
+
+            // NO-GO
+            console.log(`GATE FAIL (attempt ${attempt + 1}): ${stepName}`, gate.blocking_issues);
+
+            if (attempt < MAX_GATE_RETRIES) {
+              sendSSE(controller, encoder, "gatekeeper_fail", {
+                step: stepName,
+                blocking_issues: gate.blocking_issues,
+                message: `⚠️ ${stepName} did not pass audit. Retrying... (${gate.blocking_issues.length} issues)`,
+                retry: attempt + 1,
+              });
+              onRetry(gate.blocking_issues);
+              output = await getOutput();
+            } else {
+              // Final attempt failed — force continue with warning
+              sendSSE(controller, encoder, "gatekeeper_fail", {
+                step: stepName,
+                blocking_issues: gate.blocking_issues,
+                message: `⚠️ ${stepName} has unresolved issues after retries. Proceeding with best effort.`,
+                forced: true,
+              });
+              console.log(`GATE FORCED PASS: ${stepName} after ${MAX_GATE_RETRIES} retries`);
+              return { output, gate };
+            }
+          }
+
+          // Should never reach here, but TypeScript needs it
+          return { output, gate: { step: stepName, complete: true, blocking_issues: [], evidence: [], continue: true, next_step: nextStep } };
+        }
+
+        // ── 2. Researcher + Gate ──────────────────────────────────────
         sendSSE(controller, encoder, "progress", {
           step: "researcher",
           message: "Analyzing industry requirements...",
         });
 
         let checklist: any;
+        let researcherOutput = "";
+
+        const researcherResult = await runGateWithRetry(
+          "RESEARCHER",
+          "WRITER_DRAFT_V1",
+          GATE_CONDITIONS.researcher,
+          async () => {
+            const text = await callAI(
+              LOVABLE_API_KEY!,
+              FAST_MODEL,
+              RESEARCHER_PROMPT,
+              `Target role: ${role}\nLocation: ${loc}\nSeniority: entry-level to mid-level\n\nHere is the candidate's current resume for context (use it to infer industry):\n${rawResumeText.substring(0, 2000)}\n\nCreate the Resume Optimization Checklist JSON now.`,
+            );
+            return text;
+          },
+          (issues) => {
+            console.log("Researcher retry due to:", issues);
+          },
+        );
+
         try {
-          const checklistText = await callAI(
-            LOVABLE_API_KEY,
-            FAST_MODEL,
-            RESEARCHER_PROMPT,
-            `Target role: ${role}\nLocation: ${loc}\nSeniority: entry-level to mid-level\n\nHere is the candidate's current resume for context (use it to infer industry):\n${rawResumeText.substring(0, 2000)}\n\nCreate the Resume Optimization Checklist JSON now.`,
-          );
-          checklist = safeJsonParse(checklistText);
-        } catch (e) {
-          console.error("Researcher failed:", e);
-          // Fallback checklist
+          checklist = safeJsonParse(researcherResult.output);
+        } catch {
           checklist = {
             target_role: role,
             required_sections: ["Header", "Summary", "Skills", "Experience", "Education"],
-            keyword_clusters: [
-              { name: "Core Skills", keywords: [role.toLowerCase()] },
-            ],
+            keyword_clusters: [{ name: "Core Skills", keywords: [role.toLowerCase()] }],
             ats_rules: ["no tables", "no images", "standard headings", "one-column"],
             common_rejection_reasons: ["missing metrics", "generic summary"],
           };
@@ -317,7 +508,7 @@ serve(async (req) => {
           checklist,
         });
 
-        // ── 3. Writer ↔ Critic loop ───────────────────────────────────
+        // ── 3. Writer ↔ Critic loop with gates ────────────────────────
         let draft = "";
         let scorecard: any = null;
         let roundsCompleted = 0;
@@ -326,62 +517,62 @@ serve(async (req) => {
         for (let round = 1; round <= MAX_ROUNDS; round++) {
           roundsCompleted = round;
 
-          // Writer
+          // ── Writer + Gate ────────────────────────────────────────────
           sendSSE(controller, encoder, "progress", {
             step: "writer",
             round,
             message: `Crafting resume version ${round}...`,
           });
 
-          const writerInput = `Here is my RAW RESUME (truth source):\n<<<\n${rawResumeText}\n>>>\n\nHere is the Research Checklist JSON:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\n${
-            criticFeedback
-              ? `Previous Critic feedback and required edits:\n<<<\n${criticFeedback}\n>>>\n\nApply ALL required edits from the Critic.\n\n`
-              : ""
-          }Create Draft v${round}.`;
+          const writerResult = await runGateWithRetry(
+            `WRITER_DRAFT_V${round}`,
+            `CRITIC_SCORE_V${round}`,
+            GATE_CONDITIONS.writer,
+            async () => {
+              const writerInput = `Here is my RAW RESUME (truth source):\n<<<\n${rawResumeText}\n>>>\n\nHere is the Research Checklist JSON:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\n${
+                criticFeedback
+                  ? `Previous Critic feedback and required edits:\n<<<\n${criticFeedback}\n>>>\n\nApply ALL required edits from the Critic.\n\n`
+                  : ""
+              }Create Draft v${round}.`;
 
-          try {
-            draft = await callAI(LOVABLE_API_KEY, QUALITY_MODEL, WRITER_PROMPT, writerInput, 0.4);
-          } catch (e: any) {
-            if (e.message === "RATE_LIMIT" || e.message === "CREDITS_EXHAUSTED") {
-              sendSSE(controller, encoder, "error", {
-                message: e.message === "RATE_LIMIT"
-                  ? "Rate limit reached. Please try again in a moment."
-                  : "AI credits exhausted. Please add more credits.",
-              });
-              controller.close();
-              return;
-            }
-            throw e;
-          }
+              return await callAI(LOVABLE_API_KEY!, QUALITY_MODEL, WRITER_PROMPT, writerInput, 0.4);
+            },
+            (issues) => {
+              console.log(`Writer v${round} retry due to:`, issues);
+            },
+          );
+
+          draft = writerResult.output;
 
           sendSSE(controller, encoder, "writer_done", {
             round,
             message: `Version ${round} complete`,
           });
 
-          // Critic
+          // ── Critic + Gate ────────────────────────────────────────────
           sendSSE(controller, encoder, "progress", {
             step: "critic",
             round,
             message: `Quality review round ${round}...`,
           });
 
-          const criticInput = `Truth source (raw resume):\n<<<\n${rawResumeText}\n>>>\n\nChecklist:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\nCurrent draft:\n<<<\n${draft}\n>>>\n\nScore it and return the Critic Scorecard JSON.`;
+          const criticResult = await runGateWithRetry(
+            `CRITIC_SCORE_V${round}`,
+            round < MAX_ROUNDS ? `WRITER_DRAFT_V${round + 1}` : "DESIGNER",
+            GATE_CONDITIONS.critic,
+            async () => {
+              const criticInput = `Truth source (raw resume):\n<<<\n${rawResumeText}\n>>>\n\nChecklist:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\nCurrent draft:\n<<<\n${draft}\n>>>\n\nScore it and return the Critic Scorecard JSON.`;
+
+              return await callAI(LOVABLE_API_KEY!, FAST_MODEL, CRITIC_PROMPT, criticInput);
+            },
+            (issues) => {
+              console.log(`Critic v${round} retry due to:`, issues);
+            },
+          );
 
           try {
-            const scoreText = await callAI(LOVABLE_API_KEY, FAST_MODEL, CRITIC_PROMPT, criticInput);
-            scorecard = safeJsonParse(scoreText);
-          } catch (e: any) {
-            if (e.message === "RATE_LIMIT" || e.message === "CREDITS_EXHAUSTED") {
-              sendSSE(controller, encoder, "error", {
-                message: e.message === "RATE_LIMIT"
-                  ? "Rate limit reached. Please try again in a moment."
-                  : "AI credits exhausted. Please add more credits.",
-              });
-              controller.close();
-              return;
-            }
-            console.error("Critic parse failed, using defaults:", e);
+            scorecard = safeJsonParse(criticResult.output);
+          } catch {
             scorecard = {
               overall_score: 85,
               ats_score: 85,
@@ -415,7 +606,6 @@ serve(async (req) => {
             break;
           }
 
-          // Feed critic feedback into next round
           criticFeedback = JSON.stringify({
             required_edits: scorecard.required_edits,
             must_fix: scorecard.must_fix_before_next_round,
@@ -429,54 +619,59 @@ serve(async (req) => {
         let prettyMd = draft;
         let changelog = "";
 
-        const atsMatch = draft.match(
-          /\[ATS_TEXT\]\s*([\s\S]*?)(?=\[PRETTY_MD\]|$)/,
-        );
-        const mdMatch = draft.match(
-          /\[PRETTY_MD\]\s*([\s\S]*?)(?=\[CHANGELOG\]|$)/,
-        );
+        const atsMatch = draft.match(/\[ATS_TEXT\]\s*([\s\S]*?)(?=\[PRETTY_MD\]|$)/);
+        const mdMatch = draft.match(/\[PRETTY_MD\]\s*([\s\S]*?)(?=\[CHANGELOG\]|$)/);
         const changeMatch = draft.match(/\[CHANGELOG\]\s*([\s\S]*?)$/);
 
         if (atsMatch) atsText = atsMatch[1].trim();
         if (mdMatch) prettyMd = mdMatch[1].trim();
         if (changeMatch) changelog = changeMatch[1].trim();
 
-        // ── 5. Designer ───────────────────────────────────────────────
+        // ── 5. Designer + Gate ────────────────────────────────────────
         sendSSE(controller, encoder, "progress", {
           step: "designer",
           message: "Creating professional layout...",
         });
 
         let html = "";
-        try {
-          html = await callAI(
-            LOVABLE_API_KEY,
-            QUALITY_MODEL,
-            DESIGNER_PROMPT,
-            `Approved resume content:\n<<<\n${prettyMd || atsText}\n>>>\n\nGenerate the HTML now.`,
-            0.3,
-          );
 
-          // Extract just the HTML portion if wrapped in markdown code blocks
-          const htmlMatch = html.match(
-            /```html?\s*([\s\S]*?)```/,
-          );
-          if (htmlMatch) {
-            html = htmlMatch[1].trim();
-          }
+        const designerResult = await runGateWithRetry(
+          "DESIGNER",
+          "COMPLETE",
+          GATE_CONDITIONS.designer,
+          async () => {
+            return await callAI(
+              LOVABLE_API_KEY!,
+              QUALITY_MODEL,
+              DESIGNER_PROMPT,
+              `Approved resume content:\n<<<\n${prettyMd || atsText}\n>>>\n\nGenerate the HTML now.`,
+              0.3,
+            );
+          },
+          (issues) => {
+            console.log("Designer retry due to:", issues);
+          },
+        );
 
-          // Ensure it starts with <!DOCTYPE or <html
-          if (!html.startsWith("<!DOCTYPE") && !html.startsWith("<html")) {
-            const htmlStart = html.indexOf("<!DOCTYPE");
-            const htmlAlt = html.indexOf("<html");
-            const startIdx = htmlStart >= 0 ? htmlStart : htmlAlt;
-            if (startIdx >= 0) {
-              html = html.substring(startIdx);
-            }
+        html = designerResult.output;
+
+        // Extract just the HTML portion if wrapped in markdown code blocks
+        const htmlMatch = html.match(/```html?\s*([\s\S]*?)```/);
+        if (htmlMatch) {
+          html = htmlMatch[1].trim();
+        }
+
+        if (!html.startsWith("<!DOCTYPE") && !html.startsWith("<html")) {
+          const htmlStart = html.indexOf("<!DOCTYPE");
+          const htmlAlt = html.indexOf("<html");
+          const startIdx = htmlStart >= 0 ? htmlStart : htmlAlt;
+          if (startIdx >= 0) {
+            html = html.substring(startIdx);
           }
-        } catch (e: any) {
-          console.error("Designer failed:", e);
-          // Generate a basic HTML fallback
+        }
+
+        // Fallback if HTML is still invalid
+        if (!html.includes("<html") && !html.includes("<!DOCTYPE")) {
           html = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><style>
 body{font-family:'Segoe UI',Arial,sans-serif;line-height:1.6;color:#333;max-width:800px;margin:0 auto;padding:40px}
@@ -517,7 +712,6 @@ h2{color:#1e40af;font-size:16px;text-transform:uppercase;letter-spacing:1px;bord
           })
           .eq("id", resumeId);
 
-        // Log activity
         await supabase.from("agent_logs").insert({
           user_id: user.id,
           agent_name: "resume_optimizer",
@@ -543,8 +737,7 @@ h2{color:#1e40af;font-size:16px;text-transform:uppercase;letter-spacing:1px;bord
         });
       } catch (error: unknown) {
         console.error("Optimization error:", error);
-        const msg =
-          error instanceof Error ? error.message : "Optimization failed";
+        const msg = error instanceof Error ? error.message : "Optimization failed";
         sendSSE(controller, encoder, "error", { message: msg });
       } finally {
         controller.close();

@@ -1,7 +1,11 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import type { OptimizationProgress as ProgressEvent, Scorecard } from "@/hooks/useResumeOptimizer";
+import type {
+  OptimizationProgress as ProgressEvent,
+  Scorecard,
+  GatekeeperVerdict,
+} from "@/hooks/useResumeOptimizer";
 import {
   Search,
   PenTool,
@@ -10,6 +14,8 @@ import {
   CheckCircle2,
   Loader2,
   X,
+  ShieldAlert,
+  ShieldOff,
 } from "lucide-react";
 
 interface OptimizationProgressProps {
@@ -17,6 +23,7 @@ interface OptimizationProgressProps {
   currentStep: string;
   currentRound: number;
   latestScorecard: Scorecard | null;
+  gatekeeperVerdicts: GatekeeperVerdict[];
   onCancel: () => void;
 }
 
@@ -33,6 +40,9 @@ const STEP_CONFIG: Record<
   critic_done: { icon: ShieldCheck, label: "Quality Review", color: "text-success" },
   designer: { icon: Palette, label: "Layout Design", color: "text-pink-500" },
   designer_done: { icon: Palette, label: "Layout Design", color: "text-success" },
+  gatekeeper: { icon: ShieldAlert, label: "Gatekeeper Audit", color: "text-orange-500" },
+  gatekeeper_pass: { icon: ShieldAlert, label: "Gatekeeper Audit", color: "text-success" },
+  gatekeeper_fail: { icon: ShieldOff, label: "Gatekeeper Audit", color: "text-destructive" },
   complete: { icon: CheckCircle2, label: "Complete", color: "text-success" },
 };
 
@@ -43,14 +53,14 @@ export function OptimizationProgress({
   currentStep,
   currentRound,
   latestScorecard,
+  gatekeeperVerdicts,
   onCancel,
 }: OptimizationProgressProps) {
   const getStepStatus = (step: string) => {
-    const baseStep = currentStep.replace("_done", "");
+    const baseStep = currentStep.replace("_done", "").replace("gatekeeper_pass", "gatekeeper").replace("gatekeeper_fail", "gatekeeper");
     const stepIdx = PIPELINE_STEPS.indexOf(step);
     const currentIdx = PIPELINE_STEPS.indexOf(baseStep);
 
-    // Check if step is completed
     const doneKey = `${step}_done`;
     if (
       progress.some((p) => p.step === doneKey) ||
@@ -62,6 +72,32 @@ export function OptimizationProgress({
     if (stepIdx < currentIdx) return "done";
     return "pending";
   };
+
+  // Get the latest gatekeeper verdict for a pipeline step
+  const getLatestGateForStep = (step: string): GatekeeperVerdict | undefined => {
+    const stepUpper = step.toUpperCase();
+    return [...gatekeeperVerdicts].reverse().find(
+      (v) => v.step.startsWith(stepUpper),
+    );
+  };
+
+  // Check if gatekeeper is currently auditing
+  const isGatekeeperActive =
+    currentStep === "gatekeeper" ||
+    currentStep === "gatekeeper_pass" ||
+    currentStep === "gatekeeper_fail" ||
+    progress.some(
+      (p) => p.step === "gatekeeper" && !progress.some(
+        (p2) => p2.step === "gatekeeper_pass" || p2.step === "gatekeeper_fail",
+      ),
+    );
+
+  // Get recent gatekeeper events for display
+  const recentGatekeeperEvents = progress.filter(
+    (p) =>
+      p.step === "gatekeeper_pass" ||
+      p.step === "gatekeeper_fail",
+  ).slice(-3);
 
   return (
     <Card>
@@ -83,71 +119,130 @@ export function OptimizationProgress({
             const Icon = config.icon;
             const isActive = status === "active";
             const isDone = status === "done";
+            const gateVerdict = getLatestGateForStep(step);
 
             return (
-              <div
-                key={step}
-                className={`flex items-center gap-4 p-3 rounded-lg transition-all ${
-                  isActive
-                    ? "bg-primary/5 border border-primary/20"
-                    : isDone
-                    ? "bg-success/5 border border-success/20"
-                    : "opacity-40"
-                }`}
-              >
+              <div key={step}>
+                {/* Main step row */}
                 <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                  className={`flex items-center gap-4 p-3 rounded-lg transition-all ${
                     isActive
-                      ? "bg-primary/10"
+                      ? "bg-primary/5 border border-primary/20"
                       : isDone
-                      ? "bg-success/10"
-                      : "bg-muted"
+                      ? "bg-success/5 border border-success/20"
+                      : "opacity-40"
                   }`}
                 >
-                  {isActive ? (
-                    <Loader2 className={`w-5 h-5 ${config.color} animate-spin`} />
-                  ) : isDone ? (
-                    <CheckCircle2 className="w-5 h-5 text-success" />
-                  ) : (
-                    <Icon className="w-5 h-5 text-muted-foreground" />
-                  )}
-                </div>
-                <div className="flex-1">
-                  <p
-                    className={`font-medium text-sm ${
-                      isActive || isDone ? "" : "text-muted-foreground"
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                      isActive
+                        ? "bg-primary/10"
+                        : isDone
+                        ? "bg-success/10"
+                        : "bg-muted"
                     }`}
                   >
-                    {config.label}
-                    {step === "writer" && currentRound > 0 && isActive
-                      ? ` (v${currentRound})`
-                      : ""}
-                    {step === "critic" && currentRound > 0 && isActive
-                      ? ` (round ${currentRound})`
-                      : ""}
-                  </p>
-                  {isActive && (
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {progress[progress.length - 1]?.message || "Processing..."}
+                    {isActive ? (
+                      <Loader2 className={`w-5 h-5 ${config.color} animate-spin`} />
+                    ) : isDone ? (
+                      <CheckCircle2 className="w-5 h-5 text-success" />
+                    ) : (
+                      <Icon className="w-5 h-5 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p
+                      className={`font-medium text-sm ${
+                        isActive || isDone ? "" : "text-muted-foreground"
+                      }`}
+                    >
+                      {config.label}
+                      {step === "writer" && currentRound > 0 && isActive
+                        ? ` (v${currentRound})`
+                        : ""}
+                      {step === "critic" && currentRound > 0 && isActive
+                        ? ` (round ${currentRound})`
+                        : ""}
                     </p>
+                    {isActive && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {progress[progress.length - 1]?.message || "Processing..."}
+                      </p>
+                    )}
+                  </div>
+                  {isDone && step === "critic" && latestScorecard && (
+                    <Badge
+                      variant="outline"
+                      className={
+                        latestScorecard.overall_score >= 90
+                          ? "text-success border-success"
+                          : "text-amber-600 border-amber-400"
+                      }
+                    >
+                      {latestScorecard.overall_score}%
+                    </Badge>
                   )}
                 </div>
-                {isDone && step === "critic" && latestScorecard && (
-                  <Badge
-                    variant="outline"
-                    className={
-                      latestScorecard.overall_score >= 90
-                        ? "text-success border-success"
-                        : "text-amber-600 border-amber-400"
-                    }
+
+                {/* Gatekeeper sub-row for this step */}
+                {gateVerdict && (isDone || isActive) && (
+                  <div
+                    className={`ml-7 mt-1 flex items-center gap-2 px-3 py-1.5 rounded text-xs ${
+                      gateVerdict.passed
+                        ? "bg-success/5 text-success"
+                        : gateVerdict.forced
+                        ? "bg-amber-500/10 text-amber-600"
+                        : "bg-destructive/5 text-destructive"
+                    }`}
                   >
-                    {latestScorecard.overall_score}%
-                  </Badge>
+                    {gateVerdict.passed ? (
+                      <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
+                    ) : (
+                      <ShieldOff className="w-3.5 h-3.5 flex-shrink-0" />
+                    )}
+                    <span className="font-medium">
+                      {gateVerdict.passed
+                        ? "✅ Gatekeeper: Verified"
+                        : gateVerdict.forced
+                        ? "⚠️ Gatekeeper: Forced pass"
+                        : `❌ Gatekeeper: ${gateVerdict.blocking_issues?.length || 0} issues`}
+                    </span>
+                    {gateVerdict.passed && gateVerdict.next_step && (
+                      <span className="text-muted-foreground ml-1">
+                        → {gateVerdict.next_step.replace(/_/g, " ")}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             );
           })}
         </div>
+
+        {/* Gatekeeper activity indicator */}
+        {(currentStep === "gatekeeper" ||
+          currentStep === "gatekeeper_pass" ||
+          currentStep === "gatekeeper_fail") && (
+          <div className="max-w-md mx-auto mb-4 p-3 rounded-lg bg-orange-500/5 border border-orange-500/20">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center">
+                {currentStep === "gatekeeper" ? (
+                  <Loader2 className="w-4 h-4 text-orange-500 animate-spin" />
+                ) : currentStep === "gatekeeper_pass" ? (
+                  <ShieldAlert className="w-4 h-4 text-success" />
+                ) : (
+                  <ShieldOff className="w-4 h-4 text-destructive" />
+                )}
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium">Process Auditor</p>
+                <p className="text-xs text-muted-foreground">
+                  {progress[progress.length - 1]?.message || "Verifying step output..."}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Live score preview */}
         {latestScorecard && (
@@ -155,6 +250,38 @@ export function OptimizationProgress({
             <ScorePill label="ATS" score={latestScorecard.ats_score} />
             <ScorePill label="Keywords" score={latestScorecard.keyword_coverage_score} />
             <ScorePill label="Clarity" score={latestScorecard.clarity_score} />
+          </div>
+        )}
+
+        {/* Gate audit trail */}
+        {gatekeeperVerdicts.length > 0 && (
+          <div className="max-w-md mx-auto mb-6">
+            <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+              Audit Trail ({gatekeeperVerdicts.length} gates checked)
+            </p>
+            <div className="space-y-1">
+              {gatekeeperVerdicts.slice(-5).map((v, i) => (
+                <div
+                  key={i}
+                  className={`text-xs flex items-center gap-2 px-2 py-1 rounded ${
+                    v.passed
+                      ? "text-success/80"
+                      : v.forced
+                      ? "text-amber-600/80"
+                      : "text-destructive/80"
+                  }`}
+                >
+                  <span className="font-mono">{v.passed ? "✓" : v.forced ? "⚠" : "✗"}</span>
+                  <span>{v.step.replace(/_/g, " ")}</span>
+                  {v.blocking_issues && v.blocking_issues.length > 0 && (
+                    <span className="text-muted-foreground">
+                      — {v.blocking_issues[0].substring(0, 50)}
+                      {v.blocking_issues[0].length > 50 ? "..." : ""}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
