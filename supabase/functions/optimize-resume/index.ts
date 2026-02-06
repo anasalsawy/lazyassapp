@@ -341,7 +341,7 @@ serve(async (req) => {
     });
   }
 
-  const { resumeId, targetRole, location } = body;
+  const { resumeId, targetRole, location, manual_continue } = body;
 
   if (!resumeId) {
     return new Response(JSON.stringify({ error: "resumeId is required" }), {
@@ -737,30 +737,32 @@ serve(async (req) => {
 
         const designerInput = `Approved resume content:\n<<<\n${prettyMd || atsText}\n>>>\n\nGenerate the HTML now.`;
 
+        const approvedContent = prettyMd || atsText;
+
         const designerResult = await runGateWithRetry(
           "DESIGNER",
           "COMPLETE",
           GATE_CONDITIONS.designer,
           async () => {
-            return await callAI(
+            const rawHtml = await callAI(
               LOVABLE_API_KEY!,
               QUALITY_MODEL,
               DESIGNER_PROMPT,
               designerInput,
               0.3,
             );
+            // FIX #5: Return BOTH approved content and HTML so Gatekeeper can verify drift
+            return `APPROVED CONTENT:\n<<<\n${approvedContent}\n>>>\n\nDESIGNER HTML:\n<<<\n${rawHtml}\n>>>`;
           },
           (issues) => {
             console.log("Designer retry due to:", issues);
           },
         );
 
-        html = designerResult.output;
-
-        // FIX #5: Pass both approved content AND designer HTML to gatekeeper for drift verification
-        // (The runGateWithRetry already passes the output, but we enhance the gate input)
-        // We do a final explicit drift check after extraction
-        const htmlExtracted = html;
+        // Extract just the HTML portion from the combined gate output
+        const designerGateOutput = designerResult.output;
+        const htmlPortionMatch = designerGateOutput.match(/DESIGNER HTML:\n<<<\n([\s\S]*?)\n>>>/);
+        html = htmlPortionMatch ? htmlPortionMatch[1] : designerResult.output;
 
         // Extract just the HTML portion if wrapped in markdown code blocks
         const htmlMatch = html.match(/```html?\s*([\s\S]*?)```/);
