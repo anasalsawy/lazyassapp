@@ -80,10 +80,6 @@ const AutoShop = () => {
     confirmLogin,
     syncOrders,
     syncOrderEmails,
-    setProxy,
-    clearProxy,
-    testProxy,
-    providerInfo,
   } = useShopProfile();
 
   const [activeTab, setActiveTab] = useState("shop");
@@ -118,13 +114,6 @@ const AutoShop = () => {
     shipping_address_id: "",
   });
 
-  // Proxy form state
-  const [proxyForm, setProxyForm] = useState({
-    server: "",
-    username: "",
-    password: "",
-  });
-  const [showProxyDialog, setShowProxyDialog] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -359,33 +348,14 @@ const AutoShop = () => {
           <div>
             <div className="flex items-center gap-3 mb-1">
               <h1 className="text-3xl font-bold">🛒 Auto-Shop</h1>
-              {/* Provider Badge - Shows OSS vs Cloud */}
-              <Badge 
-                variant={providerInfo.isOss ? "secondary" : "default"}
-                className="flex items-center gap-1.5"
-              >
-                {providerInfo.isOss ? (
-                  <>
-                    <Zap className="h-3 w-3" />
-                    OSS Mode
-                  </>
-                ) : (
-                  <>
-                    <Globe className="h-3 w-3" />
-                    Cloud Mode
-                  </>
-                )}
+              <Badge variant="default" className="flex items-center gap-1.5">
+                <Zap className="h-3 w-3" />
+                Skyvern
               </Badge>
             </div>
             <p className="text-muted-foreground mt-1">
               AI-powered shopping agent that finds the best deals and places orders for you
             </p>
-            {providerInfo.isOss && (
-              <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                <Shield className="h-3 w-3" />
-                Running locally via OSS runner at {providerInfo.ossRunnerUrl}
-              </p>
-            )}
           </div>
           <Button variant="outline" asChild>
             <Link to="/jobs">
@@ -724,107 +694,25 @@ const AutoShop = () => {
                 </Card>
               )}
 
-              {/* Custom Proxy Configuration */}
+              {/* Skyvern Proxy Info */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Globe className="h-5 w-5" />
-                    Custom Proxy (Optional)
+                    <Shield className="h-5 w-5" />
+                    Residential Proxies
                   </CardTitle>
                   <CardDescription>
-                    Use your own proxy to avoid blocks on shopping sites. Residential proxies work best.
+                    Skyvern uses built-in residential proxies automatically — no configuration needed.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {shopProfile?.proxyServer ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between p-4 border rounded-lg bg-green-500/10 border-green-500">
-                        <div className="flex items-center gap-3">
-                          <Shield className="h-5 w-5 text-green-500" />
-                          <div>
-                            <p className="font-medium">Proxy Active</p>
-                            <p className="text-sm text-muted-foreground">{shopProfile.proxyServer}</p>
-                            {shopProfile.proxyUsername && (
-                              <p className="text-xs text-muted-foreground">Auth: {shopProfile.proxyUsername}</p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={() => testProxy()}
-                          >
-                            <Zap className="h-4 w-4 mr-1" />
-                            Test
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => clearProxy()}>
-                            Clear
-                          </Button>
-                        </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Click "Test" to verify your proxy is working. This will check your IP through the proxy.
-                      </p>
+                  <div className="flex items-center gap-3 p-4 border rounded-lg bg-primary/5 border-primary/20">
+                    <CheckCircle className="h-5 w-5 text-primary" />
+                    <div>
+                      <p className="font-medium">Proxies Active</p>
+                      <p className="text-sm text-muted-foreground">All shopping tasks route through residential IPs to avoid blocks.</p>
                     </div>
-                  ) : (
-                    <Dialog open={showProxyDialog} onOpenChange={setShowProxyDialog}>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" className="w-full">
-                          <Globe className="h-4 w-4 mr-2" />
-                          Configure Proxy
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Configure Custom Proxy</DialogTitle>
-                          <DialogDescription>
-                            Enter your proxy details. Residential proxies from providers like BrightData, Oxylabs, or Smartproxy work best.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            <Label>Proxy Server URL</Label>
-                            <Input
-                              placeholder="http://proxy.example.com:8080"
-                              value={proxyForm.server}
-                              onChange={(e) => setProxyForm({ ...proxyForm, server: e.target.value })}
-                            />
-                            <p className="text-xs text-muted-foreground">Format: http://host:port or socks5://host:port</p>
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Username (optional)</Label>
-                            <Input
-                              placeholder="proxy_user"
-                              value={proxyForm.username}
-                              onChange={(e) => setProxyForm({ ...proxyForm, username: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Password (optional)</Label>
-                            <Input
-                              type="password"
-                              placeholder="proxy_password"
-                              value={proxyForm.password}
-                              onChange={(e) => setProxyForm({ ...proxyForm, password: e.target.value })}
-                            />
-                          </div>
-                          <Button 
-                            onClick={async () => {
-                              if (!proxyForm.server) return;
-                              await setProxy(proxyForm.server, proxyForm.username, proxyForm.password);
-                              setShowProxyDialog(false);
-                              setProxyForm({ server: "", username: "", password: "" });
-                            }} 
-                            className="w-full"
-                            disabled={!proxyForm.server}
-                          >
-                            Save Proxy
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  )}
+                  </div>
                 </CardContent>
               </Card>
 
