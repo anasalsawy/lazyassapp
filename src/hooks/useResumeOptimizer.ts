@@ -33,12 +33,23 @@ export interface OptimizationResult {
   optimized_at: string;
 }
 
+export interface GatekeeperVerdict {
+  step: string;
+  passed: boolean;
+  blocking_issues?: string[];
+  evidence?: string[];
+  next_step?: string;
+  forced?: boolean;
+  retry?: number;
+}
+
 export interface OptimizationProgress {
   step: string;
   round?: number;
   message: string;
   scorecard?: Scorecard;
   checklist?: any;
+  gatekeeper?: GatekeeperVerdict;
 }
 
 type OptimizerStatus = "idle" | "running" | "complete" | "error";
@@ -52,6 +63,7 @@ export function useResumeOptimizer() {
   const [currentRound, setCurrentRound] = useState<number>(0);
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [latestScorecard, setLatestScorecard] = useState<Scorecard | null>(null);
+  const [gatekeeperVerdicts, setGatekeeperVerdicts] = useState<GatekeeperVerdict[]>([]);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -73,6 +85,7 @@ export function useResumeOptimizer() {
       setCurrentRound(0);
       setResult(null);
       setLatestScorecard(null);
+      setGatekeeperVerdicts([]);
       setError(null);
 
       abortRef.current = new AbortController();
@@ -181,6 +194,49 @@ export function useResumeOptimizer() {
                   ]);
                   break;
 
+                case "gatekeeper_pass":
+                  setCurrentStep("gatekeeper_pass");
+                  {
+                    const verdict: GatekeeperVerdict = {
+                      step: event.step,
+                      passed: true,
+                      evidence: event.evidence,
+                      next_step: event.next_step,
+                    };
+                    setGatekeeperVerdicts((prev) => [...prev, verdict]);
+                    setProgress((prev) => [
+                      ...prev,
+                      {
+                        step: "gatekeeper_pass",
+                        message: event.message,
+                        gatekeeper: verdict,
+                      },
+                    ]);
+                  }
+                  break;
+
+                case "gatekeeper_fail":
+                  setCurrentStep("gatekeeper_fail");
+                  {
+                    const verdict: GatekeeperVerdict = {
+                      step: event.step,
+                      passed: false,
+                      blocking_issues: event.blocking_issues,
+                      forced: event.forced,
+                      retry: event.retry,
+                    };
+                    setGatekeeperVerdicts((prev) => [...prev, verdict]);
+                    setProgress((prev) => [
+                      ...prev,
+                      {
+                        step: "gatekeeper_fail",
+                        message: event.message,
+                        gatekeeper: verdict,
+                      },
+                    ]);
+                  }
+                  break;
+
                 case "complete":
                   setStatus("complete");
                   setCurrentStep("complete");
@@ -234,6 +290,7 @@ export function useResumeOptimizer() {
     setCurrentRound(0);
     setResult(null);
     setLatestScorecard(null);
+    setGatekeeperVerdicts([]);
     setError(null);
   }, []);
 
@@ -244,6 +301,7 @@ export function useResumeOptimizer() {
     currentRound,
     result,
     latestScorecard,
+    gatekeeperVerdicts,
     error,
     optimize,
     cancel,

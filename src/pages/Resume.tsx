@@ -163,6 +163,7 @@ export default function Resume() {
             currentStep={optimizer.currentStep}
             currentRound={optimizer.currentRound}
             latestScorecard={optimizer.latestScorecard}
+            gatekeeperVerdicts={optimizer.gatekeeperVerdicts}
             onCancel={optimizer.cancel}
           />
         </div>
