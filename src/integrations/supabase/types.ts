@@ -1288,6 +1288,45 @@ export type Database = {
         }
         Relationships: []
       }
+      pipeline_continuations: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          next_step: string
+          pipeline_state: Json
+          resume_id: string
+          status: string
+          step_name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          next_step: string
+          pipeline_state?: Json
+          resume_id: string
+          status?: string
+          step_name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          next_step?: string
+          pipeline_state?: Json
+          resume_id?: string
+          status?: string
+          step_name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
