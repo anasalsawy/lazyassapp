@@ -89,10 +89,10 @@ export default function Resume() {
     setOptimizeDialogOpen(true);
   };
 
-  const handleOptimize = (targetRole: string, location: string) => {
+  const handleOptimize = (targetRole: string, location: string, manualMode: boolean) => {
     if (!selectedResumeId) return;
     setOptimizeDialogOpen(false);
-    optimizer.optimize(selectedResumeId, targetRole, location);
+    optimizer.optimize(selectedResumeId, targetRole, location, manualMode);
   };
 
   const handleSetPrimary = async (resumeId: string) => {
@@ -153,8 +153,8 @@ export default function Resume() {
     );
   }
 
-  // Show optimization progress or result
-  if (optimizer.status === "running") {
+  // Show optimization progress or paused state
+  if (optimizer.status === "running" || optimizer.status === "awaiting_continue") {
     return (
       <AppLayout>
         <div className="container max-w-3xl mx-auto py-8 px-4">
@@ -164,7 +164,9 @@ export default function Resume() {
             currentRound={optimizer.currentRound}
             latestScorecard={optimizer.latestScorecard}
             gatekeeperVerdicts={optimizer.gatekeeperVerdicts}
+            manualPause={optimizer.manualPause}
             onCancel={optimizer.cancel}
+            onContinue={optimizer.continueOptimization}
           />
         </div>
       </AppLayout>

@@ -9,12 +9,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Sparkles, Loader2 } from "lucide-react";
 
 interface OptimizeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onStart: (targetRole: string, location: string) => void;
+  onStart: (targetRole: string, location: string, manualMode: boolean) => void;
   isRunning: boolean;
   resumeTitle: string;
 }
@@ -28,11 +29,12 @@ export function OptimizeDialog({
 }: OptimizeDialogProps) {
   const [targetRole, setTargetRole] = useState("");
   const [location, setLocation] = useState("");
+  const [manualMode, setManualMode] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetRole.trim()) return;
-    onStart(targetRole.trim(), location.trim());
+    onStart(targetRole.trim(), location.trim(), manualMode);
   };
 
   return (
@@ -69,6 +71,23 @@ export function OptimizeDialog({
               placeholder="e.g. New York, NY or Remote"
               value={location}
               onChange={(e) => setLocation(e.target.value)}
+              disabled={isRunning}
+            />
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="manualMode" className="text-sm font-medium">
+                Manual Mode
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Pause after each step for your approval before continuing
+              </p>
+            </div>
+            <Switch
+              id="manualMode"
+              checked={manualMode}
+              onCheckedChange={setManualMode}
               disabled={isRunning}
             />
           </div>
