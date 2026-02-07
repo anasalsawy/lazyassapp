@@ -52,7 +52,14 @@ export interface OptimizationProgress {
   gatekeeper?: GatekeeperVerdict;
 }
 
-type OptimizerStatus = "idle" | "running" | "complete" | "error";
+export interface ManualPause {
+  step: string;
+  next_step: string;
+  continuation_id: string;
+  message: string;
+}
+
+type OptimizerStatus = "idle" | "running" | "complete" | "error" | "awaiting_continue";
 
 export function useResumeOptimizer() {
   const { session } = useAuth();
@@ -65,19 +72,209 @@ export function useResumeOptimizer() {
   const [latestScorecard, setLatestScorecard] = useState<Scorecard | null>(null);
   const [gatekeeperVerdicts, setGatekeeperVerdicts] = useState<GatekeeperVerdict[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [manualPause, setManualPause] = useState<ManualPause | null>(null);
+  const [isManualMode, setIsManualMode] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Store resumeId for continue calls
+  const resumeIdRef = useRef<string>("");
 
-  const optimize = useCallback(
-    async (resumeId: string, targetRole: string, location?: string) => {
+  const processSSEStream = useCallback(
+    async (response: Response) => {
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIdx: number;
+        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIdx).trim();
+          buffer = buffer.slice(newlineIdx + 1);
+
+          if (!line.startsWith("data: ")) continue;
+          const jsonStr = line.slice(6).trim();
+          if (!jsonStr || jsonStr === "[DONE]") continue;
+
+          try {
+            const event = JSON.parse(jsonStr);
+
+            switch (event.type) {
+              case "progress":
+                setCurrentStep(event.step || "");
+                if (event.round) setCurrentRound(event.round);
+                setProgress((prev) => [
+                  ...prev,
+                  { step: event.step, round: event.round, message: event.message },
+                ]);
+                break;
+
+              case "researcher_done":
+                setCurrentStep("researcher_done");
+                setProgress((prev) => [
+                  ...prev,
+                  { step: "researcher_done", message: event.message, checklist: event.checklist },
+                ]);
+                break;
+
+              case "writer_done":
+                setCurrentStep("writer_done");
+                if (event.round) setCurrentRound(event.round);
+                setProgress((prev) => [
+                  ...prev,
+                  { step: "writer_done", round: event.round, message: event.message },
+                ]);
+                break;
+
+              case "critic_done":
+                setCurrentStep("critic_done");
+                if (event.scorecard) setLatestScorecard(event.scorecard);
+                setProgress((prev) => [
+                  ...prev,
+                  { step: "critic_done", round: event.round, message: event.message, scorecard: event.scorecard },
+                ]);
+                break;
+
+              case "designer_done":
+                setCurrentStep("designer_done");
+                setProgress((prev) => [
+                  ...prev,
+                  { step: "designer_done", message: event.message },
+                ]);
+                break;
+
+              case "gatekeeper_pass":
+                setCurrentStep("gatekeeper_pass");
+                {
+                  const verdict: GatekeeperVerdict = {
+                    step: event.step,
+                    passed: true,
+                    evidence: event.evidence,
+                    next_step: event.next_step,
+                  };
+                  setGatekeeperVerdicts((prev) => [...prev, verdict]);
+                  setProgress((prev) => [
+                    ...prev,
+                    { step: "gatekeeper_pass", message: event.message, gatekeeper: verdict },
+                  ]);
+                }
+                break;
+
+              case "gatekeeper_fail":
+                setCurrentStep("gatekeeper_fail");
+                {
+                  const verdict: GatekeeperVerdict = {
+                    step: event.step,
+                    passed: false,
+                    blocking_issues: event.blocking_issues,
+                    forced: event.forced,
+                    retry: event.retry,
+                  };
+                  setGatekeeperVerdicts((prev) => [...prev, verdict]);
+                  setProgress((prev) => [
+                    ...prev,
+                    { step: "gatekeeper_fail", message: event.message, gatekeeper: verdict },
+                  ]);
+                }
+                break;
+
+              case "gatekeeper_blocked":
+                setCurrentStep("gatekeeper_blocked");
+                setStatus("error");
+                {
+                  const verdict: GatekeeperVerdict = {
+                    step: event.step,
+                    passed: false,
+                    blocking_issues: event.blocking_issues,
+                  };
+                  setGatekeeperVerdicts((prev) => [...prev, verdict]);
+                  setProgress((prev) => [
+                    ...prev,
+                    { step: "gatekeeper_blocked", message: event.message, gatekeeper: verdict },
+                  ]);
+                }
+                setError(event.message);
+                toast({ title: "Pipeline blocked", description: event.message, variant: "destructive" });
+                break;
+
+              case "await_user_continue":
+                setStatus("awaiting_continue");
+                setCurrentStep("awaiting_continue");
+                setManualPause({
+                  step: event.step,
+                  next_step: event.next_step,
+                  continuation_id: event.continuation_id,
+                  message: event.message,
+                });
+                setProgress((prev) => [
+                  ...prev,
+                  { step: "awaiting_continue", message: event.message },
+                ]);
+                break;
+
+              case "complete":
+                setStatus("complete");
+                setCurrentStep("complete");
+                setResult(event.optimization);
+                if (event.optimization?.scorecard) {
+                  setLatestScorecard(event.optimization.scorecard);
+                }
+                break;
+
+              case "error":
+                setStatus("error");
+                setError(event.message);
+                toast({ title: "Optimization failed", description: event.message, variant: "destructive" });
+                break;
+            }
+          } catch {
+            // Partial JSON, wait for more data
+          }
+        }
+      }
+    },
+    [toast],
+  );
+
+  const callEdgeFunction = useCallback(
+    async (payload: Record<string, unknown>) => {
       if (!session?.access_token) {
-        toast({
-          title: "Not signed in",
-          description: "Please sign in to optimize your resume.",
-          variant: "destructive",
-        });
+        toast({ title: "Not signed in", description: "Please sign in to optimize your resume.", variant: "destructive" });
         return;
       }
 
+      abortRef.current = new AbortController();
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/optimize-resume`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify(payload),
+          signal: abortRef.current.signal,
+        },
+      );
+
+      if (!response.ok || !response.body) {
+        const errData = await response.json().catch(() => null);
+        throw new Error(errData?.error || `Request failed with status ${response.status}`);
+      }
+
+      await processSSEStream(response);
+    },
+    [session, processSSEStream, toast],
+  );
+
+  const optimize = useCallback(
+    async (resumeId: string, targetRole: string, location?: string, manualMode?: boolean) => {
       // Reset state
       setStatus("running");
       setProgress([]);
@@ -87,220 +284,52 @@ export function useResumeOptimizer() {
       setLatestScorecard(null);
       setGatekeeperVerdicts([]);
       setError(null);
-
-      abortRef.current = new AbortController();
+      setManualPause(null);
+      setIsManualMode(!!manualMode);
+      resumeIdRef.current = resumeId;
 
       try {
-        const response = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/optimize-resume`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ resumeId, targetRole, location }),
-            signal: abortRef.current.signal,
-          },
-        );
-
-        if (!response.ok || !response.body) {
-          const errData = await response.json().catch(() => null);
-          throw new Error(
-            errData?.error || `Request failed with status ${response.status}`,
-          );
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          let newlineIdx: number;
-          while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-            const line = buffer.slice(0, newlineIdx).trim();
-            buffer = buffer.slice(newlineIdx + 1);
-
-            if (!line.startsWith("data: ")) continue;
-            const jsonStr = line.slice(6).trim();
-            if (!jsonStr || jsonStr === "[DONE]") continue;
-
-            try {
-              const event = JSON.parse(jsonStr);
-
-              switch (event.type) {
-                case "progress":
-                  setCurrentStep(event.step || "");
-                  if (event.round) setCurrentRound(event.round);
-                  setProgress((prev) => [
-                    ...prev,
-                    {
-                      step: event.step,
-                      round: event.round,
-                      message: event.message,
-                    },
-                  ]);
-                  break;
-
-                case "researcher_done":
-                  setCurrentStep("researcher_done");
-                  setProgress((prev) => [
-                    ...prev,
-                    {
-                      step: "researcher_done",
-                      message: event.message,
-                      checklist: event.checklist,
-                    },
-                  ]);
-                  break;
-
-                case "writer_done":
-                  setCurrentStep("writer_done");
-                  if (event.round) setCurrentRound(event.round);
-                  setProgress((prev) => [
-                    ...prev,
-                    {
-                      step: "writer_done",
-                      round: event.round,
-                      message: event.message,
-                    },
-                  ]);
-                  break;
-
-                case "critic_done":
-                  setCurrentStep("critic_done");
-                  if (event.scorecard) setLatestScorecard(event.scorecard);
-                  setProgress((prev) => [
-                    ...prev,
-                    {
-                      step: "critic_done",
-                      round: event.round,
-                      message: event.message,
-                      scorecard: event.scorecard,
-                    },
-                  ]);
-                  break;
-
-                case "designer_done":
-                  setCurrentStep("designer_done");
-                  setProgress((prev) => [
-                    ...prev,
-                    { step: "designer_done", message: event.message },
-                  ]);
-                  break;
-
-                case "gatekeeper_pass":
-                  setCurrentStep("gatekeeper_pass");
-                  {
-                    const verdict: GatekeeperVerdict = {
-                      step: event.step,
-                      passed: true,
-                      evidence: event.evidence,
-                      next_step: event.next_step,
-                    };
-                    setGatekeeperVerdicts((prev) => [...prev, verdict]);
-                    setProgress((prev) => [
-                      ...prev,
-                      {
-                        step: "gatekeeper_pass",
-                        message: event.message,
-                        gatekeeper: verdict,
-                      },
-                    ]);
-                  }
-                  break;
-
-                case "gatekeeper_fail":
-                  setCurrentStep("gatekeeper_fail");
-                  {
-                    const verdict: GatekeeperVerdict = {
-                      step: event.step,
-                      passed: false,
-                      blocking_issues: event.blocking_issues,
-                      forced: event.forced,
-                      retry: event.retry,
-                    };
-                    setGatekeeperVerdicts((prev) => [...prev, verdict]);
-                    setProgress((prev) => [
-                      ...prev,
-                      {
-                        step: "gatekeeper_fail",
-                        message: event.message,
-                        gatekeeper: verdict,
-                      },
-                    ]);
-                  }
-                  break;
-
-                case "gatekeeper_blocked":
-                  setCurrentStep("gatekeeper_blocked");
-                  setStatus("error");
-                  {
-                    const verdict: GatekeeperVerdict = {
-                      step: event.step,
-                      passed: false,
-                      blocking_issues: event.blocking_issues,
-                    };
-                    setGatekeeperVerdicts((prev) => [...prev, verdict]);
-                    setProgress((prev) => [
-                      ...prev,
-                      {
-                        step: "gatekeeper_blocked",
-                        message: event.message,
-                        gatekeeper: verdict,
-                      },
-                    ]);
-                  }
-                  setError(event.message);
-                  toast({
-                    title: "Pipeline blocked",
-                    description: event.message,
-                    variant: "destructive",
-                  });
-                  break;
-
-                case "complete":
-                  setStatus("complete");
-                  setCurrentStep("complete");
-                  setResult(event.optimization);
-                  if (event.optimization?.scorecard) {
-                    setLatestScorecard(event.optimization.scorecard);
-                  }
-                  break;
-
-                case "error":
-                  setStatus("error");
-                  setError(event.message);
-                  toast({
-                    title: "Optimization failed",
-                    description: event.message,
-                    variant: "destructive",
-                  });
-                  break;
-              }
-            } catch {
-              // Partial JSON, wait for more data
-            }
-          }
-        }
+        await callEdgeFunction({
+          resumeId,
+          targetRole,
+          location,
+          manual_mode: !!manualMode,
+        });
       } catch (e: any) {
         if (e.name === "AbortError") return;
         console.error("Optimization error:", e);
         setStatus("error");
         setError(e.message || "Something went wrong");
-        toast({
-          title: "Optimization failed",
-          description: e.message || "Please try again.",
-          variant: "destructive",
-        });
+        toast({ title: "Optimization failed", description: e.message || "Please try again.", variant: "destructive" });
       }
     },
-    [session, toast],
+    [callEdgeFunction, toast],
+  );
+
+  const continueOptimization = useCallback(
+    async () => {
+      if (!manualPause?.continuation_id || !resumeIdRef.current) return;
+
+      const continuationId = manualPause.continuation_id;
+      setStatus("running");
+      setManualPause(null);
+      setCurrentStep("resuming");
+
+      try {
+        await callEdgeFunction({
+          resumeId: resumeIdRef.current,
+          continuation_id: continuationId,
+          manual_mode: isManualMode,
+        });
+      } catch (e: any) {
+        if (e.name === "AbortError") return;
+        console.error("Continue error:", e);
+        setStatus("error");
+        setError(e.message || "Something went wrong");
+        toast({ title: "Continue failed", description: e.message || "Please try again.", variant: "destructive" });
+      }
+    },
+    [manualPause, isManualMode, callEdgeFunction, toast],
   );
 
   const cancel = useCallback(() => {
@@ -308,6 +337,7 @@ export function useResumeOptimizer() {
     setStatus("idle");
     setCurrentStep("");
     setProgress([]);
+    setManualPause(null);
   }, []);
 
   const reset = useCallback(() => {
@@ -319,6 +349,8 @@ export function useResumeOptimizer() {
     setLatestScorecard(null);
     setGatekeeperVerdicts([]);
     setError(null);
+    setManualPause(null);
+    setIsManualMode(false);
   }, []);
 
   return {
@@ -330,7 +362,10 @@ export function useResumeOptimizer() {
     latestScorecard,
     gatekeeperVerdicts,
     error,
+    manualPause,
+    isManualMode,
     optimize,
+    continueOptimization,
     cancel,
     reset,
   };

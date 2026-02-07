@@ -5,6 +5,7 @@ import type {
   OptimizationProgress as ProgressEvent,
   Scorecard,
   GatekeeperVerdict,
+  ManualPause,
 } from "@/hooks/useResumeOptimizer";
 import {
   Search,
@@ -16,6 +17,8 @@ import {
   X,
   ShieldAlert,
   ShieldOff,
+  PlayCircle,
+  PauseCircle,
 } from "lucide-react";
 
 interface OptimizationProgressProps {
@@ -24,7 +27,9 @@ interface OptimizationProgressProps {
   currentRound: number;
   latestScorecard: Scorecard | null;
   gatekeeperVerdicts: GatekeeperVerdict[];
+  manualPause: ManualPause | null;
   onCancel: () => void;
+  onContinue: () => void;
 }
 
 const STEP_CONFIG: Record<
@@ -54,8 +59,12 @@ export function OptimizationProgress({
   currentRound,
   latestScorecard,
   gatekeeperVerdicts,
+  manualPause,
   onCancel,
+  onContinue,
 }: OptimizationProgressProps) {
+  const isPaused = !!manualPause;
+
   const getStepStatus = (step: string) => {
     const baseStep = currentStep.replace("_done", "").replace("gatekeeper_pass", "gatekeeper").replace("gatekeeper_fail", "gatekeeper");
     const stepIdx = PIPELINE_STEPS.indexOf(step);
@@ -73,7 +82,6 @@ export function OptimizationProgress({
     return "pending";
   };
 
-  // Get the latest gatekeeper verdict for a pipeline step
   const getLatestGateForStep = (step: string): GatekeeperVerdict | undefined => {
     const stepUpper = step.toUpperCase();
     return [...gatekeeperVerdicts].reverse().find(
@@ -81,35 +89,47 @@ export function OptimizationProgress({
     );
   };
 
-  // Check if gatekeeper is currently auditing
-  const isGatekeeperActive =
-    currentStep === "gatekeeper" ||
-    currentStep === "gatekeeper_pass" ||
-    currentStep === "gatekeeper_fail" ||
-    progress.some(
-      (p) => p.step === "gatekeeper" && !progress.some(
-        (p2) => p2.step === "gatekeeper_pass" || p2.step === "gatekeeper_fail",
-      ),
-    );
-
-  // Get recent gatekeeper events for display
-  const recentGatekeeperEvents = progress.filter(
-    (p) =>
-      p.step === "gatekeeper_pass" ||
-      p.step === "gatekeeper_fail",
-  ).slice(-3);
-
   return (
     <Card>
       <CardContent className="py-8">
         <div className="text-center mb-8">
-          <h3 className="text-xl font-semibold mb-1">Optimizing Your Resume</h3>
+          <h3 className="text-xl font-semibold mb-1">
+            {isPaused ? "Pipeline Paused" : "Optimizing Your Resume"}
+          </h3>
           <p className="text-muted-foreground text-sm">
-            {currentRound > 0
+            {isPaused
+              ? "Review the results below and continue when ready"
+              : currentRound > 0
               ? `Refinement round ${currentRound}`
               : "Starting optimization..."}
           </p>
         </div>
+
+        {/* Manual pause banner */}
+        {isPaused && manualPause && (
+          <div className="max-w-md mx-auto mb-6 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30">
+            <div className="flex items-start gap-3">
+              <PauseCircle className="w-6 h-6 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                  {manualPause.message}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Completed: <strong>{manualPause.step.replace(/_/g, " ")}</strong>
+                  {" → "}Next: <strong>{manualPause.next_step.replace(/_/g, " ")}</strong>
+                </p>
+                <Button
+                  onClick={onContinue}
+                  className="mt-3 gap-2"
+                  size="sm"
+                >
+                  <PlayCircle className="w-4 h-4" />
+                  Continue to {manualPause.next_step.replace(/_/g, " ")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Pipeline steps */}
         <div className="max-w-md mx-auto space-y-4 mb-8">
@@ -117,13 +137,12 @@ export function OptimizationProgress({
             const status = getStepStatus(step);
             const config = STEP_CONFIG[step] || STEP_CONFIG.init;
             const Icon = config.icon;
-            const isActive = status === "active";
+            const isActive = status === "active" && !isPaused;
             const isDone = status === "done";
             const gateVerdict = getLatestGateForStep(step);
 
             return (
               <div key={step}>
-                {/* Main step row */}
                 <div
                   className={`flex items-center gap-4 p-3 rounded-lg transition-all ${
                     isActive
@@ -184,7 +203,7 @@ export function OptimizationProgress({
                   )}
                 </div>
 
-                {/* Gatekeeper sub-row for this step */}
+                {/* Gatekeeper sub-row */}
                 {gateVerdict && (isDone || isActive) && (
                   <div
                     className={`ml-7 mt-1 flex items-center gap-2 px-3 py-1.5 rounded text-xs ${
@@ -220,7 +239,7 @@ export function OptimizationProgress({
         </div>
 
         {/* Gatekeeper activity indicator */}
-        {(currentStep === "gatekeeper" ||
+        {!isPaused && (currentStep === "gatekeeper" ||
           currentStep === "gatekeeper_pass" ||
           currentStep === "gatekeeper_fail") && (
           <div className="max-w-md mx-auto mb-4 p-3 rounded-lg bg-orange-500/5 border border-orange-500/20">

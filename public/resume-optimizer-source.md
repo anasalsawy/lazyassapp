@@ -1,337 +1,175 @@
-import { useState, useCallback, useRef } from "react";
-import { useAuth } from "@/hooks/useAuth";
-import { useToast } from "@/hooks/use-toast";
+# Resume Optimization System - Complete Code Reference
 
-export interface Scorecard {
-  overall_score: number;
-  ats_score: number;
-  keyword_coverage_score: number;
-  clarity_score: number;
-  truth_violations: string[];
-  missing_sections: string[];
-  missing_keyword_clusters: string[];
-  required_edits: Array<{
-    type: string;
-    location: string;
-    before: string;
-    after: string;
-  }>;
-  must_fix_before_next_round: string[];
-  praise: string[];
+> Generated: 2026-02-07
+> This file contains all code related to the Resume Optimization multi-agent pipeline.
+
+---
+
+## Table of Contents
+1. [Edge Function: optimize-resume](#1-edge-function)
+2. [Hook: useResumeOptimizer](#2-hook)
+3. [Component: OptimizationProgress](#3-progress-component)
+4. [Component: OptimizeDialog](#4-dialog-component)
+5. [Component: OptimizationResultView](#5-result-component)
+6. [Page: Resume](#6-resume-page)
+7. [Database: pipeline_continuations](#7-database)
+
+---
+
+## 1. Edge Function
+**File:** `supabase/functions/optimize-resume/index.ts`
+
+### Architecture
+- **5 Agents:** Researcher → Writer ↔ Critic (adversarial loop) → Designer
+- **Gatekeeper:** Strict process auditor at every step transition (no forced passes)
+- **Manual Mode:** Pauses after each major step, saves state to `pipeline_continuations` table
+- **Content Drift Prevention:** Designer output is verified against approved content
+- **Audit Trail:** All steps logged to `agent_execution_logs` table
+
+### Key Features
+- `manual_mode` flag enables step-by-step execution with user approval
+- `continuation_id` resumes pipeline from saved state
+- `runGateWithRetry()` blocks pipeline on failure (max 2 retries, then halt)
+- Schema validation for all AI outputs (Researcher, Critic, Gatekeeper)
+- SSE streaming for real-time progress updates
+
+### Event Types Emitted
+| Event | Description |
+|-------|-------------|
+| `progress` | Step started/in-progress |
+| `researcher_done` | Research checklist complete |
+| `writer_done` | Draft version complete |
+| `critic_done` | Scorecard produced |
+| `designer_done` | HTML layout created |
+| `gatekeeper_pass` | Step verified, proceeding |
+| `gatekeeper_fail` | Step failed audit, retrying |
+| `gatekeeper_blocked` | Step blocked after max retries |
+| `await_user_continue` | Manual mode pause (includes `continuation_id`) |
+| `complete` | Pipeline finished successfully |
+| `error` | Pipeline error |
+
+---
+
+## 2. Hook
+**File:** `src/hooks/useResumeOptimizer.ts`
+
+### Exports
+- `useResumeOptimizer()` - Main hook
+- `Scorecard` interface
+- `OptimizationResult` interface
+- `GatekeeperVerdict` interface
+- `OptimizationProgress` interface
+- `ManualPause` interface
+
+### Status Flow
+```
+idle → running → complete
+                → error
+                → awaiting_continue → running → complete/error/awaiting_continue
+```
+
+### Methods
+| Method | Description |
+|--------|-------------|
+| `optimize(resumeId, targetRole, location?, manualMode?)` | Start optimization |
+| `continueOptimization()` | Resume from manual pause |
+| `cancel()` | Abort running optimization |
+| `reset()` | Reset all state to idle |
+
+---
+
+## 3. Progress Component
+**File:** `src/components/resume/OptimizationProgress.tsx`
+
+### Props
+| Prop | Type | Description |
+|------|------|-------------|
+| `progress` | `ProgressEvent[]` | All progress events |
+| `currentStep` | `string` | Current pipeline step |
+| `currentRound` | `number` | Writer/Critic round |
+| `latestScorecard` | `Scorecard \| null` | Latest critic scores |
+| `gatekeeperVerdicts` | `GatekeeperVerdict[]` | All gate verdicts |
+| `manualPause` | `ManualPause \| null` | Current pause info |
+| `onCancel` | `() => void` | Cancel handler |
+| `onContinue` | `() => void` | Continue handler |
+
+### Features
+- Visual pipeline step tracker (researcher → writer → critic → designer)
+- Gatekeeper sub-rows showing pass/fail per step
+- Manual mode pause banner with continue button
+- Live score preview (ATS, Keywords, Clarity)
+- Audit trail showing last 5 gate verdicts
+
+---
+
+## 4. Dialog Component
+**File:** `src/components/resume/OptimizeDialog.tsx`
+
+### Features
+- Target role input (required)
+- Location input (optional)
+- Manual Mode toggle switch
+- Passes `manualMode` boolean to `onStart` callback
+
+---
+
+## 5. Result Component
+**File:** `src/components/resume/OptimizationResultView.tsx`
+
+### Features
+- Score summary card (Overall, ATS, Keywords, Clarity)
+- Praise and truth violation display
+- Tabbed content view: Preview (HTML iframe), ATS Text, Changes
+- Download buttons for text and HTML
+
+---
+
+## 6. Resume Page
+**File:** `src/pages/Resume.tsx`
+
+### Features
+- Resume list with upload, delete, set primary
+- Optimize button opens OptimizeDialog
+- Shows OptimizationProgress during running/paused states
+- Shows OptimizationResultView on completion
+- Wires `continueOptimization` for manual mode
+
+---
+
+## 7. Database
+**Table:** `pipeline_continuations`
+
+```sql
+CREATE TABLE public.pipeline_continuations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL,
+  resume_id UUID NOT NULL,
+  step_name TEXT NOT NULL,
+  next_step TEXT NOT NULL,
+  pipeline_state JSONB NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'awaiting_continue',
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  expires_at TIMESTAMPTZ DEFAULT (now() + interval '1 hour')
+);
+-- RLS: Users can CRUD own continuations
+-- Index on (user_id, resume_id, status)
+-- Trigger: handle_updated_at on UPDATE
+```
+
+### Pipeline State Shape
+```json
+{
+  "rawResumeText": "string",
+  "role": "string",
+  "loc": "string",
+  "checklist": {},
+  "draft": "string",
+  "scorecard": {},
+  "atsText": "string",
+  "prettyMd": "string",
+  "changelog": "string",
+  "roundsCompleted": 0,
+  "criticFeedback": "string"
 }
-
-export interface OptimizationResult {
-  checklist: any;
-  scorecard: Scorecard;
-  ats_text: string;
-  pretty_md: string;
-  changelog: string;
-  html: string;
-  rounds_completed: number;
-  target_role: string;
-  location: string;
-  optimized_at: string;
-}
-
-export interface GatekeeperVerdict {
-  step: string;
-  passed: boolean;
-  blocking_issues?: string[];
-  evidence?: string[];
-  next_step?: string;
-  forced?: boolean;
-  retry?: number;
-}
-
-export interface OptimizationProgress {
-  step: string;
-  round?: number;
-  message: string;
-  scorecard?: Scorecard;
-  checklist?: any;
-  gatekeeper?: GatekeeperVerdict;
-}
-
-type OptimizerStatus = "idle" | "running" | "complete" | "error";
-
-export function useResumeOptimizer() {
-  const { session } = useAuth();
-  const { toast } = useToast();
-  const [status, setStatus] = useState<OptimizerStatus>("idle");
-  const [progress, setProgress] = useState<OptimizationProgress[]>([]);
-  const [currentStep, setCurrentStep] = useState<string>("");
-  const [currentRound, setCurrentRound] = useState<number>(0);
-  const [result, setResult] = useState<OptimizationResult | null>(null);
-  const [latestScorecard, setLatestScorecard] = useState<Scorecard | null>(null);
-  const [gatekeeperVerdicts, setGatekeeperVerdicts] = useState<GatekeeperVerdict[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  const optimize = useCallback(
-    async (resumeId: string, targetRole: string, location?: string) => {
-      if (!session?.access_token) {
-        toast({
-          title: "Not signed in",
-          description: "Please sign in to optimize your resume.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Reset state
-      setStatus("running");
-      setProgress([]);
-      setCurrentStep("init");
-      setCurrentRound(0);
-      setResult(null);
-      setLatestScorecard(null);
-      setGatekeeperVerdicts([]);
-      setError(null);
-
-      abortRef.current = new AbortController();
-
-      try {
-        const response = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/optimize-resume`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ resumeId, targetRole, location }),
-            signal: abortRef.current.signal,
-          },
-        );
-
-        if (!response.ok || !response.body) {
-          const errData = await response.json().catch(() => null);
-          throw new Error(
-            errData?.error || `Request failed with status ${response.status}`,
-          );
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          let newlineIdx: number;
-          while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-            const line = buffer.slice(0, newlineIdx).trim();
-            buffer = buffer.slice(newlineIdx + 1);
-
-            if (!line.startsWith("data: ")) continue;
-            const jsonStr = line.slice(6).trim();
-            if (!jsonStr || jsonStr === "[DONE]") continue;
-
-            try {
-              const event = JSON.parse(jsonStr);
-
-              switch (event.type) {
-                case "progress":
-                  setCurrentStep(event.step || "");
-                  if (event.round) setCurrentRound(event.round);
-                  setProgress((prev) => [
-                    ...prev,
-                    {
-                      step: event.step,
-                      round: event.round,
-                      message: event.message,
-                    },
-                  ]);
-                  break;
-
-                case "researcher_done":
-                  setCurrentStep("researcher_done");
-                  setProgress((prev) => [
-                    ...prev,
-                    {
-                      step: "researcher_done",
-                      message: event.message,
-                      checklist: event.checklist,
-                    },
-                  ]);
-                  break;
-
-                case "writer_done":
-                  setCurrentStep("writer_done");
-                  if (event.round) setCurrentRound(event.round);
-                  setProgress((prev) => [
-                    ...prev,
-                    {
-                      step: "writer_done",
-                      round: event.round,
-                      message: event.message,
-                    },
-                  ]);
-                  break;
-
-                case "critic_done":
-                  setCurrentStep("critic_done");
-                  if (event.scorecard) setLatestScorecard(event.scorecard);
-                  setProgress((prev) => [
-                    ...prev,
-                    {
-                      step: "critic_done",
-                      round: event.round,
-                      message: event.message,
-                      scorecard: event.scorecard,
-                    },
-                  ]);
-                  break;
-
-                case "designer_done":
-                  setCurrentStep("designer_done");
-                  setProgress((prev) => [
-                    ...prev,
-                    { step: "designer_done", message: event.message },
-                  ]);
-                  break;
-
-                case "gatekeeper_pass":
-                  setCurrentStep("gatekeeper_pass");
-                  {
-                    const verdict: GatekeeperVerdict = {
-                      step: event.step,
-                      passed: true,
-                      evidence: event.evidence,
-                      next_step: event.next_step,
-                    };
-                    setGatekeeperVerdicts((prev) => [...prev, verdict]);
-                    setProgress((prev) => [
-                      ...prev,
-                      {
-                        step: "gatekeeper_pass",
-                        message: event.message,
-                        gatekeeper: verdict,
-                      },
-                    ]);
-                  }
-                  break;
-
-                case "gatekeeper_fail":
-                  setCurrentStep("gatekeeper_fail");
-                  {
-                    const verdict: GatekeeperVerdict = {
-                      step: event.step,
-                      passed: false,
-                      blocking_issues: event.blocking_issues,
-                      forced: event.forced,
-                      retry: event.retry,
-                    };
-                    setGatekeeperVerdicts((prev) => [...prev, verdict]);
-                    setProgress((prev) => [
-                      ...prev,
-                      {
-                        step: "gatekeeper_fail",
-                        message: event.message,
-                        gatekeeper: verdict,
-                      },
-                    ]);
-                  }
-                  break;
-
-                case "gatekeeper_blocked":
-                  setCurrentStep("gatekeeper_blocked");
-                  setStatus("error");
-                  {
-                    const verdict: GatekeeperVerdict = {
-                      step: event.step,
-                      passed: false,
-                      blocking_issues: event.blocking_issues,
-                    };
-                    setGatekeeperVerdicts((prev) => [...prev, verdict]);
-                    setProgress((prev) => [
-                      ...prev,
-                      {
-                        step: "gatekeeper_blocked",
-                        message: event.message,
-                        gatekeeper: verdict,
-                      },
-                    ]);
-                  }
-                  setError(event.message);
-                  toast({
-                    title: "Pipeline blocked",
-                    description: event.message,
-                    variant: "destructive",
-                  });
-                  break;
-
-                case "complete":
-                  setStatus("complete");
-                  setCurrentStep("complete");
-                  setResult(event.optimization);
-                  if (event.optimization?.scorecard) {
-                    setLatestScorecard(event.optimization.scorecard);
-                  }
-                  break;
-
-                case "error":
-                  setStatus("error");
-                  setError(event.message);
-                  toast({
-                    title: "Optimization failed",
-                    description: event.message,
-                    variant: "destructive",
-                  });
-                  break;
-              }
-            } catch {
-              // Partial JSON, wait for more data
-            }
-          }
-        }
-      } catch (e: any) {
-        if (e.name === "AbortError") return;
-        console.error("Optimization error:", e);
-        setStatus("error");
-        setError(e.message || "Something went wrong");
-        toast({
-          title: "Optimization failed",
-          description: e.message || "Please try again.",
-          variant: "destructive",
-        });
-      }
-    },
-    [session, toast],
-  );
-
-  const cancel = useCallback(() => {
-    abortRef.current?.abort();
-    setStatus("idle");
-    setCurrentStep("");
-    setProgress([]);
-  }, []);
-
-  const reset = useCallback(() => {
-    setStatus("idle");
-    setProgress([]);
-    setCurrentStep("");
-    setCurrentRound(0);
-    setResult(null);
-    setLatestScorecard(null);
-    setGatekeeperVerdicts([]);
-    setError(null);
-  }, []);
-
-  return {
-    status,
-    progress,
-    currentStep,
-    currentRound,
-    result,
-    latestScorecard,
-    gatekeeperVerdicts,
-    error,
-    optimize,
-    cancel,
-    reset,
-  };
-}
+```
