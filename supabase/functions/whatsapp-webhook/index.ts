@@ -323,48 +323,75 @@ async function runOptimizationPipeline(
 
       if (decision === "stop_data_needed") {
         const dataNeeded = scorecard.data_needed || [];
-        const blockingData = dataNeeded.filter((d: any) => d.impact === "high");
-        const reasons = (blockingData.length > 0 ? blockingData : dataNeeded)
-          .map((d: any) => {
-            const q = d.question || d.description || (typeof d === "string" ? d : JSON.stringify(d));
-            const where = d.where_it_would_help ? ` (for ${d.where_it_would_help})` : "";
-            return `• ${q}${where}`;
-          })
-          .join("\n") || "Missing critical information";
+        // Build gap-filling question list
+        const questions = dataNeeded
+          .filter((d: any) => d.impact === "high" || d.impact === "medium")
+          .map((d: any) => ({
+            question: d.question || d.description || (typeof d === "string" ? d : JSON.stringify(d)),
+            where: d.where_it_would_help || "resume",
+            impact: d.impact || "high",
+          }));
 
-        await sendProgress(
-          `🛑 *Optimization paused — missing data*\n\n` +
-          `The AI cannot produce a quality resume without this info:\n${reasons}\n\n` +
-          `Please reply with the missing details, then say *Optimize* again.`
-        );
-        // Do NOT continue — exit the loop entirely
-        // Save partial results with a flag
-        const partialOverall = scores.overall ?? 0;
-        const { data: resumes } = await supabase
-          .from("resumes")
-          .select("id, parsed_content")
-          .eq("user_id", userId)
-          .eq("is_primary", true)
-          .limit(1);
-
-        if (resumes?.length) {
-          const existing = resumes[0].parsed_content ?? {};
-          await supabase.from("resumes").update({
-            parsed_content: {
-              ...existing,
-              rawText: resumeText,
-              optimization: {
-                status: "paused_data_needed",
-                partial_score: partialOverall,
-                data_needed: reasons,
-                rounds_completed: round,
-                target_role: targetRole,
-                optimized_at: new Date().toISOString(),
-              },
-            },
-          }).eq("id", resumes[0].id);
+        if (questions.length === 0) {
+          // Fallback: extract from blocking_issues
+          const blockingIssues = scorecard.blocking_issues || [];
+          for (const b of blockingIssues) {
+            questions.push({
+              question: b.description || JSON.stringify(b),
+              where: b.category || "resume",
+              impact: "high",
+            });
+          }
         }
-        return; // EXIT — do not save as complete
+
+        if (questions.length > 0) {
+          // Save state for gap-filling: questions, partial results, resume context
+          const gapState = {
+            questions,
+            current_question_index: 0,
+            answers: {} as Record<string, string>,
+            resume_text: resumeText,
+            target_role: targetRole,
+            partial_score: scores.overall ?? 0,
+            rounds_completed: round,
+            checklist,
+            writer_draft: writerDraft,
+            scorecard,
+          };
+
+          // Save to conversation context
+          await supabase.from("conversations")
+            .update({
+              state: "gap_filling",
+              context_json: {
+                ...newConvContext,
+                gap_filling: gapState,
+              },
+            })
+            .eq("phone_number", from);
+
+          // Ask the first question
+          const firstQ = questions[0];
+          await sendProgress(
+            `🔍 *I need more information to get your score above 90.*\n` +
+            `Current score: *${scores.overall}/100*\n\n` +
+            `Question 1 of ${questions.length}:\n` +
+            `❓ ${firstQ.question}\n\n` +
+            `_Reply with your answer, or type *skip* to skip this question._`
+          );
+          return; // EXIT — wait for user response
+        }
+
+        // No specific questions — generic ask
+        await sendProgress(
+          `🛑 *Optimization paused — missing data* (Score: ${scores.overall}/100)\n\n` +
+          `The AI needs more details to reach 90+. Please provide:\n` +
+          `• Employment history with company names and dates\n` +
+          `• Specific achievements with metrics\n` +
+          `• Tools and systems you've used\n\n` +
+          `Reply with the details, then say *Optimize* again.`
+        );
+        return;
       }
 
       if (decision === "stop_unfixable_truth") {
