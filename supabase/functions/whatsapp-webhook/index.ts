@@ -1013,6 +1013,11 @@ async function handleConversation(
           newState = "onboarding_job_prefs";
         }
       } else {
+        // Guard: don't save very short text as a resume (likely a command, not actual resume content)
+        if (messageBody.trim().length < 100) {
+          reply = "That doesn't look like a full resume. Please paste your complete resume text (at least a few paragraphs):";
+          break;
+        }
         newContext.resume_text = messageBody;
         // Save pasted text as a resume record
         if (userId) {
