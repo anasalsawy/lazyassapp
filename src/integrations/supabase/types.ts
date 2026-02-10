@@ -609,6 +609,39 @@ export type Database = {
           },
         ]
       }
+      conversations: {
+        Row: {
+          context_json: Json
+          created_at: string
+          id: string
+          last_message_at: string | null
+          phone_number: string
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          context_json?: Json
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          phone_number: string
+          state?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          context_json?: Json
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          phone_number?: string
+          state?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       email_accounts: {
         Row: {
           created_at: string | null
@@ -1605,6 +1638,50 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      whatsapp_messages: {
+        Row: {
+          body: string
+          conversation_id: string
+          created_at: string
+          direction: string
+          id: string
+          media_url: string | null
+          metadata_json: Json | null
+          twilio_sid: string | null
+          user_id: string
+        }
+        Insert: {
+          body: string
+          conversation_id: string
+          created_at?: string
+          direction: string
+          id?: string
+          media_url?: string | null
+          metadata_json?: Json | null
+          twilio_sid?: string | null
+          user_id: string
+        }
+        Update: {
+          body?: string
+          conversation_id?: string
+          created_at?: string
+          direction?: string
+          id?: string
+          media_url?: string | null
+          metadata_json?: Json | null
+          twilio_sid?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
