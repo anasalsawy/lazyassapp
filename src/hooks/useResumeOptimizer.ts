@@ -284,8 +284,28 @@ export function useResumeOptimizer() {
       }
 
       await processSSEStream(response);
+
+      // Return auto-continue ID if the stream signalled one
+      return autoContinueIdRef.current;
     },
     [session, processSSEStream, toast],
+  );
+
+  // Auto-continue loop: keeps calling the edge function until no more auto_continue signals
+  const callWithAutoResume = useCallback(
+    async (payload: Record<string, unknown>) => {
+      let contId = await callEdgeFunction(payload);
+      while (contId) {
+        // Small delay to avoid hammering
+        await new Promise((r) => setTimeout(r, 500));
+        contId = await callEdgeFunction({
+          resumeId: payload.resumeId,
+          continuation_id: contId,
+          manual_mode: payload.manual_mode,
+        });
+      }
+    },
+    [callEdgeFunction],
   );
 
   const optimize = useCallback(
