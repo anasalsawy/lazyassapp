@@ -532,7 +532,7 @@ async function runOptimizationPipeline(
               truthfulness_score: scorecard?.scores?.truthfulness ?? 0,
               role_alignment_score: scorecard?.scores?.role_alignment ?? 0,
             },
-            rounds_completed: MAX_ROUNDS,
+            rounds_completed: lastCompletedRound,
             target_role: targetRole,
             optimized_at: new Date().toISOString(),
           },
