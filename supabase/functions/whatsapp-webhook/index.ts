@@ -862,9 +862,17 @@ serve(async (req) => {
       messageSid = json.MessageSid || json.message_sid || "";
     }
 
-    if (!from || !body) {
+    if (!from) {
       return new Response(
-        JSON.stringify({ error: "Missing From or Body" }),
+        JSON.stringify({ error: "Missing From" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // If body is empty but we have media, that's fine (e.g. PDF with no caption)
+    if (!body && !mediaUrl) {
+      return new Response(
+        JSON.stringify({ error: "Missing Body and MediaUrl" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
