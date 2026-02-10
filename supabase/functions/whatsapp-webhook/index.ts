@@ -1444,7 +1444,13 @@ serve(async (req) => {
     }
 
     // Process conversation
-    const reply = await handleConversation(supabase, from, body, mediaUrl);
+    let reply: string;
+    try {
+      reply = await handleConversation(supabase, from, body, mediaUrl);
+    } catch (convError) {
+      console.error("[WhatsApp] Conversation error:", convError);
+      reply = "⚠️ Sorry, I'm having trouble processing your request right now. Please try again in a moment.";
+    }
 
     // Send reply via Twilio
     const replySid = await sendWhatsAppMessage(from, reply);
@@ -1466,7 +1472,11 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/xml" } },
     );
   } catch (error) {
-    console.error("[WhatsApp] Error:", error);
+    console.error("[WhatsApp] Fatal Error:", error);
+    // Try to send error message to user
+    try {
+      if (from) await sendWhatsAppMessage(from, "⚠️ Something went wrong. Please try again.");
+    } catch { /* swallow */ }
     return new Response(
       JSON.stringify({ error: error.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
