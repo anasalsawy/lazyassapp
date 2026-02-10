@@ -395,7 +395,8 @@ serve(async (req) => {
     });
   }
 
-  const MAX_WRITER_CRITIC_ROUNDS = 3;
+  const MAX_WRITER_CRITIC_ROUNDS = 2;
+  const EARLY_EXIT_SCORE = 85; // Accept draft if overall score >= this
 
   // ── Audit logger ────────────────────────────────────────────────────
   async function logExecution(step: string, agent: string, model: string, input: string, output: string, extra?: any) {
@@ -603,6 +604,12 @@ serve(async (req) => {
             // ── Decision routing ──────────────────────────────────────
             if (finalDecision === "pass") {
               sendSSE(controller, encoder, "progress", { step: "quality_gate", round, message: "✅ Quality threshold passed!" });
+              break;
+            }
+
+            // Early exit: accept draft if score is good enough to avoid timeout on extra rounds
+            if (finalDecision === "revise" && scorecard.scores.overall >= EARLY_EXIT_SCORE) {
+              sendSSE(controller, encoder, "progress", { step: "quality_gate", round, message: `✅ Score ${scorecard.scores.overall} meets threshold (${EARLY_EXIT_SCORE}+). Accepting draft.` });
               break;
             }
 
