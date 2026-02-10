@@ -228,11 +228,11 @@ async function runOptimizationPipeline(
 
     await sendProgress(`✅ Research complete!\n\n✍️ *Step 2/3: Writing*\nCrafting your optimized resume...`);
 
-    // ── WRITER → CRITIC LOOP (max 3 rounds) ──
+    // ── WRITER → CRITIC LOOP (runs until 90+ or data needed) ──
     let writerDraft: any = null;
     let scorecard: any = null;
-    const MAX_ROUNDS = 3;
-    const EARLY_EXIT_SCORE = 85;
+    const MAX_ROUNDS = 100; // No practical cap — runs until quality gate
+    const QUALITY_GATE_SCORE = 90;
 
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       // Writer
