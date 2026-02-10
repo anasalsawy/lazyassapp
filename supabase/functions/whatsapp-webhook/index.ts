@@ -214,32 +214,39 @@ async function runOptimizationPipeline(
   };
 
   try {
-    await sendProgress(`🔬 *Step 1/3: Research*\nAnalyzing industry requirements for "${targetRole}"...`);
+    // ── RESEARCHER (skip if we already have a checklist from gap-filling resume) ──
+    let checklist = existingChecklist || null;
 
-    // ── RESEARCHER ──
-    const researcherPayload = JSON.stringify({
-      RAW_RESUME: resumeText,
-      JOB_DESCRIPTION: null,
-      SYSTEM_CONFIG: { max_writer_critic_rounds: 3, target_role: targetRole },
-    });
+    if (!checklist) {
+      await sendProgress(`🔬 *Step 1/3: Research*\nAnalyzing industry requirements for "${targetRole}"...`);
 
-    const researcherOutput = await callAIForPipeline(RESEARCHER_PROMPT, researcherPayload, "google/gemini-3-flash-preview");
-    const checklist = safeJsonParse(researcherOutput);
+      const researcherPayload = JSON.stringify({
+        RAW_RESUME: resumeText,
+        JOB_DESCRIPTION: null,
+        SYSTEM_CONFIG: { max_writer_critic_rounds: 100, target_role: targetRole },
+      });
 
-    if (checklist.error) {
-      await sendProgress(`❌ Research failed: ${checklist.error.message}`);
-      return;
+      const researcherOutput = await callAIForPipeline(RESEARCHER_PROMPT, researcherPayload, "google/gemini-3-flash-preview");
+      checklist = safeJsonParse(researcherOutput);
+
+      if (checklist.error) {
+        await sendProgress(`❌ Research failed: ${checklist.error.message}`);
+        return;
+      }
+
+      await sendProgress(`✅ Research complete!\n\n✍️ *Step 2/3: Writing*\nCrafting your optimized resume...`);
+    } else {
+      await sendProgress(`✍️ *Resuming optimization* with new information...`);
     }
-
-    await sendProgress(`✅ Research complete!\n\n✍️ *Step 2/3: Writing*\nCrafting your optimized resume...`);
 
     // ── WRITER → CRITIC LOOP (runs until 90+ or data needed) ──
     let writerDraft: any = null;
-    let scorecard: any = null;
+    let scorecard: any = existingScorecard || null;
     const MAX_ROUNDS = 100; // No practical cap — runs until quality gate
     const QUALITY_GATE_SCORE = 90;
+    const initialRound = startRound || 1;
 
-    for (let round = 1; round <= MAX_ROUNDS; round++) {
+    for (let round = initialRound; round <= MAX_ROUNDS; round++) {
       // Writer
       await sendProgress(`✍️ *Writing round ${round}/${MAX_ROUNDS}*...`);
 
