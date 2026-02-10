@@ -151,16 +151,17 @@ async function detectIntent(message: string): Promise<{ intent: string; entities
 - check_status: User wants status updates on applications
 - shop: User wants to buy something (Auto-Shop)
 - update_profile: User wants to update their info
+- manage_data: User wants to delete, clear, reset, add to, fill, or modify their stored data (resume, profile, preferences, applications, conversations, etc). Examples: "delete my resume", "clear all data", "start fresh", "fill dummy info", "add X to my profile", "reset my account", "remove my applications", "wipe everything"
 - help: User needs help or doesn't know what to do
 - greeting: User is saying hello
 - other: Anything else
 
-Also extract entities like "role" (target role) if mentioned.
-Return ONLY valid JSON: {"intent": "...", "entities": {"role": "..."}}`,
+Also extract entities like "role" (target role) if mentioned, and "command_detail" with a brief description of what the user wants to do.
+Return ONLY valid JSON: {"intent": "...", "entities": {"role": "...", "command_detail": "..."}}`,
         },
         { role: "user", content: message },
       ],
-      max_tokens: 100,
+      max_tokens: 150,
     }),
   });
 
@@ -172,6 +173,185 @@ Return ONLY valid JSON: {"intent": "...", "entities": {"role": "..."}}`,
     if (jsonMatch) return JSON.parse(jsonMatch[0]);
   } catch { /* */ }
   return { intent: "other", entities: {} };
+}
+
+// ── Smart Data Manager ──
+async function handleDataManagement(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  userCommand: string,
+  from: string,
+  context: Record<string, any>,
+): Promise<{ reply: string; newContext: Record<string, any>; newState: ConversationState }> {
+  // Use AI to interpret the command and map to database operations
+  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-3-flash-preview",
+      messages: [
+        {
+          role: "system",
+          content: `You are a data management assistant for Career Compass. The user wants to modify their stored data via WhatsApp.
+
+Available data areas and their tables:
+- resume/resumes: User's uploaded resumes (table: resumes, fields: title, parsed_content, ats_score, skills, experience_years, is_primary)
+- profile: User's personal info (table: profiles, fields: first_name, last_name, email, phone, location, linkedin_url, bio)
+- job_preferences: Job search preferences (table: job_preferences, fields: job_titles, locations, remote_preference, salary_min, salary_max)
+- applications: Job applications (table: applications)
+- jobs: Saved/matched jobs (table: jobs)
+- conversations: Chat history and state (table: conversations + whatsapp_messages)
+- automation_settings: Auto-apply settings (table: automation_settings)
+- all: Everything above
+
+Interpret the user's natural language command and return a JSON action plan:
+{
+  "understood": true,
+  "summary": "Brief human-readable summary of what will happen",
+  "is_destructive": true/false,
+  "actions": [
+    {
+      "type": "delete" | "update" | "insert" | "reset",
+      "table": "table_name",
+      "description": "what this does",
+      "data": {} // for update/insert: the fields and values
+    }
+  ]
+}
+
+Rules:
+- For "delete" or "clear" or "reset" or "start fresh": mark is_destructive=true
+- For "fill with dummy data": generate realistic placeholder data appropriate for the field
+- For "add X to Y": create an update action with the right fields
+- For "reset conversation" or "start fresh chat": clear conversations and whatsapp_messages
+- If you can't understand the command: {"understood": false, "summary": "I didn't understand. Try: 'delete my resume', 'clear all data', 'add Python to my skills', 'fill dummy profile info'"}
+- NEVER delete the user's auth account, only application data`,
+        },
+        { role: "user", content: userCommand },
+      ],
+      max_tokens: 800,
+    }),
+  });
+
+  if (!resp.ok) {
+    return { reply: "⚠️ Couldn't process that command. Try again.", newContext: context, newState: "idle" as ConversationState };
+  }
+
+  const data = await resp.json();
+  const content = data.choices?.[0]?.message?.content?.trim() || "";
+  
+  let plan: any;
+  try {
+    plan = safeJsonParse(content);
+  } catch {
+    return { reply: "⚠️ I couldn't interpret that. Try something like:\n• _Delete my resume_\n• _Clear all applications_\n• _Fill my profile with dummy data_\n• _Add Python to my skills_", newContext: context, newState: "idle" as ConversationState };
+  }
+
+  if (!plan.understood) {
+    return { reply: `🤔 ${plan.summary}`, newContext: context, newState: "idle" as ConversationState };
+  }
+
+  // If destructive, ask for confirmation
+  if (plan.is_destructive && !context.pending_data_action) {
+    return {
+      reply: `⚠️ *Confirm destructive action:*\n\n${plan.summary}\n\nThis cannot be undone. Reply *yes* to confirm or *no* to cancel.`,
+      newContext: { ...context, pending_data_action: plan },
+      newState: "idle" as ConversationState,
+    };
+  }
+
+  // Execute the actions
+  return await executeDataPlan(supabase, userId, plan, from);
+}
+
+async function executeDataPlan(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  plan: any,
+  from: string,
+): Promise<{ reply: string; newContext: Record<string, any>; newState: ConversationState }> {
+  const results: string[] = [];
+  let resetConversation = false;
+
+  for (const action of plan.actions || []) {
+    try {
+      const table = action.table;
+      
+      switch (action.type) {
+        case "delete": {
+          if (table === "conversations" || table === "whatsapp_messages") {
+            resetConversation = true;
+            if (table === "whatsapp_messages") {
+              // Get conversation id first
+              const { data: conv } = await supabase.from("conversations").select("id").eq("phone_number", from).single();
+              if (conv) {
+                await supabase.from("whatsapp_messages").delete().eq("conversation_id", conv.id);
+              }
+            } else {
+              // Delete conversation will cascade or we handle messages first
+              const { data: conv } = await supabase.from("conversations").select("id").eq("phone_number", from).single();
+              if (conv) {
+                await supabase.from("whatsapp_messages").delete().eq("conversation_id", conv.id);
+                await supabase.from("conversations").delete().eq("id", conv.id);
+              }
+            }
+          } else if (table === "resumes") {
+            // Also delete from storage
+            const { data: resumes } = await supabase.from("resumes").select("id, file_path").eq("user_id", userId);
+            if (resumes) {
+              const filePaths = resumes.filter(r => r.file_path).map(r => r.file_path!);
+              if (filePaths.length) await supabase.storage.from("resumes").remove(filePaths);
+              await supabase.from("resumes").delete().eq("user_id", userId);
+            }
+          } else {
+            await supabase.from(table).delete().eq("user_id", userId);
+          }
+          results.push(`✅ ${action.description}`);
+          break;
+        }
+        case "update": {
+          if (action.data && Object.keys(action.data).length > 0) {
+            await supabase.from(table).update(action.data).eq("user_id", userId);
+            results.push(`✅ ${action.description}`);
+          }
+          break;
+        }
+        case "insert": {
+          if (action.data) {
+            const insertData = { ...action.data, user_id: userId };
+            await supabase.from(table).insert(insertData);
+            results.push(`✅ ${action.description}`);
+          }
+          break;
+        }
+        case "reset": {
+          // Delete then optionally re-insert defaults
+          await supabase.from(table).delete().eq("user_id", userId);
+          if (action.data && Object.keys(action.data).length > 0) {
+            await supabase.from(table).insert({ ...action.data, user_id: userId });
+          }
+          results.push(`✅ ${action.description}`);
+          break;
+        }
+        default:
+          results.push(`⚠️ Unknown action type: ${action.type}`);
+      }
+    } catch (e: any) {
+      console.error(`Data action failed on ${action.table}:`, e.message);
+      results.push(`❌ Failed: ${action.description} — ${e.message}`);
+    }
+  }
+
+  const summary = `🛠 *Data Management Complete:*\n\n${results.join("\n")}\n\nWhat else can I help with?`;
+  
+  return {
+    reply: summary,
+    newContext: {},
+    newState: resetConversation ? "greeting" as ConversationState : "idle" as ConversationState,
+  };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -883,6 +1063,22 @@ async function handleConversation(
 
     // ── IDLE: INTENT ROUTING ──
     case "idle": {
+      // Check for pending destructive action confirmation
+      if (context.pending_data_action) {
+        const answer = messageBody.toLowerCase().trim();
+        if (answer === "yes" || answer === "y" || answer === "confirm") {
+          const result = await executeDataPlan(supabase, userId!, context.pending_data_action, from);
+          reply = result.reply;
+          newContext = result.newContext;
+          newState = result.newState;
+          break;
+        } else {
+          reply = "❌ Cancelled. No data was changed.\n\nWhat else can I help with?";
+          delete newContext.pending_data_action;
+          break;
+        }
+      }
+
       const { intent, entities } = await detectIntent(messageBody);
 
       switch (intent) {
@@ -924,9 +1120,8 @@ async function handleConversation(
             reply = `📄 Found your resume: *${resume.title}*\n\n🚀 Starting optimization for *${extractedRole}*...\n\nThis takes 2-4 minutes. I'll send progress updates!`;
             newContext.optimize_resume_text = resumeText;
             newContext.optimize_resume_id = resume.id;
-            // Fire and forget the pipeline (runs async, sends results via WhatsApp)
             runOptimizationPipeline(supabase, userId, resumeText, extractedRole, from);
-            newState = "idle"; // Stay idle, pipeline sends messages directly
+            newState = "idle";
           } else {
             reply =
               `📄 Found your resume: *${resume.title}*\n` +
@@ -937,6 +1132,19 @@ async function handleConversation(
             newContext.optimize_resume_id = resume.id;
             newState = "optimizing_awaiting_role";
           }
+          break;
+        }
+
+        case "manage_data": {
+          if (!userId) {
+            reply = "You need to set up your account first. What's your full name?";
+            newState = "onboarding_name";
+            break;
+          }
+          const result = await handleDataManagement(supabase, userId, messageBody, from, newContext);
+          reply = result.reply;
+          newContext = result.newContext;
+          newState = result.newState;
           break;
         }
 
@@ -953,7 +1161,7 @@ async function handleConversation(
           reply = "🛒 Auto-Shop activated!\n\nTell me what you're looking for and your budget.\n\nExample: _Buy wireless earbuds under $50_";
           break;
         case "greeting":
-          reply = "Hey! 👋 Good to hear from you.\n\nWhat can I help with?\n\n📄 Optimize resume\n🔍 Search jobs\n📨 Apply\n📊 Status\n🛒 Shop";
+          reply = "Hey! 👋 Good to hear from you.\n\nWhat can I help with?\n\n📄 Optimize resume\n🔍 Search jobs\n📨 Apply\n📊 Status\n🛒 Shop\n🛠 Manage data";
           break;
         case "help":
           reply =
@@ -964,11 +1172,12 @@ async function handleConversation(
             "📊 *Status* — Application updates\n" +
             "🛒 *Shop [product]* — Find best deals\n" +
             "👤 *Update profile* — Edit your info\n" +
+            "🛠 *Manage data* — Delete, reset, or modify your data\n" +
             "❓ *Help* — This menu";
           break;
         default:
           reply = await askAI(
-            `You are Career Compass, a friendly WhatsApp career assistant. You help users with resume optimization, job searching, auto-applying, and shopping. Keep responses concise (under 300 chars for WhatsApp). If the user seems to want a specific action, suggest the relevant command.`,
+            `You are Career Compass, a friendly WhatsApp career assistant. You help users with resume optimization, job searching, auto-applying, shopping, and managing their data. Keep responses concise (under 300 chars for WhatsApp). If the user seems to want a specific action, suggest the relevant command. For data management (delete, reset, fill, add to), tell them to just describe what they want naturally.`,
             messageBody,
           );
       }
