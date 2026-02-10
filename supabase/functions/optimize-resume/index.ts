@@ -538,6 +538,23 @@ serve(async (req) => {
           const startRound = roundsCompleted > 0 ? roundsCompleted + 1 : 1;
 
           for (let round = startRound; round <= MAX_WRITER_CRITIC_ROUNDS; round++) {
+            // ── Time-budget check BEFORE starting expensive AI calls ──
+            const elapsedBeforeRound = Date.now() - pipelineStartTime;
+            if (round > startRound && elapsedBeforeRound > TIME_BUDGET_MS) {
+              console.log(`Time budget exceeded BEFORE round ${round} (${elapsedBeforeRound}ms). Auto-saving for continuation.`);
+              const contId = await saveContinuation("WRITER_CRITIC_LOOP_CHUNK", "WRITER_LOOP", {
+                rawResumeText, jobDescription: jd, role, loc, checklist, writerDraft, scorecard, roundsCompleted: round - 1,
+              });
+              sendSSE(controller, encoder, "auto_continue", {
+                step: "WRITER_CRITIC_LOOP",
+                continuation_id: contId,
+                rounds_so_far: round - 1,
+                current_score: scorecard?.scores?.overall ?? 0,
+                message: `⏳ Time budget reached before round ${round}. Auto-continuing...`,
+              });
+              controller.close(); return;
+            }
+
             roundsCompleted = round;
 
             // ── Writer ────────────────────────────────────────────────
