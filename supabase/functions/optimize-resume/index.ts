@@ -535,8 +535,9 @@ serve(async (req) => {
         // ── STEP: WRITER ↔ CRITIC LOOP ────────────────────────────────
         if (!resumeFromStep || resumeFromStep === "WRITER_LOOP" || resumeFromStep === "RESEARCHER") {
           let finalDecision: string | null = null;
+          const startRound = roundsCompleted > 0 ? roundsCompleted + 1 : 1;
 
-          for (let round = 1; round <= MAX_WRITER_CRITIC_ROUNDS; round++) {
+          for (let round = startRound; round <= MAX_WRITER_CRITIC_ROUNDS; round++) {
             roundsCompleted = round;
 
             // ── Writer ────────────────────────────────────────────────
