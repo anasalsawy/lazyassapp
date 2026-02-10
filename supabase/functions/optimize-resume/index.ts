@@ -395,7 +395,7 @@ serve(async (req) => {
     });
   }
 
-  const MAX_WRITER_CRITIC_ROUNDS = 5;
+  const MAX_WRITER_CRITIC_ROUNDS = 100;
   const EARLY_EXIT_SCORE = 90; // Accept draft if overall score >= this
   const TIME_BUDGET_MS = 110_000; // 110s budget — leave ~40s margin for save + response
   const pipelineStartTime = Date.now();
