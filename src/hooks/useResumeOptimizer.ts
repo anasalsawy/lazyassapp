@@ -217,6 +217,23 @@ export function useResumeOptimizer() {
                 ]);
                 break;
 
+              case "auto_continue":
+                // Store the continuation_id for automatic re-invocation
+                setCurrentStep("auto_continuing");
+                if (event.round) setCurrentRound(event.round);
+                setProgress((prev) => [
+                  ...prev,
+                  { step: "auto_continue", round: event.rounds_so_far, message: event.message },
+                ]);
+                // Signal auto-continue via manualPause with a special marker
+                setManualPause({
+                  step: event.step,
+                  next_step: "WRITER_LOOP",
+                  continuation_id: event.continuation_id,
+                  message: "__auto__",
+                });
+                break;
+
               case "complete":
                 setStatus("complete");
                 setCurrentStep("complete");
