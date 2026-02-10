@@ -280,9 +280,24 @@ async function runOptimizationPipeline(
         break;
       }
       if (decision === "stop_data_needed" || decision === "stop_unfixable_truth") {
-        const reasons = scorecard.data_needed?.map((d: any) => `• ${d.question}`).join("\n") || "Missing critical information";
-        await sendProgress(`⚠️ Optimization paused:\n\n${reasons}\n\nPlease provide this info and try again.`);
-        return;
+        // data_needed items may use different property names depending on model output
+        const dataNeeded = scorecard.data_needed || scorecard.blocking_issues || [];
+        const reasons = dataNeeded
+          .map((d: any) => {
+            const text = d.question || d.description || d.issue || d.detail || d.message || d.field || (typeof d === "string" ? d : JSON.stringify(d));
+            return `• ${text}`;
+          })
+          .join("\n") || "Missing critical information";
+        
+        // Instead of stopping, treat as "revise" for WhatsApp (be more lenient)
+        if (round < MAX_ROUNDS) {
+          await sendProgress(`⚠️ Some info is missing but I'll do my best:\n${reasons}\n\nContinuing optimization...`);
+          scorecard.decision_recommendation = "revise";
+          continue;
+        }
+        
+        await sendProgress(`⚠️ Optimization completed with notes:\n\n${reasons}\n\nI've optimized what I could. See results below!`);
+        break;
       }
       // "revise" → continue loop with scorecard as feedback
     }
