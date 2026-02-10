@@ -424,17 +424,51 @@ async function runOptimizationPipeline(
     const MIN_ACCEPTABLE_SCORE = 90;
 
     if (overall < MIN_ACCEPTABLE_SCORE) {
+      // Trigger gap-filling instead of giving up
       const dataNeeded = scorecard?.data_needed || [];
-      const reasons = dataNeeded
-        .map((d: any) => `• ${d.question || d.description || JSON.stringify(d)}`)
-        .join("\n") || "• Employment history with dates and company names\n• Specific metrics and achievements";
+      const questions = dataNeeded
+        .map((d: any) => ({
+          question: d.question || d.description || (typeof d === "string" ? d : JSON.stringify(d)),
+          where: d.where_it_would_help || "resume",
+          impact: d.impact || "high",
+        }))
+        .filter((q: any) => q.question);
+
+      if (questions.length > 0) {
+        const gapState = {
+          questions,
+          current_question_index: 0,
+          answers: {} as Record<string, string>,
+          resume_text: resumeText,
+          target_role: targetRole,
+          partial_score: overall,
+          rounds_completed: MAX_ROUNDS,
+          checklist: null, // Will re-research with new data
+        };
+
+        await supabase.from("conversations")
+          .update({
+            state: "gap_filling",
+            context_json: { gap_filling: gapState },
+          })
+          .eq("phone_number", from);
+
+        const firstQ = questions[0];
+        await sendProgress(
+          `⚠️ *Score: ${overall}/100* — need 90+ to complete.\n\n` +
+          `I need ${questions.length} piece(s) of information.\n\n` +
+          `Question 1 of ${questions.length}:\n` +
+          `❓ ${firstQ.question}\n\n` +
+          `_Reply with your answer, or type *skip* to skip._`
+        );
+        return;
+      }
 
       await sendProgress(
-        `⚠️ *Optimization incomplete* (Score: ${overall}/100)\n\n` +
-        `The resume still has too many gaps to be usable. Missing:\n${reasons}\n\n` +
-        `Please provide the missing details and say *Optimize* again.`
+        `⚠️ *Score: ${overall}/100* — target is 90+.\n\n` +
+        `Please provide more details about your work history, then say *Optimize* again.`
       );
-      return; // Do NOT save a low-quality resume as "complete"
+      return;
     }
 
     // ── SAVE RESULTS (only if quality is acceptable) ──
