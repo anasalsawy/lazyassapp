@@ -421,7 +421,7 @@ async function runOptimizationPipeline(
     // ── QUALITY GATE: Refuse to save garbage ──
     const overall = scorecard?.scores?.overall ?? 0;
     const atsScore = scorecard?.scores?.ats_compliance ?? 0;
-    const MIN_ACCEPTABLE_SCORE = 60;
+    const MIN_ACCEPTABLE_SCORE = 90;
 
     if (overall < MIN_ACCEPTABLE_SCORE) {
       const dataNeeded = scorecard?.data_needed || [];
