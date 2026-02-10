@@ -441,11 +441,20 @@ serve(async (req) => {
 
   const stream = new ReadableStream({
     async start(controller) {
+      // Declare pipeline state OUTSIDE try so catch can access for crash recovery
+      let resumeFromStep: string | null = null;
+      let pipelineState: PipelineState | null = null;
+      let rawResumeText = "";
+      let jd: string | null = jobDescription ?? null;
+      let role = "";
+      let loc = "";
+      let checklist: any = null;
+      let writerDraft: any = null;
+      let scorecard: any = null;
+      let roundsCompleted = 0;
+
       try {
         // ── Determine start point ─────────────────────────────────────
-        let resumeFromStep: string | null = null;
-        let pipelineState: PipelineState | null = null;
-
         if (continuation_id) {
           const cont = await loadContinuation(continuation_id);
           if (!cont) {
@@ -457,15 +466,17 @@ serve(async (req) => {
           sendSSE(controller, encoder, "progress", { step: "resuming", message: `Resuming from ${resumeFromStep?.replace(/_/g, " ")}...` });
         }
 
-        // ── Initialize artifacts ──────────────────────────────────────
-        let rawResumeText = pipelineState?.rawResumeText || "";
-        let jd = pipelineState?.jobDescription ?? jobDescription ?? null;
-        let role = pipelineState?.role || "";
-        let loc = pipelineState?.loc || "";
-        let checklist = pipelineState?.checklist || null;
-        let writerDraft: any = pipelineState?.writerDraft || null;
-        let scorecard: any = pipelineState?.scorecard || null;
-        let roundsCompleted = pipelineState?.roundsCompleted || 0;
+        // ── Initialize artifacts from continuation ────────────────────
+        if (pipelineState) {
+          rawResumeText = pipelineState.rawResumeText || "";
+          jd = pipelineState.jobDescription ?? jd;
+          role = pipelineState.role || "";
+          loc = pipelineState.loc || "";
+          checklist = pipelineState.checklist || null;
+          writerDraft = pipelineState.writerDraft || null;
+          scorecard = pipelineState.scorecard || null;
+          roundsCompleted = pipelineState.roundsCompleted || 0;
+        }
 
         // ── 1. Fetch resume (fresh start only) ────────────────────────
         if (!resumeFromStep) {
