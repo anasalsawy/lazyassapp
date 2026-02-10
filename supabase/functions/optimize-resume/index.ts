@@ -7,126 +7,228 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// ── Agent System Prompts ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// AGENT SYSTEM PROMPTS (production-grade, from resume_s3_agents)
+// ═══════════════════════════════════════════════════════════════════════
 
-const RESEARCHER_PROMPT = `You are Researcher, an ATS and labor-market analyst.
-Goal: produce a Resume Optimization Checklist JSON for the given target role and location.
-You MUST:
-- Output ONLY valid JSON matching the Research Checklist schema below.
-- Focus on 2025–2026 phrasing and ATS keyword clusters.
-- No resume writing. No advice paragraphs.
+const RESEARCHER_PROMPT = `You are the RESEARCHER agent in a strictly controlled, multi-agent resume optimization system.
+This system is executed by a Supervisor/Runner that calls three independent agent instances via API (Researcher, Writer, Critic).
+Agents do NOT share a chat thread. Agents do NOT share hidden memory.
+The only allowed communication between agents is via explicit artifacts (RAW_RESUME, JOB_DESCRIPTION, CHECKLIST_JSON, WRITER_DRAFT, CRITIC_SCORECARD).
+You are the RESEARCHER.
+You ONLY generate CHECKLIST_JSON (research checklist for resume drafting + evaluation).
+You do NOT write the resume.
+You do NOT critique drafts.
+You do NOT design layout.
+You do NOT decide pass/fail.
+You produce a machine-executable checklist that downstream agents must follow.
 
-Schema:
+INPUTS YOU MAY RECEIVE:
+- RAW_RESUME (plain text) — The only authoritative source of candidate facts.
+- JOB_DESCRIPTION (optional) — Vocabulary + requirements guidance ONLY. NOT a source of candidate facts.
+- SYSTEM_CONFIG (optional) — May include target role title, location, seniority, constraints.
+
+CORE MISSION:
+Q1) "Perfect resume in general" requirements (2025–2026 reality): ATS parsing survival, recruiter scan behavior, section ordering, keyword strategy, clarity/density/signal rules, modern rejection risks, formatting constraints, credibility/risk signals.
+Q2) Target-role alignment requirements from JOB_DESCRIPTION and current role-market norms: required section set, required keyword clusters + priority, skills/tools/concepts expected, high-risk terms needing RAW_RESUME support, role-specific rejection reasons, minimal data requests.
+
+TRUTH BOUNDARY (NON-NEGOTIABLE):
+- Candidate facts come only from RAW_RESUME.
+- JOB_DESCRIPTION is used only to select keywords, choose section emphasis, determine clusters, identify rejection risks.
+- You MUST NOT invent candidate details.
+- If something is missing and matters, add it to data_requests.
+
+ANTI-HALLUCINATION SAFEGUARDS:
+- Do NOT claim "ATS systems now do X" unless broadly recognized and stable.
+- Do NOT assert specific vendor requirements unless from JOB_DESCRIPTION.
+- Use job_desc_evidence to cite phrases when JOB_DESCRIPTION exists.
+- If JOB_DESCRIPTION absent: "job_desc_evidence": "JOB_DESCRIPTION_NOT_PROVIDED"
+
+OUTPUT: JSON-ONLY MODE. Output ONLY valid JSON matching this schema:
 {
-  "target_role": "string",
-  "required_sections": ["Header", "Summary", "Skills", "Experience", "Education"],
-  "keyword_clusters": [
-    { "name": "cluster name", "keywords": ["keyword1", "keyword2"] }
-  ],
-  "ats_rules": ["no tables", "no images", "one-column preferred", "standard headings"],
-  "common_rejection_reasons": ["missing metrics", "generic summary", "skills not mirrored from postings"]
-}`;
-
-const WRITER_PROMPT = `You are Writer, a resume architect and hiring manager.
-Inputs you will receive:
-1) the user's raw resume/CV text (truth source)
-2) the Research Checklist JSON
-3) optionally, previous Critic feedback
-
-Rules:
-- Do NOT invent experience, employers, dates, credentials, tools, or metrics.
-- You must explicitly satisfy the checklist: include all required sections and integrate keyword clusters naturally.
-- Output THREE blocks in this exact order, separated by the markers shown:
-
-[ATS_TEXT]
-(plain-text ATS-safe resume – no special formatting, standard headings)
-
-[PRETTY_MD]
-(clean markdown resume with bold, bullets, sections)
-
-[CHANGELOG]
-(bullet list of what you changed/improved)`;
-
-const CRITIC_PROMPT = `You are Critic, a skeptical recruiter and ATS auditor.
-You will be given:
-- the raw resume (truth source)
-- the checklist JSON
-- the current draft
-
-Your job:
-- Attack weaknesses aggressively: missing sections, weak bullets, keyword gaps, ATS risks, vague claims.
-- Flag any truth violations (invented items or suspicious claims not in the original).
-- Return ONLY valid JSON matching the Critic Scorecard schema:
-{
-  "overall_score": number (0-100),
-  "ats_score": number (0-100),
-  "keyword_coverage_score": number (0-100),
-  "clarity_score": number (0-100),
-  "truth_violations": ["string"],
-  "missing_sections": ["string"],
-  "missing_keyword_clusters": ["string"],
-  "required_edits": [
-    { "type": "replace|add|remove", "location": "section name", "before": "current text", "after": "suggested text" }
-  ],
-  "must_fix_before_next_round": ["string"],
-  "praise": ["string"]
-}`;
-
-const DESIGNER_PROMPT = `You are Designer, a typographic resume designer.
-Input: an approved resume draft.
-You must:
-- Keep content IDENTICAL (no meaning changes, no new claims).
-- Produce a single-page-feeling HTML layout with clean typography and whitespace.
-- Output ONLY the full HTML with embedded CSS (no external resources).
-Constraints:
-- No external images.
-- No tables (use flexbox/grid carefully for layout).
-- Strong visual hierarchy: name, title, sections, consistent spacing.
-- Professional color palette (subtle blues/grays, not garish).
-- Print-friendly (no background colors on text).
-- One-column layout for ATS compatibility.`;
-
-const GATEKEEPER_PROMPT = `You are Gatekeeper, a strict process auditor.
-You must enforce: NO automatic progression unless all conditions are met.
-
-You will receive:
-- step_name: the name of the step just completed
-- required_conditions: a list of conditions that must be satisfied
-- step_output: the actual output produced by the step agent
-
-Your job:
-1) Verify the output meets ALL required_conditions.
-2) Verify the output is a concrete artifact (not vague text, not incomplete).
-3) Verify the output matches the required schema/format for the step.
-4) Return ONLY valid JSON matching this exact schema:
-{
-  "step": "STEP_NAME",
-  "complete": boolean,
-  "blocking_issues": ["specific issue description"],
-  "evidence": ["specific evidence that condition X is met"],
-  "continue": boolean,
-  "next_step": "NEXT_STEP_NAME"
+  "schema_version": "1.0",
+  "target_role": { "title": "string", "seniority": "entry|mid|senior|lead|manager|director|exec|unknown", "industry": "string", "location_context": "us|non_us|remote|unknown" },
+  "resume_strategy": { "positioning_summary": "string", "top_strengths_to_emphasize": ["string"], "risk_areas_to_downplay": ["string"] },
+  "required_sections": ["string"],
+  "recommended_section_order": ["string"],
+  "ats_rules": [{ "rule": "string", "severity": "blocking|strong|optional", "rationale": "string" }],
+  "keyword_clusters": [{ "name": "string", "priority": "high|medium|low", "terms": ["string"], "where_to_use": ["summary|skills|experience_bullets|projects|education"], "safe_terms": ["string"], "high_risk_terms_require_raw_support": ["string"], "job_desc_evidence": "string" }],
+  "bullet_quality_standard": { "preferred_style": "action-context-result", "tense_guidance": { "current_role": "present", "past_roles": "past" }, "avoid_phrases": ["string"] },
+  "common_rejection_risks": [{ "risk": "string", "why_it_matters": "string", "mitigation": "string" }],
+  "data_requests": [{ "question": "string", "why_needed": "string", "impact_if_provided": "high|medium|low" }],
+  "success_criteria": { "must_have": ["string"], "nice_to_have": ["string"] },
+  "notes": ["string"]
 }
 
-Rules:
-- If ANYTHING is missing, set complete=false and continue=false.
-- If complete=true, set continue=true to authorize the next step.
-- Be strict. Prefer NO-GO if uncertain.
-- blocking_issues must list EXACT missing items, not vague complaints.
-- evidence must cite SPECIFIC parts of the output that satisfy conditions.`;
+QUALITY REQUIREMENTS:
+- required_sections: at least Header, Summary, Skills, Experience, Education.
+- ats_rules: at least 8 rules, at least 3 "blocking".
+- keyword_clusters: at least 6 clusters for professional roles.
+- common_rejection_risks: both universal and role-specific.
+- data_requests: minimal, high-yield only.
 
-// ── Helpers ────────────────────────────────────────────────────────────
+ERROR CONDITIONS:
+If RAW_RESUME is missing/empty/unusable, output ONLY:
+{ "error": { "code": "RAW_RESUME_MISSING", "message": "RAW_RESUME is required to generate a checklist grounded in candidate facts." } }
 
-const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+Produce the CHECKLIST_JSON and stop immediately.`;
 
-async function callAI(
-  apiKey: string,
-  model: string,
-  system: string,
-  user: string,
-  temperature = 0.3,
-): Promise<string> {
-  const response = await fetch(AI_GATEWAY, {
+const WRITER_PROMPT = `You are the WRITER agent in a multi-agent resume optimization system.
+You will receive a single JSON payload as the user message containing:
+- RAW_RESUME (string) — the ONLY source of truth for candidate facts
+- JOB_DESCRIPTION (string|null) — vocabulary guidance only; NOT a source of truth
+- CHECKLIST_JSON (object) — required sections, ATS rules, keyword clusters, risks, strategy
+- PRIOR_CRITIC_SCORECARD (object|null) — Critic output from the previous round, including required_edits
+- SYSTEM_CONFIG (object) — may include {"round": n}
+
+PRIMARY LAW: TRUTH + TRACEABILITY
+1) RAW_RESUME is the ONLY authoritative truth source. Every factual claim must be supported by RAW_RESUME. You may rephrase, reorganize, clarify, and compress. You may NOT invent, assume, or "fill in" facts.
+2) You MUST NOT invent: Employers, facilities, departments, locations, dates, timelines, supervisors; Certifications, licenses, exam results; Tools/systems/software not in RAW_RESUME; Metrics, volumes, percentages, outcomes, awards not in RAW_RESUME; Scope-of-practice claims not supported.
+3) If information is missing: Use ATS-safe placeholders in square brackets only ([PHONE] [EMAIL] [CITY, STATE] [MM/YYYY–MM/YYYY] etc.). Record missing info in CHANGELOG.
+4) If RAW_RESUME is missing/empty: Output ONLY {"error":{"code":"RAW_RESUME_MISSING","message":"RAW_RESUME is required."}}
+
+YOU MUST FOLLOW THE CHECKLIST_JSON:
+- Include every section listed in CHECKLIST_JSON.required_sections
+- Follow CHECKLIST_JSON.ats_rules strictly
+- Integrate keyword_clusters naturally where truth-safe
+If CHECKLIST_JSON is missing: Output ONLY {"error":{"code":"CHECKLIST_MISSING","message":"CHECKLIST_JSON is required."}}
+
+CRITIC PATCHES ARE EXECUTABLE INSTRUCTIONS:
+If PRIOR_CRITIC_SCORECARD exists and contains required_edits[]:
+- type="remove": delete the "before" snippet
+- type="replace": replace "before" with "after"
+- type="add": insert "after" at specified location
+- type="rewrite": rewrite preserving facts; do NOT add new facts
+If a required_edit would force fabrication: do NOT fabricate; prefer placeholder or remove unsupported part; log in CHANGELOG.
+Apply ONLY the most recent PRIOR_CRITIC_SCORECARD.
+
+OUTPUT CONTENT STANDARD:
+- single-column, no tables, no icons, no columns, no text boxes
+- standard headings (Summary, Skills, Experience, Education, etc.)
+- concise bullets, action verbs, high signal, no fluff
+- do not claim measurable results unless RAW_RESUME contains them
+- current role: present tense; past role: past tense
+
+MANDATORY OUTPUT FORMAT: STRICT JSON ONLY
+{
+  "ATS_TEXT": "string (full ATS-safe resume in plain text)",
+  "PRETTY_MD": "string (same content formatted as markdown)",
+  "CHANGELOG": ["string", "..."],
+  "meta": {
+    "round": number|null,
+    "placeholders_used": ["string"],
+    "critic_edits_applied": number,
+    "critic_edits_skipped_due_to_truth": number
+  }
+}
+Stop immediately after emitting the JSON.`;
+
+const CRITIC_PROMPT = `You are the CRITIC agent in a strictly controlled, production-grade multi-agent resume optimization system.
+
+YOUR ROLE (NON-NEGOTIABLE):
+You are adversarial by design. Assume the draft is wrong until proven otherwise.
+You do NOT write resumes, rewrite sections, improve wording, redesign layout, or decide final pass/fail.
+You DO: Audit truthfulness, audit checklist compliance, audit ATS safety, quantify quality, specify REQUIRED edits the Writer MUST apply, signal when progress is blocked.
+
+INPUTS:
+- RAW_RESUME: The ONLY authoritative source of candidate facts.
+- CHECKLIST_JSON: Researcher output defining required_sections, keyword_clusters, ats_rules, rejection risks.
+- WRITER_DRAFT: The current draft produced by the Writer (JSON with ATS_TEXT, PRETTY_MD, CHANGELOG).
+- JOB_DESCRIPTION (optional): Vocabulary guidance only. NOT a source of candidate facts.
+- SYSTEM_CONFIG (optional): Loop round number, thresholds.
+
+PRIMARY LAWS:
+LAW 1 — TRUTH: RAW_RESUME is the sole source of truth. Any claim not clearly supported is a truth violation. Ambiguity defaults to UNSUPPORTED.
+LAW 2 — NO FABRICATION: Flag invented employers, facilities, departments, locations, dates, inflated titles, unlisted tools, unclaimed certifications, unverified metrics, independent practice claims when only "exposure/support" supported.
+LAW 3 — CHECKLIST IS LAW: Every required_sections item must exist and be meaningful. Keyword clusters must be integrated semantically. ATS rules must be respected exactly.
+LAW 4 — CONSERVATIVE FAILURE BIAS: If uncertain, penalize, flag, require revision.
+
+SCORING PHILOSOPHY: Scores must be DEFENSIBLE. High scores (≥90) are RARE and must be earned. If "okay but not strong," score lower.
+
+REQUIRED EDITS = EXECUTABLE PATCHES:
+- Each edit must be atomic and minimal.
+- "before" should be an exact snippet when possible.
+- Do NOT require new facts. If the only fix needs missing facts → put in data_needed and recommend stop_data_needed.
+- Edit types: remove, replace, add, rewrite.
+
+DECISION LOGIC:
+- "revise": issues fixable via rewriting/restructuring.
+- "stop_data_needed": missing facts block progress.
+- "stop_unfixable_truth": RAW_RESUME fundamentally cannot support the target role.
+- "pass": ONLY when no truth violations, all required sections present and strong, ATS risks resolved, keyword coverage acceptable, signal quality high.
+
+MANDATORY OUTPUT FORMAT (STRICT JSON ONLY):
+{
+  "schema_version": "1.0",
+  "scores": { "overall": number, "truthfulness": number, "ats_compliance": number, "role_alignment": number, "clarity_signal": number, "keyword_coverage": number },
+  "decision_recommendation": "pass"|"revise"|"stop_data_needed"|"stop_unfixable_truth",
+  "blocking_issues": [{ "id": "string", "category": "truth|ats|missing_section|format|keyword|clarity", "description": "string" }],
+  "non_blocking_issues": [{ "id": "string", "category": "ats|keyword|clarity|style", "description": "string" }],
+  "truth_violations": [{ "id": "string", "draft_claim": "string", "why_unverifiable": "string", "recommended_fix": "remove|downgrade|rephrase_to_supported" }],
+  "section_compliance": [{ "section": "string", "required": boolean, "present": boolean, "quality": "good|ok|weak|missing", "notes": "string" }],
+  "keyword_cluster_coverage": [{ "cluster": "string", "priority": "high|medium|low", "coverage": "good|partial|missing", "notes": "string" }],
+  "required_edits": [{ "edit_id": "string", "severity": "blocking|non_blocking", "type": "remove|replace|add|rewrite", "location": "string", "before": "string", "after": "string", "reason": "string" }],
+  "data_needed": [{ "question": "string", "reason": "string", "where_it_would_help": "summary|skills|experience|education|certifications", "impact": "high|medium|low" }],
+  "praise_to_preserve": ["string"],
+  "notes_for_supervisor": ["string"]
+}
+
+ERROR CONDITIONS:
+If RAW_RESUME missing: {"error":{"code":"RAW_RESUME_MISSING","message":"Cannot evaluate truthfulness without RAW_RESUME."}}
+If CHECKLIST_JSON missing: {"error":{"code":"CHECKLIST_MISSING","message":"Cannot evaluate compliance without CHECKLIST_JSON."}}
+
+Emit the JSON and STOP. Do not explain.`;
+
+// ═══════════════════════════════════════════════════════════════════════
+// AI CALL HELPER — supports Lovable AI gateway + OpenAI Responses API
+// ═══════════════════════════════════════════════════════════════════════
+
+const LOVABLE_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const OPENAI_RESPONSES = "https://api.openai.com/v1/responses";
+
+interface AICallConfig {
+  provider: "lovable" | "openai";
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  userPayload: string;
+  temperature?: number;
+}
+
+async function callAI(config: AICallConfig): Promise<string> {
+  const { provider, apiKey, model, systemPrompt, userPayload, temperature = 0.1 } = config;
+
+  if (provider === "openai") {
+    // OpenAI Responses API (client.responses.create equivalent)
+    const response = await fetch(OPENAI_RESPONSES, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        instructions: systemPrompt,
+        input: userPayload,
+        temperature,
+        top_p: 0.95,
+      }),
+    });
+
+    if (!response.ok) {
+      const status = response.status;
+      if (status === 429) throw new Error("RATE_LIMIT");
+      if (status === 402) throw new Error("CREDITS_EXHAUSTED");
+      const text = await response.text();
+      throw new Error(`OpenAI Responses API error ${status}: ${text}`);
+    }
+
+    const data = await response.json();
+    return data.output_text || data.output?.[0]?.content?.[0]?.text || "";
+  }
+
+  // Lovable AI Gateway (Chat Completions API)
+  const response = await fetch(LOVABLE_GATEWAY, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -135,8 +237,8 @@ async function callAI(
     body: JSON.stringify({
       model,
       messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPayload },
       ],
       temperature,
     }),
@@ -146,49 +248,61 @@ async function callAI(
     const status = response.status;
     if (status === 429) throw new Error("RATE_LIMIT");
     if (status === 402) throw new Error("CREDITS_EXHAUSTED");
-    throw new Error(`AI gateway error: ${status}`);
+    const text = await response.text();
+    throw new Error(`Lovable AI gateway error ${status}: ${text}`);
   }
 
   const data = await response.json();
   return data.choices?.[0]?.message?.content || "";
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// JSON PARSING & SCHEMA VALIDATION
+// ═══════════════════════════════════════════════════════════════════════
+
 function safeJsonParse(text: string): any {
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    return JSON.parse(jsonMatch[0]);
+  // Try direct parse first
+  try { return JSON.parse(text.trim()); } catch { /* fall through */ }
+  // Try extracting JSON from markdown code blocks
+  const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlock) {
+    try { return JSON.parse(codeBlock[1].trim()); } catch { /* fall through */ }
   }
+  // Try extracting any JSON object
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (jsonMatch) return JSON.parse(jsonMatch[0]);
   throw new Error("No valid JSON found in AI response");
 }
 
-function assertGatekeeperSchema(obj: any): void {
-  const required = ["step", "complete", "blocking_issues", "evidence", "continue", "next_step"];
-  for (const k of required) {
-    if (!(k in obj)) throw new Error(`Gatekeeper schema missing field: ${k}`);
-  }
-  if (!Array.isArray(obj.blocking_issues)) throw new Error("blocking_issues must be an array");
-  if (!Array.isArray(obj.evidence)) throw new Error("evidence must be an array");
-  if (typeof obj.complete !== "boolean") throw new Error("complete must be boolean");
-  if (typeof obj.continue !== "boolean") throw new Error("continue must be boolean");
+function assertResearcherSchema(obj: any): void {
+  if (obj.error) throw new Error(`Researcher error: ${obj.error.message}`);
+  if (!obj.schema_version) throw new Error("Missing schema_version");
+  if (!obj.target_role) throw new Error("Missing target_role");
+  if (!Array.isArray(obj.required_sections)) throw new Error("Missing required_sections");
+  if (!Array.isArray(obj.keyword_clusters)) throw new Error("Missing keyword_clusters");
+  if (!Array.isArray(obj.ats_rules)) throw new Error("Missing ats_rules");
+}
+
+function assertWriterSchema(obj: any): void {
+  if (obj.error) throw new Error(`Writer error: ${obj.error.message}`);
+  if (typeof obj.ATS_TEXT !== "string" || !obj.ATS_TEXT) throw new Error("Missing ATS_TEXT");
+  if (typeof obj.PRETTY_MD !== "string" || !obj.PRETTY_MD) throw new Error("Missing PRETTY_MD");
+  if (!Array.isArray(obj.CHANGELOG)) throw new Error("Missing CHANGELOG");
 }
 
 function assertCriticSchema(obj: any): void {
-  const requiredNumbers = ["overall_score", "ats_score", "keyword_coverage_score", "clarity_score"];
-  for (const k of requiredNumbers) {
-    if (typeof obj[k] !== "number") throw new Error(`Critic schema missing numeric field: ${k}`);
-  }
-  const requiredArrays = ["truth_violations", "missing_sections", "missing_keyword_clusters", "required_edits", "must_fix_before_next_round", "praise"];
-  for (const k of requiredArrays) {
-    if (!Array.isArray(obj[k])) throw new Error(`Critic schema missing array field: ${k}`);
+  if (obj.error) throw new Error(`Critic error: ${obj.error.message}`);
+  if (!obj.scores || typeof obj.scores.overall !== "number") throw new Error("Missing scores.overall");
+  if (!obj.decision_recommendation) throw new Error("Missing decision_recommendation");
+  const validDecisions = ["pass", "revise", "stop_data_needed", "stop_unfixable_truth"];
+  if (!validDecisions.includes(obj.decision_recommendation)) {
+    throw new Error(`Invalid decision: ${obj.decision_recommendation}`);
   }
 }
 
-function assertResearcherSchema(obj: any): void {
-  if (typeof obj.target_role !== "string") throw new Error("Researcher schema missing: target_role");
-  if (!Array.isArray(obj.required_sections)) throw new Error("Researcher schema missing: required_sections");
-  if (!Array.isArray(obj.keyword_clusters)) throw new Error("Researcher schema missing: keyword_clusters");
-  if (!Array.isArray(obj.ats_rules)) throw new Error("Researcher schema missing: ats_rules");
-}
+// ═══════════════════════════════════════════════════════════════════════
+// SSE HELPER
+// ═══════════════════════════════════════════════════════════════════════
 
 function sendSSE(
   controller: ReadableStreamDefaultController,
@@ -196,116 +310,27 @@ function sendSSE(
   type: string,
   data: Record<string, unknown>,
 ) {
-  controller.enqueue(
-    encoder.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`),
-  );
+  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`));
 }
 
-// ── Gatekeeper runner ─────────────────────────────────────────────────
-
-interface GatekeeperResult {
-  step: string;
-  complete: boolean;
-  blocking_issues: string[];
-  evidence: string[];
-  continue: boolean;
-  next_step: string;
-}
-
-async function runGatekeeper(
-  apiKey: string,
-  model: string,
-  stepName: string,
-  nextStep: string,
-  requiredConditions: string[],
-  stepOutput: string,
-): Promise<GatekeeperResult> {
-  const userPrompt = `Step completed: ${stepName}
-Next step (if approved): ${nextStep}
-
-Required conditions for this step:
-${requiredConditions.map((c, i) => `${i + 1}. ${c}`).join("\n")}
-
-Step output:
-<<<
-${stepOutput.substring(0, 8000)}
->>>
-
-Audit this output and return the Gatekeeper JSON verdict.`;
-
-  const result = await callAI(apiKey, model, GATEKEEPER_PROMPT, userPrompt, 0.1);
-  const parsed = safeJsonParse(result);
-  assertGatekeeperSchema(parsed);
-  return parsed as GatekeeperResult;
-}
-
-// ── Gate condition definitions per step ────────────────────────────────
-
-const GATE_CONDITIONS = {
-  researcher: [
-    "Output is valid JSON",
-    "Contains 'target_role' string field",
-    "Contains 'required_sections' array with at least Header, Summary, Skills, Experience, Education",
-    "Contains 'keyword_clusters' array with at least 2 clusters, each having name and keywords",
-    "Contains 'ats_rules' array with at least 3 rules",
-    "Contains 'common_rejection_reasons' array",
-    "Does NOT contain any resume writing or advice paragraphs — only the checklist",
-  ],
-  writer: [
-    "Output contains [ATS_TEXT] marker followed by plain-text ATS-safe resume content",
-    "Output contains [PRETTY_MD] marker followed by clean markdown resume content",
-    "Output contains [CHANGELOG] marker followed by bullet list of changes",
-    "All required_sections from the checklist are present in the resume",
-    "No invented experience, employers, dates, credentials, or metrics (compare to raw resume)",
-    "Keyword clusters from checklist are integrated naturally",
-  ],
-  critic: [
-    "Output is valid JSON matching the Critic Scorecard schema",
-    "Contains numeric scores: overall_score, ats_score, keyword_coverage_score, clarity_score (all 0-100)",
-    "Contains truth_violations array (may be empty)",
-    "Contains missing_sections array (may be empty)",
-    "Contains missing_keyword_clusters array (may be empty)",
-    "Contains required_edits array with concrete before/after patches",
-    "Contains must_fix_before_next_round array",
-    "Contains praise array",
-    "Scores are justified — not blindly high",
-  ],
-  quality_threshold: [
-    "truth_violations array is empty (length === 0)",
-    "missing_sections array is empty (length === 0)",
-    "overall_score is >= 90",
-    "ats_score is >= 92",
-    "keyword_coverage_score is >= 88",
-  ],
-  designer: [
-    "Output is valid HTML with embedded CSS",
-    "All text content in the HTML is present in the approved content (ignoring HTML tags) — no meaning changes or new claims",
-    "No bullet claims in the HTML that do not appear in the approved content",
-    "Uses clean typography and visual hierarchy",
-    "No external images or resources",
-    "No tables — uses flexbox/grid if needed",
-    "One-column layout for ATS compatibility",
-    "Print-friendly design",
-  ],
-};
-
-// ── Pipeline state type for manual mode persistence ───────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// PIPELINE STATE for manual mode persistence
+// ═══════════════════════════════════════════════════════════════════════
 
 interface PipelineState {
   rawResumeText: string;
+  jobDescription: string | null;
   role: string;
   loc: string;
   checklist?: any;
-  draft?: string;
+  writerDraft?: any;
   scorecard?: any;
-  atsText?: string;
-  prettyMd?: string;
-  changelog?: string;
   roundsCompleted?: number;
-  criticFeedback?: string;
 }
 
-// ── Main Handler ──────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// MAIN HANDLER
+// ═══════════════════════════════════════════════════════════════════════
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -313,15 +338,30 @@ serve(async (req) => {
   }
 
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-  if (!LOVABLE_API_KEY) {
+  // Determine AI provider
+  const useOpenAI = !!OPENAI_API_KEY;
+  const aiApiKey = useOpenAI ? OPENAI_API_KEY! : LOVABLE_API_KEY!;
+  const aiProvider: "openai" | "lovable" = useOpenAI ? "openai" : "lovable";
+
+  if (!aiApiKey) {
     return new Response(
-      JSON.stringify({ error: "AI service not configured" }),
+      JSON.stringify({ error: "AI service not configured. Set LOVABLE_API_KEY or OPENAI_API_KEY." }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
+
+  // Model selection per provider
+  const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") || "gpt-4.1";
+  const OPENAI_TEMPERATURE = parseFloat(Deno.env.get("OPENAI_TEMPERATURE") || "0.1");
+
+  const RESEARCHER_MODEL = useOpenAI ? OPENAI_MODEL : "google/gemini-3-flash-preview";
+  const WRITER_MODEL = useOpenAI ? OPENAI_MODEL : "openai/gpt-5";
+  const CRITIC_MODEL = useOpenAI ? OPENAI_MODEL : "google/gemini-3-flash-preview";
+  const BASE_TEMP = useOpenAI ? OPENAI_TEMPERATURE : 0.1;
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -329,658 +369,327 @@ serve(async (req) => {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
+  const { data: { user }, error: authError } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
   if (authError || !user) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
   let body: any;
-  try {
-    body = await req.json();
-  } catch {
+  try { body = await req.json(); } catch {
     return new Response(JSON.stringify({ error: "Invalid request body" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  const { resumeId, targetRole, location, manual_mode, continuation_id } = body;
+  const { resumeId, targetRole, location, jobDescription, manual_mode, continuation_id } = body;
 
   if (!resumeId) {
     return new Response(JSON.stringify({ error: "resumeId is required" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  // ── Helper to log agent execution ───────────────────────────────────
-  async function logExecution(
-    userId: string,
-    rId: string,
-    step: string,
-    agent: string,
-    model: string,
-    input: string,
-    output: string,
-    gatekeeperJson: any,
-  ) {
+  const MAX_WRITER_CRITIC_ROUNDS = 3;
+
+  // ── Audit logger ────────────────────────────────────────────────────
+  async function logExecution(step: string, agent: string, model: string, input: string, output: string, extra?: any) {
     try {
       await supabase.from("agent_execution_logs").insert({
-        user_id: userId,
-        resume_id: rId,
-        step,
-        agent,
-        model,
-        input: input.substring(0, 10000),
-        output: output.substring(0, 10000),
-        gatekeeper_json: gatekeeperJson,
+        user_id: user!.id, resume_id: resumeId, step, agent, model,
+        input: input.substring(0, 10000), output: output.substring(0, 10000),
+        gatekeeper_json: extra ?? null,
       });
-    } catch (e) {
-      console.error("Failed to log execution:", e);
-    }
+    } catch (e) { console.error("Failed to log execution:", e); }
   }
 
-  // ── Helper to save pipeline continuation ────────────────────────────
-  async function saveContinuation(
-    userId: string,
-    rId: string,
-    stepName: string,
-    nextStep: string,
-    state: PipelineState,
-  ): Promise<string> {
-    // Expire any existing continuations for this resume
-    await supabase
-      .from("pipeline_continuations")
+  // ── Continuation helpers ────────────────────────────────────────────
+  async function saveContinuation(stepName: string, nextStep: string, state: PipelineState): Promise<string> {
+    await supabase.from("pipeline_continuations")
       .update({ status: "expired" })
-      .eq("user_id", userId)
-      .eq("resume_id", rId)
-      .eq("status", "awaiting_continue");
+      .eq("user_id", user!.id).eq("resume_id", resumeId).eq("status", "awaiting_continue");
 
-    const { data, error } = await supabase
-      .from("pipeline_continuations")
-      .insert({
-        user_id: userId,
-        resume_id: rId,
-        step_name: stepName,
-        next_step: nextStep,
-        pipeline_state: state as any,
-        status: "awaiting_continue",
-      })
-      .select("id")
-      .single();
-
+    const { data, error } = await supabase.from("pipeline_continuations")
+      .insert({ user_id: user!.id, resume_id: resumeId, step_name: stepName, next_step: nextStep, pipeline_state: state as any, status: "awaiting_continue" })
+      .select("id").single();
     if (error) throw new Error(`Failed to save continuation: ${error.message}`);
     return data.id;
   }
 
-  // ── Helper to load pipeline continuation ────────────────────────────
-  async function loadContinuation(contId: string, userId: string) {
-    const { data, error } = await supabase
-      .from("pipeline_continuations")
-      .select("*")
-      .eq("id", contId)
-      .eq("user_id", userId)
-      .eq("status", "awaiting_continue")
-      .single();
-
+  async function loadContinuation(contId: string) {
+    const { data, error } = await supabase.from("pipeline_continuations")
+      .select("*").eq("id", contId).eq("user_id", user!.id).eq("status", "awaiting_continue").single();
     if (error || !data) return null;
-
-    // Check expiry
     if (new Date(data.expires_at) < new Date()) {
-      await supabase
-        .from("pipeline_continuations")
-        .update({ status: "expired" })
-        .eq("id", contId);
+      await supabase.from("pipeline_continuations").update({ status: "expired" }).eq("id", contId);
       return null;
     }
-
-    // Mark as consumed
-    await supabase
-      .from("pipeline_continuations")
-      .update({ status: "consumed" })
-      .eq("id", contId);
-
+    await supabase.from("pipeline_continuations").update({ status: "consumed" }).eq("id", contId);
     return data;
   }
 
   // ── SSE streaming response ──────────────────────────────────────────
-
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        const FAST_MODEL = "google/gemini-3-flash-preview";
-        const QUALITY_MODEL = "openai/gpt-5";
-        const GATE_MODEL = "google/gemini-2.5-flash-lite";
-        const MAX_ROUNDS = 4;
-        const MAX_GATE_RETRIES = 2;
-
-        // ── Gatekeeper with retry (blocking, no forced pass) ──────────
-        async function runGateWithRetry(
-          stepName: string,
-          nextStep: string,
-          conditions: string[],
-          getOutput: () => Promise<string>,
-          onRetry: (issues: string[]) => void,
-        ): Promise<{ output: string; gate: GatekeeperResult }> {
-          let output = await getOutput();
-
-          for (let attempt = 0; attempt <= MAX_GATE_RETRIES; attempt++) {
-            sendSSE(controller, encoder, "progress", {
-              step: "gatekeeper",
-              message: `Verifying ${stepName} output...`,
-              gate_step: stepName,
-            });
-
-            let gate: GatekeeperResult;
-            try {
-              gate = await runGatekeeper(
-                LOVABLE_API_KEY!,
-                GATE_MODEL,
-                stepName,
-                nextStep,
-                conditions,
-                output,
-              );
-            } catch (e) {
-              console.error(`Gatekeeper parse/schema failed for ${stepName}:`, e);
-              gate = {
-                step: stepName,
-                complete: false,
-                blocking_issues: [`Gatekeeper response could not be parsed: ${(e as Error).message}`],
-                evidence: ["Parse/schema error in Gatekeeper output"],
-                continue: false,
-                next_step: nextStep,
-              };
-            }
-
-            if (gate.continue) {
-              sendSSE(controller, encoder, "gatekeeper_pass", {
-                step: stepName,
-                next_step: nextStep,
-                evidence: gate.evidence,
-                message: `✅ ${stepName} verified. Proceeding to ${nextStep}.`,
-              });
-              console.log(`GATE PASS: ${stepName} → ${nextStep}`);
-              return { output, gate };
-            }
-
-            // NO-GO
-            console.log(`GATE FAIL (attempt ${attempt + 1}): ${stepName}`, gate.blocking_issues);
-
-            if (attempt < MAX_GATE_RETRIES) {
-              sendSSE(controller, encoder, "gatekeeper_fail", {
-                step: stepName,
-                blocking_issues: gate.blocking_issues,
-                message: `⚠️ ${stepName} did not pass audit. Retrying... (${gate.blocking_issues.length} issues)`,
-                retry: attempt + 1,
-              });
-              onRetry(gate.blocking_issues);
-              output = await getOutput();
-            } else {
-              sendSSE(controller, encoder, "gatekeeper_blocked", {
-                step: stepName,
-                blocking_issues: gate.blocking_issues,
-                message: `⛔ ${stepName} blocked after ${MAX_GATE_RETRIES} retries. Pipeline halted.`,
-              });
-              console.log(`GATE BLOCKED: ${stepName} after ${MAX_GATE_RETRIES} retries`);
-              throw new Error(`Gatekeeper blocked step: ${stepName}. Issues: ${gate.blocking_issues.join("; ")}`);
-            }
-          }
-
-          throw new Error(`Gatekeeper exhausted retries for ${stepName}`);
-        }
-
-        // ── Manual mode pause helper ──────────────────────────────────
-        async function pauseIfManualMode(
-          stepName: string,
-          nextStep: string,
-          state: PipelineState,
-        ): Promise<boolean> {
-          if (!manual_mode) return false;
-
-          const contId = await saveContinuation(user.id, resumeId, stepName, nextStep, state);
-
-          sendSSE(controller, encoder, "await_user_continue", {
-            step: stepName,
-            next_step: nextStep,
-            continuation_id: contId,
-            message: `⏸ ${stepName} complete. Awaiting your approval to proceed to ${nextStep.replace(/_/g, " ")}.`,
-          });
-
-          console.log(`MANUAL PAUSE after ${stepName}, continuation: ${contId}`);
-          return true; // Signal caller to close stream
-        }
-
         // ── Determine start point ─────────────────────────────────────
         let resumeFromStep: string | null = null;
         let pipelineState: PipelineState | null = null;
 
         if (continuation_id) {
-          const cont = await loadContinuation(continuation_id, user.id);
+          const cont = await loadContinuation(continuation_id);
           if (!cont) {
-            sendSSE(controller, encoder, "error", {
-              message: "Continuation not found or expired. Please restart optimization.",
-            });
-            controller.close();
-            return;
+            sendSSE(controller, encoder, "error", { message: "Continuation not found or expired. Please restart optimization." });
+            controller.close(); return;
           }
           resumeFromStep = cont.next_step;
           pipelineState = cont.pipeline_state as PipelineState;
-          sendSSE(controller, encoder, "progress", {
-            step: "resuming",
-            message: `Resuming from ${resumeFromStep?.replace(/_/g, " ")}...`,
-          });
-          console.log(`RESUMING from step: ${resumeFromStep}`);
+          sendSSE(controller, encoder, "progress", { step: "resuming", message: `Resuming from ${resumeFromStep?.replace(/_/g, " ")}...` });
         }
 
-        // ── 1. Fetch resume (or use saved state) ──────────────────────
+        // ── Initialize artifacts ──────────────────────────────────────
         let rawResumeText = pipelineState?.rawResumeText || "";
+        let jd = pipelineState?.jobDescription ?? jobDescription ?? null;
         let role = pipelineState?.role || "";
         let loc = pipelineState?.loc || "";
         let checklist = pipelineState?.checklist || null;
-        let draft = pipelineState?.draft || "";
-        let scorecard = pipelineState?.scorecard || null;
-        let atsText = pipelineState?.atsText || "";
-        let prettyMd = pipelineState?.prettyMd || "";
-        let changelog = pipelineState?.changelog || "";
+        let writerDraft: any = pipelineState?.writerDraft || null;
+        let scorecard: any = pipelineState?.scorecard || null;
         let roundsCompleted = pipelineState?.roundsCompleted || 0;
-        let criticFeedback = pipelineState?.criticFeedback || "";
 
+        // ── 1. Fetch resume (fresh start only) ────────────────────────
         if (!resumeFromStep) {
-          // Fresh start — fetch resume
-          sendSSE(controller, encoder, "progress", {
-            step: "init",
-            message: "Loading your resume...",
-          });
+          sendSSE(controller, encoder, "progress", { step: "init", message: "Loading your resume..." });
 
           const { data: resume, error: resumeError } = await supabase
-            .from("resumes")
-            .select("*")
-            .eq("id", resumeId)
-            .eq("user_id", user.id)
-            .single();
+            .from("resumes").select("*").eq("id", resumeId).eq("user_id", user!.id).single();
 
           if (resumeError || !resume) {
             sendSSE(controller, encoder, "error", { message: "Resume not found" });
-            controller.close();
-            return;
+            controller.close(); return;
           }
 
-          rawResumeText =
-            resume.parsed_content?.rawText ||
-            resume.parsed_content?.fullText ||
-            resume.parsed_content?.text ||
-            "";
+          rawResumeText = resume.parsed_content?.rawText || resume.parsed_content?.fullText || resume.parsed_content?.text || "";
 
           if (!rawResumeText && resume.file_path) {
-            const { data: fileData } = await supabase.storage
-              .from("resumes")
-              .download(resume.file_path);
-
+            const { data: fileData } = await supabase.storage.from("resumes").download(resume.file_path);
             if (fileData) {
-              const arrayBuffer = await fileData.arrayBuffer();
-              const textDecoder = new TextDecoder("utf-8", { fatal: false });
-              const raw = textDecoder.decode(new Uint8Array(arrayBuffer));
-              const textMatches = raw.match(/\(([^)]+)\)/g);
-              if (textMatches) {
-                rawResumeText = textMatches
-                  .map((m: string) => m.slice(1, -1))
-                  .filter((t: string) => t.length > 2 && /[a-zA-Z]/.test(t))
-                  .join(" ");
+              const ab = await fileData.arrayBuffer();
+              const raw = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(ab));
+              const matches = raw.match(/\(([^)]+)\)/g);
+              if (matches) {
+                rawResumeText = matches.map((m: string) => m.slice(1, -1)).filter((t: string) => t.length > 2 && /[a-zA-Z]/.test(t)).join(" ");
               }
             }
           }
 
           if (!rawResumeText || rawResumeText.length < 50) {
-            sendSSE(controller, encoder, "error", {
-              message: "Could not extract resume text. Please upload a .docx or text-based PDF for best results.",
-            });
-            controller.close();
-            return;
+            sendSSE(controller, encoder, "error", { message: "Could not extract resume text. Please upload a .docx or text-based PDF." });
+            controller.close(); return;
           }
 
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("user_id", user.id)
-            .single();
-
           role = targetRole || "Professional";
-          loc = location || profile?.location || "";
+          loc = location || "";
         }
 
         // ── STEP: RESEARCHER ──────────────────────────────────────────
         if (!resumeFromStep || resumeFromStep === "RESEARCHER") {
-          sendSSE(controller, encoder, "progress", {
-            step: "researcher",
-            message: "Analyzing industry requirements...",
+          sendSSE(controller, encoder, "progress", { step: "researcher", message: "Analyzing industry requirements and ATS standards..." });
+
+          const researcherPayload = JSON.stringify({
+            RAW_RESUME: rawResumeText,
+            JOB_DESCRIPTION: jd,
+            SYSTEM_CONFIG: { max_writer_critic_rounds: MAX_WRITER_CRITIC_ROUNDS, target_role: role, location: loc },
           });
 
-          const researcherInput = `Target role: ${role}\nLocation: ${loc}\nSeniority: entry-level to mid-level\n\nHere is the candidate's current resume for context (use it to infer industry):\n${rawResumeText.substring(0, 2000)}\n\nCreate the Resume Optimization Checklist JSON now.`;
+          const researcherOutput = await callAI({
+            provider: aiProvider, apiKey: aiApiKey, model: RESEARCHER_MODEL,
+            systemPrompt: RESEARCHER_PROMPT, userPayload: researcherPayload, temperature: BASE_TEMP,
+          });
 
-          const researcherResult = await runGateWithRetry(
-            "RESEARCHER",
-            "WRITER_DRAFT_V1",
-            GATE_CONDITIONS.researcher,
-            async () => {
-              return await callAI(LOVABLE_API_KEY!, FAST_MODEL, RESEARCHER_PROMPT, researcherInput);
-            },
-            (issues) => {
-              console.log("Researcher retry due to:", issues);
-            },
-          );
+          checklist = safeJsonParse(researcherOutput);
+          assertResearcherSchema(checklist);
 
-          try {
-            checklist = safeJsonParse(researcherResult.output);
-            assertResearcherSchema(checklist);
-          } catch (e) {
-            sendSSE(controller, encoder, "error", {
-              message: `Researcher output was not valid JSON. Optimization halted. Please retry. (${(e as Error).message})`,
-            });
-            controller.close();
-            return;
+          await logExecution("RESEARCHER", "Researcher", RESEARCHER_MODEL, researcherPayload.substring(0, 5000), researcherOutput.substring(0, 5000));
+
+          sendSSE(controller, encoder, "researcher_done", { message: "Industry analysis complete", checklist });
+
+          // Manual mode pause
+          if (manual_mode) {
+            const contId = await saveContinuation("RESEARCHER", "WRITER_LOOP", { rawResumeText, jobDescription: jd, role, loc, checklist });
+            sendSSE(controller, encoder, "await_user_continue", { step: "RESEARCHER", next_step: "WRITER_LOOP", continuation_id: contId, message: "⏸ Research complete. Awaiting your approval to proceed to writing." });
+            controller.close(); return;
           }
-
-          await logExecution(user.id, resumeId, "RESEARCHER", "Researcher", FAST_MODEL, researcherInput, researcherResult.output, researcherResult.gate);
-
-          sendSSE(controller, encoder, "researcher_done", {
-            message: "Industry analysis complete",
-            checklist,
-          });
-
-          // Manual mode pause after researcher
-          const paused = await pauseIfManualMode("RESEARCHER", "WRITER_LOOP", {
-            rawResumeText, role, loc, checklist,
-          });
-          if (paused) { controller.close(); return; }
         }
 
         // ── STEP: WRITER ↔ CRITIC LOOP ────────────────────────────────
         if (!resumeFromStep || resumeFromStep === "WRITER_LOOP" || resumeFromStep === "RESEARCHER") {
-          for (let round = 1; round <= MAX_ROUNDS; round++) {
+          let finalDecision: string | null = null;
+
+          for (let round = 1; round <= MAX_WRITER_CRITIC_ROUNDS; round++) {
             roundsCompleted = round;
 
-            // ── Writer + Gate ──────────────────────────────────────────
-            sendSSE(controller, encoder, "progress", {
-              step: "writer",
-              round,
-              message: `Crafting resume version ${round}...`,
+            // ── Writer ────────────────────────────────────────────────
+            sendSSE(controller, encoder, "progress", { step: "writer", round, message: `Crafting resume version ${round}...` });
+
+            const writerPayload = JSON.stringify({
+              RAW_RESUME: rawResumeText,
+              JOB_DESCRIPTION: jd,
+              CHECKLIST_JSON: checklist,
+              PRIOR_CRITIC_SCORECARD: scorecard, // null on first round
+              SYSTEM_CONFIG: { round },
             });
 
-            const writerUserPrompt = `Here is my RAW RESUME (truth source):\n<<<\n${rawResumeText}\n>>>\n\nHere is the Research Checklist JSON:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\n${
-              criticFeedback
-                ? `Previous Critic feedback and required edits:\n<<<\n${criticFeedback}\n>>>\n\nApply ALL required edits from the Critic.\n\n`
-                : ""
-            }Create Draft v${round}.`;
-
-            const writerResult = await runGateWithRetry(
-              `WRITER_DRAFT_V${round}`,
-              `CRITIC_SCORE_V${round}`,
-              GATE_CONDITIONS.writer,
-              async () => {
-                return await callAI(LOVABLE_API_KEY!, QUALITY_MODEL, WRITER_PROMPT, writerUserPrompt, 0.4);
-              },
-              (issues) => {
-                console.log(`Writer v${round} retry due to:`, issues);
-              },
-            );
-
-            draft = writerResult.output;
-            await logExecution(user.id, resumeId, `WRITER_DRAFT_V${round}`, "Writer", QUALITY_MODEL, writerUserPrompt.substring(0, 5000), draft, writerResult.gate);
-
-            sendSSE(controller, encoder, "writer_done", {
-              round,
-              message: `Version ${round} complete`,
+            const writerOutput = await callAI({
+              provider: aiProvider, apiKey: aiApiKey, model: WRITER_MODEL,
+              systemPrompt: WRITER_PROMPT, userPayload: writerPayload, temperature: BASE_TEMP,
             });
 
-            // ── Critic + Gate ──────────────────────────────────────────
-            sendSSE(controller, encoder, "progress", {
-              step: "critic",
-              round,
-              message: `Quality review round ${round}...`,
+            writerDraft = safeJsonParse(writerOutput);
+            assertWriterSchema(writerDraft);
+
+            await logExecution(`WRITER_V${round}`, "Writer", WRITER_MODEL, writerPayload.substring(0, 5000), writerOutput.substring(0, 5000));
+
+            sendSSE(controller, encoder, "writer_done", { round, message: `Version ${round} complete` });
+
+            // ── Critic ────────────────────────────────────────────────
+            sendSSE(controller, encoder, "progress", { step: "critic", round, message: `Adversarial review round ${round}...` });
+
+            const criticPayload = JSON.stringify({
+              RAW_RESUME: rawResumeText,
+              JOB_DESCRIPTION: jd,
+              CHECKLIST_JSON: checklist,
+              WRITER_DRAFT: writerDraft,
+              SYSTEM_CONFIG: { round },
             });
 
-            const criticUserPrompt = `Truth source (raw resume):\n<<<\n${rawResumeText}\n>>>\n\nChecklist:\n<<<\n${JSON.stringify(checklist)}\n>>>\n\nCurrent draft:\n<<<\n${draft}\n>>>\n\nScore it and return the Critic Scorecard JSON.`;
+            const criticOutput = await callAI({
+              provider: aiProvider, apiKey: aiApiKey, model: CRITIC_MODEL,
+              systemPrompt: CRITIC_PROMPT, userPayload: criticPayload, temperature: BASE_TEMP,
+            });
 
-            const criticResult = await runGateWithRetry(
-              `CRITIC_SCORE_V${round}`,
-              round < MAX_ROUNDS ? `WRITER_DRAFT_V${round + 1}` : "QUALITY_GATE",
-              GATE_CONDITIONS.critic,
-              async () => {
-                return await callAI(LOVABLE_API_KEY!, FAST_MODEL, CRITIC_PROMPT, criticUserPrompt);
-              },
-              (issues) => {
-                console.log(`Critic v${round} retry due to:`, issues);
-              },
-            );
+            scorecard = safeJsonParse(criticOutput);
+            assertCriticSchema(scorecard);
 
-            try {
-              scorecard = safeJsonParse(criticResult.output);
-              assertCriticSchema(scorecard);
-            } catch (e) {
-              sendSSE(controller, encoder, "error", {
-                message: `Critic output was not valid JSON. Optimization halted. Please retry. (${(e as Error).message})`,
-              });
-              controller.close();
-              return;
-            }
-
-            await logExecution(user.id, resumeId, `CRITIC_SCORE_V${round}`, "Critic", FAST_MODEL, criticUserPrompt.substring(0, 5000), criticResult.output, criticResult.gate);
+            await logExecution(`CRITIC_V${round}`, "Critic", CRITIC_MODEL, criticPayload.substring(0, 5000), criticOutput.substring(0, 5000));
 
             sendSSE(controller, encoder, "critic_done", {
               round,
-              message: `Review round ${round} scored`,
-              scorecard,
+              message: `Review round ${round} scored: ${scorecard.scores.overall}/100`,
+              scorecard: {
+                overall_score: scorecard.scores.overall,
+                ats_score: scorecard.scores.ats_compliance,
+                keyword_coverage_score: scorecard.scores.keyword_coverage,
+                clarity_score: scorecard.scores.clarity_signal,
+                truth_violations: scorecard.truth_violations?.map((tv: any) => tv.draft_claim) || [],
+                missing_sections: scorecard.section_compliance?.filter((s: any) => !s.present).map((s: any) => s.section) || [],
+                missing_keyword_clusters: scorecard.keyword_cluster_coverage?.filter((k: any) => k.coverage === "missing").map((k: any) => k.cluster) || [],
+                required_edits: scorecard.required_edits || [],
+                must_fix_before_next_round: scorecard.blocking_issues?.map((b: any) => b.description) || [],
+                praise: scorecard.praise_to_preserve || [],
+              },
             });
 
-            // ── Quality threshold gate ────────────────────────────────
-            sendSSE(controller, encoder, "progress", {
-              step: "quality_gate",
-              round,
-              message: `Auditing quality thresholds for round ${round}...`,
-            });
+            finalDecision = scorecard.decision_recommendation;
+            console.log(`Round ${round} decision: ${finalDecision}`);
 
-            try {
-              const qualityGateResult = await runGateWithRetry(
-                "QUALITY_GATE",
-                round < MAX_ROUNDS ? `WRITER_DRAFT_V${round + 1}` : "DESIGNER",
-                GATE_CONDITIONS.quality_threshold,
-                async () => JSON.stringify(scorecard),
-                () => {
-                  console.log(`Quality gate retry for round ${round}`);
-                },
-              );
+            // ── Decision routing ──────────────────────────────────────
+            if (finalDecision === "pass") {
+              sendSSE(controller, encoder, "progress", { step: "quality_gate", round, message: "✅ Quality threshold passed!" });
+              break;
+            }
 
-              await logExecution(user.id, resumeId, `QUALITY_GATE_V${round}`, "Gatekeeper", GATE_MODEL, JSON.stringify(scorecard), "PASS", qualityGateResult.gate);
-
-              console.log(`Quality gate passed at round ${round}`);
-              break; // Quality passed — exit Writer↔Critic loop
-            } catch {
-              if (round >= MAX_ROUNDS) {
-                sendSSE(controller, encoder, "gatekeeper_blocked", {
-                  step: "QUALITY_GATE",
-                  blocking_issues: ["Quality thresholds not met after maximum rounds"],
-                  message: `⛔ Quality thresholds not met after ${MAX_ROUNDS} rounds. Pipeline halted.`,
-                });
-                throw new Error(`Quality gate blocked after ${MAX_ROUNDS} rounds`);
-              }
-
-              criticFeedback = JSON.stringify({
-                required_edits: scorecard.required_edits,
-                must_fix: scorecard.must_fix_before_next_round,
-                missing_sections: scorecard.missing_sections,
-                missing_keywords: scorecard.missing_keyword_clusters,
+            if (finalDecision === "stop_data_needed") {
+              sendSSE(controller, encoder, "gatekeeper_blocked", {
+                step: "QUALITY_GATE", blocking_issues: scorecard.data_needed?.map((d: any) => d.question) || ["Missing data blocks progress"],
+                message: `⛔ Pipeline halted: missing information needed. ${scorecard.data_needed?.map((d: any) => d.question).join("; ") || ""}`,
               });
+              controller.close(); return;
+            }
+
+            if (finalDecision === "stop_unfixable_truth") {
+              sendSSE(controller, encoder, "gatekeeper_blocked", {
+                step: "QUALITY_GATE", blocking_issues: ["Resume fundamentally cannot support the target role"],
+                message: "⛔ Pipeline halted: the resume cannot be optimized for this role without significant additional experience/qualifications.",
+              });
+              controller.close(); return;
+            }
+
+            if (finalDecision !== "revise") {
+              console.log(`Unknown decision "${finalDecision}", stopping.`);
+              break;
+            }
+
+            // If revise and not last round, the scorecard (with required_edits) will be passed as PRIOR_CRITIC_SCORECARD next round
+            if (round >= MAX_WRITER_CRITIC_ROUNDS) {
+              sendSSE(controller, encoder, "progress", { step: "quality_gate", round, message: `Max rounds reached. Using best available draft (score: ${scorecard.scores.overall}).` });
             }
           }
-
-          // Extract ATS text and Pretty MD from draft
-          const atsMatch = draft.match(/\[ATS_TEXT\]\s*([\s\S]*?)(?=\[PRETTY_MD\]|$)/);
-          const mdMatch = draft.match(/\[PRETTY_MD\]\s*([\s\S]*?)(?=\[CHANGELOG\]|$)/);
-          const changeMatch = draft.match(/\[CHANGELOG\]\s*([\s\S]*?)$/);
-
-          if (atsMatch) atsText = atsMatch[1].trim();
-          if (mdMatch) prettyMd = mdMatch[1].trim();
-          if (changeMatch) changelog = changeMatch[1].trim();
 
           // Manual mode pause after writer/critic loop
-          const paused = await pauseIfManualMode("WRITER_CRITIC_LOOP", "DESIGNER", {
-            rawResumeText, role, loc, checklist, draft, scorecard,
-            atsText, prettyMd, changelog, roundsCompleted, criticFeedback,
-          });
-          if (paused) { controller.close(); return; }
+          if (manual_mode) {
+            const contId = await saveContinuation("WRITER_CRITIC_LOOP", "SAVE_AND_COMPLETE", { rawResumeText, jobDescription: jd, role, loc, checklist, writerDraft, scorecard, roundsCompleted });
+            sendSSE(controller, encoder, "await_user_continue", { step: "WRITER_CRITIC_LOOP", next_step: "SAVE_AND_COMPLETE", continuation_id: contId, message: `⏸ Writing complete (${roundsCompleted} rounds, score: ${scorecard?.scores?.overall}). Approve to save results.` });
+            controller.close(); return;
+          }
         }
 
-        // ── STEP: DESIGNER ────────────────────────────────────────────
-        if (!resumeFromStep || resumeFromStep === "DESIGNER" || resumeFromStep === "WRITER_LOOP" || resumeFromStep === "RESEARCHER") {
-          sendSSE(controller, encoder, "progress", {
-            step: "designer",
-            message: "Creating professional layout...",
-          });
+        // ── SAVE RESULTS & COMPLETE ───────────────────────────────────
+        const optimization = {
+          checklist,
+          scorecard: {
+            overall_score: scorecard?.scores?.overall ?? 0,
+            ats_score: scorecard?.scores?.ats_compliance ?? 0,
+            keyword_coverage_score: scorecard?.scores?.keyword_coverage ?? 0,
+            clarity_score: scorecard?.scores?.clarity_signal ?? 0,
+            truth_violations: scorecard?.truth_violations?.map((tv: any) => tv.draft_claim) || [],
+            missing_sections: [],
+            missing_keyword_clusters: [],
+            required_edits: scorecard?.required_edits || [],
+            must_fix_before_next_round: [],
+            praise: scorecard?.praise_to_preserve || [],
+          },
+          ats_text: writerDraft?.ATS_TEXT || "",
+          pretty_md: writerDraft?.PRETTY_MD || "",
+          changelog: writerDraft?.CHANGELOG?.join("\n") || "",
+          html: "", // No designer step
+          rounds_completed: roundsCompleted,
+          target_role: role,
+          location: loc,
+          optimized_at: new Date().toISOString(),
+        };
 
-          let html = "";
-          const approvedContent = prettyMd || atsText;
-          const designerInput = `Approved resume content:\n<<<\n${approvedContent}\n>>>\n\nGenerate the HTML now.`;
+        const { data: currentResume } = await supabase.from("resumes").select("parsed_content").eq("id", resumeId).single();
 
-          const designerResult = await runGateWithRetry(
-            "DESIGNER",
-            "COMPLETE",
-            GATE_CONDITIONS.designer,
-            async () => {
-              const rawHtml = await callAI(
-                LOVABLE_API_KEY!,
-                QUALITY_MODEL,
-                DESIGNER_PROMPT,
-                designerInput,
-                0.3,
-              );
-              return `APPROVED CONTENT:\n<<<\n${approvedContent}\n>>>\n\nDESIGNER HTML:\n<<<\n${rawHtml}\n>>>`;
-            },
-            (issues) => {
-              console.log("Designer retry due to:", issues);
-            },
-          );
+        await supabase.from("resumes").update({
+          ats_score: scorecard?.scores?.ats_compliance ?? null,
+          parsed_content: { ...(currentResume?.parsed_content ?? {}), rawText: rawResumeText, optimization },
+        }).eq("id", resumeId);
 
-          // Extract just the HTML portion from the combined gate output
-          const designerGateOutput = designerResult.output;
-          const htmlPortionMatch = designerGateOutput.match(/DESIGNER HTML:\n<<<\n([\s\S]*?)\n>>>/);
-          html = htmlPortionMatch ? htmlPortionMatch[1] : designerResult.output;
+        await supabase.from("agent_logs").insert({
+          user_id: user!.id, agent_name: "resume_optimizer", log_level: "info",
+          message: `Resume optimized: ${roundsCompleted} rounds, overall score: ${scorecard?.scores?.overall ?? "N/A"}`,
+          metadata: { resume_id: resumeId, target_role: role, rounds: roundsCompleted, decision: scorecard?.decision_recommendation, scores: scorecard?.scores, provider: aiProvider },
+        });
 
-          // Extract just the HTML portion if wrapped in markdown code blocks
-          const htmlMatch = html.match(/```html?\s*([\s\S]*?)```/);
-          if (htmlMatch) {
-            html = htmlMatch[1].trim();
-          }
-
-          if (!html.startsWith("<!DOCTYPE") && !html.startsWith("<html")) {
-            const htmlStart = html.indexOf("<!DOCTYPE");
-            const htmlAlt = html.indexOf("<html");
-            const startIdx = htmlStart >= 0 ? htmlStart : htmlAlt;
-            if (startIdx >= 0) {
-              html = html.substring(startIdx);
-            }
-          }
-
-          // Fallback if HTML is still invalid
-          if (!html.includes("<html") && !html.includes("<!DOCTYPE")) {
-            html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><style>
-body{font-family:'Segoe UI',Arial,sans-serif;line-height:1.6;color:#333;max-width:800px;margin:0 auto;padding:40px}
-h1{color:#1e40af;border-bottom:2px solid #2563eb;padding-bottom:10px}
-h2{color:#1e40af;font-size:16px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #e5e7eb;margin-top:25px}
-</style></head><body>
-<pre>${atsText.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
-</body></html>`;
-          }
-
-          await logExecution(user.id, resumeId, "DESIGNER", "Designer", QUALITY_MODEL, designerInput.substring(0, 5000), html.substring(0, 5000), designerResult.gate);
-
-          sendSSE(controller, encoder, "designer_done", {
-            message: "Professional layout created",
-          });
-
-          // Manual mode pause after designer (before saving)
-          const paused = await pauseIfManualMode("DESIGNER", "SAVE_AND_COMPLETE", {
-            rawResumeText, role, loc, checklist, draft, scorecard,
-            atsText, prettyMd, changelog, roundsCompleted, criticFeedback,
-          });
-          // For designer pause, we still need to save HTML in state
-          // We store it separately since PipelineState doesn't have html
-          if (paused) { controller.close(); return; }
-
-          // ── Save results ────────────────────────────────────────────
-          const optimization = {
-            checklist,
-            scorecard,
-            ats_text: atsText,
-            pretty_md: prettyMd,
-            changelog,
-            html,
-            rounds_completed: roundsCompleted,
-            target_role: role,
-            location: loc,
-            optimized_at: new Date().toISOString(),
-          };
-
-          const { data: currentResume } = await supabase
-            .from("resumes")
-            .select("parsed_content")
-            .eq("id", resumeId)
-            .single();
-
-          await supabase
-            .from("resumes")
-            .update({
-              ats_score: scorecard?.ats_score ?? null,
-              parsed_content: {
-                ...(currentResume?.parsed_content ?? {}),
-                rawText: rawResumeText,
-                optimization,
-              },
-            })
-            .eq("id", resumeId);
-
-          await supabase.from("agent_logs").insert({
-            user_id: user.id,
-            agent_name: "resume_optimizer",
-            log_level: "info",
-            message: `Resume optimized: ${roundsCompleted} rounds, ATS score: ${scorecard?.ats_score ?? "N/A"}`,
-            metadata: {
-              resume_id: resumeId,
-              target_role: role,
-              rounds: roundsCompleted,
-              scores: {
-                overall: scorecard?.overall_score,
-                ats: scorecard?.ats_score,
-                keywords: scorecard?.keyword_coverage_score,
-                clarity: scorecard?.clarity_score,
-              },
-            },
-          });
-
-          // ── Send final result ───────────────────────────────────────
-          sendSSE(controller, encoder, "complete", {
-            message: "Optimization complete",
-            optimization,
-          });
-        }
+        sendSSE(controller, encoder, "complete", { message: "Optimization complete", optimization });
       } catch (error: unknown) {
         console.error("Optimization error:", error);
         const msg = error instanceof Error ? error.message : "Optimization failed";
-        sendSSE(controller, encoder, "error", { message: msg });
+        if (msg === "RATE_LIMIT") {
+          sendSSE(controller, encoder, "error", { message: "Rate limit exceeded. Please try again in a moment." });
+        } else if (msg === "CREDITS_EXHAUSTED") {
+          sendSSE(controller, encoder, "error", { message: "AI credits exhausted. Please add more credits." });
+        } else {
+          sendSSE(controller, encoder, "error", { message: msg });
+        }
       } finally {
         controller.close();
       }
@@ -988,11 +697,6 @@ h2{color:#1e40af;font-size:16px;text-transform:uppercase;letter-spacing:1px;bord
   });
 
   return new Response(stream, {
-    headers: {
-      ...corsHeaders,
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
+    headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" },
   });
 });
