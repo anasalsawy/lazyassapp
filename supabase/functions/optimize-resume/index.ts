@@ -397,7 +397,7 @@ serve(async (req) => {
 
   const MAX_WRITER_CRITIC_ROUNDS = 100;
   const EARLY_EXIT_SCORE = 90; // Accept draft if overall score >= this
-  const TIME_BUDGET_MS = 110_000; // 110s budget — leave ~40s margin for save + response
+  const TIME_BUDGET_MS = 80_000; // 80s budget — each Writer+Critic cycle takes ~15s, need margin for save
   const pipelineStartTime = Date.now();
 
   // ── Audit logger ────────────────────────────────────────────────────
@@ -712,11 +712,32 @@ serve(async (req) => {
       } catch (error: unknown) {
         console.error("Optimization error:", error);
         const msg = error instanceof Error ? error.message : "Optimization failed";
-        if (msg === "RATE_LIMIT") {
-          sendSSE(controller, encoder, "error", { message: "Rate limit exceeded. Please try again in a moment." });
-        } else if (msg === "CREDITS_EXHAUSTED") {
-          sendSSE(controller, encoder, "error", { message: "AI credits exhausted. Please add more credits." });
-        } else {
+
+        // Crash-safe: try to save state so progress isn't lost
+        try {
+          if (rawResumeText && checklist && roundsCompleted > 0) {
+            const contId = await saveContinuation("CRASH_RECOVERY", "WRITER_LOOP", {
+              rawResumeText, jobDescription: jd, role, loc, checklist, writerDraft, scorecard, roundsCompleted,
+            });
+            console.log(`Crash recovery state saved: continuation ${contId}, round ${roundsCompleted}`);
+            sendSSE(controller, encoder, "auto_continue", {
+              step: "CRASH_RECOVERY",
+              continuation_id: contId,
+              rounds_so_far: roundsCompleted,
+              current_score: scorecard?.scores?.overall ?? 0,
+              message: `⏳ Recovering from interruption at round ${roundsCompleted}. Auto-continuing...`,
+            });
+          } else {
+            if (msg === "RATE_LIMIT") {
+              sendSSE(controller, encoder, "error", { message: "Rate limit exceeded. Please try again in a moment." });
+            } else if (msg === "CREDITS_EXHAUSTED") {
+              sendSSE(controller, encoder, "error", { message: "AI credits exhausted. Please add more credits." });
+            } else {
+              sendSSE(controller, encoder, "error", { message: msg });
+            }
+          }
+        } catch (saveErr) {
+          console.error("Failed to save crash recovery state:", saveErr);
           sendSSE(controller, encoder, "error", { message: msg });
         }
       } finally {
