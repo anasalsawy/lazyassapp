@@ -395,8 +395,10 @@ serve(async (req) => {
     });
   }
 
-  const MAX_WRITER_CRITIC_ROUNDS = 2;
-  const EARLY_EXIT_SCORE = 85; // Accept draft if overall score >= this
+  const MAX_WRITER_CRITIC_ROUNDS = 5;
+  const EARLY_EXIT_SCORE = 90; // Accept draft if overall score >= this
+  const TIME_BUDGET_MS = 110_000; // 110s budget — leave ~40s margin for save + response
+  const pipelineStartTime = Date.now();
 
   // ── Audit logger ────────────────────────────────────────────────────
   async function logExecution(step: string, agent: string, model: string, input: string, output: string, extra?: any) {
@@ -533,8 +535,9 @@ serve(async (req) => {
         // ── STEP: WRITER ↔ CRITIC LOOP ────────────────────────────────
         if (!resumeFromStep || resumeFromStep === "WRITER_LOOP" || resumeFromStep === "RESEARCHER") {
           let finalDecision: string | null = null;
+          const startRound = roundsCompleted > 0 ? roundsCompleted + 1 : 1;
 
-          for (let round = 1; round <= MAX_WRITER_CRITIC_ROUNDS; round++) {
+          for (let round = startRound; round <= MAX_WRITER_CRITIC_ROUNDS; round++) {
             roundsCompleted = round;
 
             // ── Writer ────────────────────────────────────────────────
@@ -632,6 +635,23 @@ serve(async (req) => {
             if (finalDecision !== "revise") {
               console.log(`Unknown decision "${finalDecision}", stopping.`);
               break;
+            }
+
+            // ── Time-budget check: auto-chunk if approaching timeout ──
+            const elapsed = Date.now() - pipelineStartTime;
+            if (round < MAX_WRITER_CRITIC_ROUNDS && elapsed > TIME_BUDGET_MS) {
+              console.log(`Time budget exceeded (${elapsed}ms). Auto-saving for continuation.`);
+              const contId = await saveContinuation("WRITER_CRITIC_LOOP_CHUNK", "WRITER_LOOP", {
+                rawResumeText, jobDescription: jd, role, loc, checklist, writerDraft, scorecard, roundsCompleted,
+              });
+              sendSSE(controller, encoder, "auto_continue", {
+                step: "WRITER_CRITIC_LOOP",
+                continuation_id: contId,
+                rounds_so_far: roundsCompleted,
+                current_score: scorecard.scores.overall,
+                message: `⏳ Time budget reached after round ${round}. Auto-continuing...`,
+              });
+              controller.close(); return;
             }
 
             // If revise and not last round, the scorecard (with required_edits) will be passed as PRIOR_CRITIC_SCORECARD next round

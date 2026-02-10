@@ -78,9 +78,13 @@ export function useResumeOptimizer() {
   // Store resumeId for continue calls
   const resumeIdRef = useRef<string>("");
 
+  // Track auto-continue continuation ID for post-stream pickup
+  const autoContinueIdRef = useRef<string | null>(null);
+
   const processSSEStream = useCallback(
     async (response: Response) => {
       if (!response.body) throw new Error("No response body");
+      autoContinueIdRef.current = null;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -217,6 +221,17 @@ export function useResumeOptimizer() {
                 ]);
                 break;
 
+              case "auto_continue":
+                setCurrentStep("auto_continuing");
+                if (event.rounds_so_far) setCurrentRound(event.rounds_so_far);
+                setProgress((prev) => [
+                  ...prev,
+                  { step: "auto_continue", round: event.rounds_so_far, message: event.message },
+                ]);
+                // Signal for post-stream auto-continue
+                autoContinueIdRef.current = event.continuation_id;
+                break;
+
               case "complete":
                 setStatus("complete");
                 setCurrentStep("complete");
@@ -269,8 +284,28 @@ export function useResumeOptimizer() {
       }
 
       await processSSEStream(response);
+
+      // Return auto-continue ID if the stream signalled one
+      return autoContinueIdRef.current;
     },
     [session, processSSEStream, toast],
+  );
+
+  // Auto-continue loop: keeps calling the edge function until no more auto_continue signals
+  const callWithAutoResume = useCallback(
+    async (payload: Record<string, unknown>) => {
+      let contId = await callEdgeFunction(payload);
+      while (contId) {
+        // Small delay to avoid hammering
+        await new Promise((r) => setTimeout(r, 500));
+        contId = await callEdgeFunction({
+          resumeId: payload.resumeId,
+          continuation_id: contId,
+          manual_mode: payload.manual_mode,
+        });
+      }
+    },
+    [callEdgeFunction],
   );
 
   const optimize = useCallback(
@@ -289,7 +324,7 @@ export function useResumeOptimizer() {
       resumeIdRef.current = resumeId;
 
       try {
-        await callEdgeFunction({
+        await callWithAutoResume({
           resumeId,
           targetRole,
           location,
@@ -303,7 +338,7 @@ export function useResumeOptimizer() {
         toast({ title: "Optimization failed", description: e.message || "Please try again.", variant: "destructive" });
       }
     },
-    [callEdgeFunction, toast],
+    [callWithAutoResume, toast],
   );
 
   const continueOptimization = useCallback(
@@ -316,7 +351,7 @@ export function useResumeOptimizer() {
       setCurrentStep("resuming");
 
       try {
-        await callEdgeFunction({
+        await callWithAutoResume({
           resumeId: resumeIdRef.current,
           continuation_id: continuationId,
           manual_mode: isManualMode,
@@ -329,7 +364,7 @@ export function useResumeOptimizer() {
         toast({ title: "Continue failed", description: e.message || "Please try again.", variant: "destructive" });
       }
     },
-    [manualPause, isManualMode, callEdgeFunction, toast],
+    [manualPause, isManualMode, callWithAutoResume, toast],
   );
 
   const cancel = useCallback(() => {
