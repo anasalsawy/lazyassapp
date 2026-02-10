@@ -202,7 +202,12 @@ async function runOptimizationPipeline(
   resumeText: string,
   targetRole: string,
   from: string,
+  existingChecklist?: any,
+  existingScorecard?: any,
+  startRound?: number,
 ): Promise<void> {
+  // Reference for updating conversation context (for gap-filling)
+  let newConvContext: Record<string, any> = {};
   // Send progress messages via WhatsApp as the pipeline runs
   const sendProgress = async (msg: string) => {
     try { await sendWhatsAppMessage(from, msg); } catch (e) { console.error("Progress msg failed:", e); }
