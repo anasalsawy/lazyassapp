@@ -395,7 +395,8 @@ serve(async (req) => {
     });
   }
 
-  const MAX_WRITER_CRITIC_ROUNDS = 3;
+  const MAX_WRITER_CRITIC_ROUNDS = 2;
+  const EARLY_EXIT_SCORE = 85; // Accept draft if overall score >= this
 
   // ── Audit logger ────────────────────────────────────────────────────
   async function logExecution(step: string, agent: string, model: string, input: string, output: string, extra?: any) {
