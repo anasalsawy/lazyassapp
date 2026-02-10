@@ -294,8 +294,15 @@ async function runOptimizationPipeline(
         SYSTEM_CONFIG: { round },
       });
 
-      const criticOutput = await callAIForPipeline(CRITIC_PROMPT, criticPayload, "google/gemini-3-flash-preview");
-      scorecard = safeJsonParse(criticOutput);
+      let criticOutput: string;
+      try {
+        criticOutput = await callAIForPipeline(CRITIC_PROMPT, criticPayload, "google/gemini-3-flash-preview");
+        scorecard = safeJsonParse(criticOutput);
+      } catch (e: any) {
+        console.error(`Critic round ${round} parse error:`, e.message);
+        await sendProgress(`⚠️ Critic output malformed in round ${round}, retrying...`);
+        continue;
+      }
 
       if (scorecard.error) {
         await sendProgress(`❌ Review failed: ${scorecard.error.message}`);
