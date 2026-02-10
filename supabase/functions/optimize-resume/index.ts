@@ -636,6 +636,23 @@ serve(async (req) => {
               break;
             }
 
+            // ── Time-budget check: auto-chunk if approaching timeout ──
+            const elapsed = Date.now() - pipelineStartTime;
+            if (round < MAX_WRITER_CRITIC_ROUNDS && elapsed > TIME_BUDGET_MS) {
+              console.log(`Time budget exceeded (${elapsed}ms). Auto-saving for continuation.`);
+              const contId = await saveContinuation("WRITER_CRITIC_LOOP_CHUNK", "WRITER_LOOP", {
+                rawResumeText, jobDescription: jd, role, loc, checklist, writerDraft, scorecard, roundsCompleted,
+              });
+              sendSSE(controller, encoder, "auto_continue", {
+                step: "WRITER_CRITIC_LOOP",
+                continuation_id: contId,
+                rounds_so_far: roundsCompleted,
+                current_score: scorecard.scores.overall,
+                message: `⏳ Time budget reached after round ${round}. Auto-continuing...`,
+              });
+              controller.close(); return;
+            }
+
             // If revise and not last round, the scorecard (with required_edits) will be passed as PRIOR_CRITIC_SCORECARD next round
             if (round >= MAX_WRITER_CRITIC_ROUNDS) {
               sendSSE(controller, encoder, "progress", { step: "quality_gate", round, message: `Max rounds reached. Using best available draft (score: ${scorecard.scores.overall}).` });
