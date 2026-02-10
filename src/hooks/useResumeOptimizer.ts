@@ -351,7 +351,7 @@ export function useResumeOptimizer() {
       setCurrentStep("resuming");
 
       try {
-        await callEdgeFunction({
+        await callWithAutoResume({
           resumeId: resumeIdRef.current,
           continuation_id: continuationId,
           manual_mode: isManualMode,
