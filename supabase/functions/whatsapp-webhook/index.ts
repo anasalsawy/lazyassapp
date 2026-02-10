@@ -245,8 +245,10 @@ async function runOptimizationPipeline(
     const MAX_ROUNDS = 100; // No practical cap — runs until quality gate
     const QUALITY_GATE_SCORE = 90;
     const initialRound = startRound || 1;
+    let lastCompletedRound = initialRound - 1;
 
     for (let round = initialRound; round <= MAX_ROUNDS; round++) {
+      lastCompletedRound = round;
       // Writer
       await sendProgress(`✍️ *Writing round ${round}/${MAX_ROUNDS}*...`);
 
@@ -258,8 +260,15 @@ async function runOptimizationPipeline(
         SYSTEM_CONFIG: { round },
       });
 
-      const writerOutput = await callAIForPipeline(WRITER_PROMPT, writerPayload, "google/gemini-2.5-flash");
-      writerDraft = safeJsonParse(writerOutput);
+      let writerOutput: string;
+      try {
+        writerOutput = await callAIForPipeline(WRITER_PROMPT, writerPayload, "google/gemini-2.5-flash");
+        writerDraft = safeJsonParse(writerOutput);
+      } catch (e: any) {
+        console.error(`Writer round ${round} parse error:`, e.message);
+        await sendProgress(`⚠️ Writer output malformed in round ${round}, retrying...`);
+        continue;
+      }
 
       if (writerDraft.error) {
         await sendProgress(`❌ Writing failed: ${writerDraft.error.message}`);
@@ -287,8 +296,15 @@ async function runOptimizationPipeline(
         SYSTEM_CONFIG: { round },
       });
 
-      const criticOutput = await callAIForPipeline(CRITIC_PROMPT, criticPayload, "google/gemini-3-flash-preview");
-      scorecard = safeJsonParse(criticOutput);
+      let criticOutput: string;
+      try {
+        criticOutput = await callAIForPipeline(CRITIC_PROMPT, criticPayload, "google/gemini-3-flash-preview");
+        scorecard = safeJsonParse(criticOutput);
+      } catch (e: any) {
+        console.error(`Critic round ${round} parse error:`, e.message);
+        await sendProgress(`⚠️ Critic output malformed in round ${round}, retrying...`);
+        continue;
+      }
 
       if (scorecard.error) {
         await sendProgress(`❌ Review failed: ${scorecard.error.message}`);
@@ -314,12 +330,18 @@ async function runOptimizationPipeline(
 
       if (truthViolations.length > 0) {
         roundReport += `\n\n⚠️ *Truth violations (${truthViolations.length}):*\n` +
-          truthViolations.slice(0, 3).map((tv: any) => `  • "${tv.draft_claim}" — ${tv.recommended_fix}`).join("\n");
+          truthViolations.slice(0, 3).map((tv: any) => {
+            if (typeof tv === "string") return `  • ${tv}`;
+            return `  • ${tv.draft_claim || tv.claim || tv.description || JSON.stringify(tv)}${tv.recommended_fix ? ` — ${tv.recommended_fix}` : ""}`;
+          }).join("\n");
       }
 
       if (blockingIssues.length > 0) {
         roundReport += `\n\n🚫 *Blocking issues (${blockingIssues.length}):*\n` +
-          blockingIssues.slice(0, 3).map((b: any) => `  • ${b.description}`).join("\n");
+          blockingIssues.slice(0, 3).map((b: any) => {
+            if (typeof b === "string") return `  • ${b}`;
+            return `  • ${b.description || b.issue || b.message || JSON.stringify(b)}`;
+          }).join("\n");
       }
 
       if (requiredEdits.length > 0) {
@@ -510,7 +532,7 @@ async function runOptimizationPipeline(
               truthfulness_score: scorecard?.scores?.truthfulness ?? 0,
               role_alignment_score: scorecard?.scores?.role_alignment ?? 0,
             },
-            rounds_completed: MAX_ROUNDS,
+            rounds_completed: lastCompletedRound,
             target_role: targetRole,
             optimized_at: new Date().toISOString(),
           },
@@ -531,7 +553,7 @@ async function runOptimizationPipeline(
       `• Keyword Coverage: ${scorecard?.scores?.keyword_coverage ?? 0}/100\n` +
       `• Clarity: ${scorecard?.scores?.clarity_signal ?? 0}/100\n\n` +
       `🎯 Target Role: ${targetRole}\n` +
-      `🔄 Rounds completed: ${MAX_ROUNDS}\n\n` +
+      `🔄 Rounds completed: ${lastCompletedRound}\n\n` +
       `Your optimized resume is below ⬇️`;
 
     await sendProgress(resultHeader);
