@@ -364,7 +364,7 @@ export function useResumeOptimizer() {
         toast({ title: "Continue failed", description: e.message || "Please try again.", variant: "destructive" });
       }
     },
-    [manualPause, isManualMode, callEdgeFunction, toast],
+    [manualPause, isManualMode, callWithAutoResume, toast],
   );
 
   const cancel = useCallback(() => {
