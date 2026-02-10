@@ -609,7 +609,16 @@ async function handleConversation(
             });
           }
         }
-        reply = `📄 Got your resume! Extracted ${extractedText.length} characters of text.\n\nWhat job titles are you interested in?`;
+        // Check if we should go to optimization instead of job prefs
+        if (context.pending_action === "optimize_after_resume") {
+          newContext.optimize_resume_text = extractedText;
+          delete newContext.pending_action;
+          reply = `📄 Got your resume! Extracted ${extractedText.length} characters.\n\nWhat target role should I optimize it for?\n\nExample: _Medical Coding Specialist_ or _Software Engineer_`;
+          newState = "optimizing_awaiting_role";
+        } else {
+          reply = `📄 Got your resume! Extracted ${extractedText.length} characters of text.\n\nWhat job titles are you interested in?`;
+          newState = "onboarding_job_prefs";
+        }
       } else {
         newContext.resume_text = messageBody;
         // Save pasted text as a resume record
@@ -629,9 +638,17 @@ async function handleConversation(
             });
           }
         }
-        reply = "📄 Got your resume text! I'll process it.\n\nWhat job titles are you looking for?";
+        // Check if we should go to optimization instead of job prefs
+        if (context.pending_action === "optimize_after_resume") {
+          newContext.optimize_resume_text = messageBody;
+          delete newContext.pending_action;
+          reply = "📄 Got your resume text!\n\nWhat target role should I optimize it for?\n\nExample: _Medical Coding Specialist_ or _Software Engineer_";
+          newState = "optimizing_awaiting_role";
+        } else {
+          reply = "📄 Got your resume text! I'll process it.\n\nWhat job titles are you looking for?";
+          newState = "onboarding_job_prefs";
+        }
       }
-      newState = "onboarding_job_prefs";
       break;
     }
 
@@ -862,9 +879,17 @@ serve(async (req) => {
       messageSid = json.MessageSid || json.message_sid || "";
     }
 
-    if (!from || !body) {
+    if (!from) {
       return new Response(
-        JSON.stringify({ error: "Missing From or Body" }),
+        JSON.stringify({ error: "Missing From" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // If body is empty but we have media, that's fine (e.g. PDF with no caption)
+    if (!body && !mediaUrl) {
+      return new Response(
+        JSON.stringify({ error: "Missing Body and MediaUrl" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
