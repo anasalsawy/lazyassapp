@@ -395,8 +395,10 @@ serve(async (req) => {
     });
   }
 
-  const MAX_WRITER_CRITIC_ROUNDS = 2;
-  const EARLY_EXIT_SCORE = 85; // Accept draft if overall score >= this
+  const MAX_WRITER_CRITIC_ROUNDS = 5;
+  const EARLY_EXIT_SCORE = 90; // Accept draft if overall score >= this
+  const TIME_BUDGET_MS = 110_000; // 110s budget — leave ~40s margin for save + response
+  const pipelineStartTime = Date.now();
 
   // ── Audit logger ────────────────────────────────────────────────────
   async function logExecution(step: string, agent: string, model: string, input: string, output: string, extra?: any) {
