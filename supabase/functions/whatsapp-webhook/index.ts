@@ -511,16 +511,90 @@ async function handleConversation(
 
       if (mediaUrl) {
         newContext.resume_media_url = mediaUrl;
-        // Save as resume record
-        if (userId) {
-          await supabase.from("resumes").insert({
-            user_id: userId,
-            title: "WhatsApp Upload",
-            is_primary: true,
-            parsed_content: { source: "whatsapp_media", media_url: mediaUrl },
+        // Download the file from Twilio and extract text
+        let extractedText = "";
+        try {
+          const mediaResp = await fetch(mediaUrl, {
+            headers: {
+              Authorization: "Basic " + btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`),
+            },
           });
+          if (mediaResp.ok) {
+            const contentType = mediaResp.headers.get("content-type") || "";
+            if (contentType.includes("text") || contentType.includes("plain")) {
+              extractedText = await mediaResp.text();
+            } else {
+              // For PDFs and other binary docs, try basic text extraction
+              const arrayBuffer = await mediaResp.arrayBuffer();
+              const bytes = new Uint8Array(arrayBuffer);
+              const textDecoder = new TextDecoder("utf-8", { fatal: false });
+              const rawText = textDecoder.decode(bytes);
+              
+              // Extract readable text from PDF stream objects
+              const textMatches = rawText.match(/\(([^)]+)\)/g);
+              if (textMatches) {
+                extractedText = textMatches
+                  .map((m: string) => m.slice(1, -1))
+                  .filter((t: string) => t.length > 2 && /[a-zA-Z]/.test(t))
+                  .join(" ");
+              }
+              
+              // Also try extracting text between stream markers
+              if (extractedText.length < 100) {
+                const streamMatches = rawText.match(/stream\s*([\s\S]*?)endstream/g);
+                if (streamMatches) {
+                  const additionalText = streamMatches
+                    .map((s: string) => s.replace(/stream\s*/, "").replace(/endstream/, ""))
+                    .join(" ")
+                    .replace(/[^\x20-\x7E\n]/g, " ")
+                    .replace(/\s+/g, " ")
+                    .trim();
+                  if (additionalText.length > extractedText.length) {
+                    extractedText = additionalText;
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Media download/extract failed:", e);
         }
-        reply = "📄 Got your resume! I'll analyze it shortly.\n\nWhat job titles are you interested in?";
+
+        // If extraction failed or got too little text, ask user to paste
+        if (extractedText.length < 50) {
+          if (userId) {
+            const { data: existing } = await supabase.from("resumes").select("id").eq("user_id", userId).eq("is_primary", true).limit(1);
+            if (!existing?.length) {
+              await supabase.from("resumes").insert({
+                user_id: userId,
+                title: "WhatsApp Upload",
+                is_primary: true,
+                parsed_content: { source: "whatsapp_media", media_url: mediaUrl },
+              });
+            }
+          }
+          reply = "📄 I received your file but couldn't extract enough text from it (PDFs can be tricky!).\n\nPlease *paste your full resume text* here instead, and I'll save it for optimization.";
+          // Stay in onboarding_resume state so the next text message gets saved
+          break;
+        }
+
+        // Successfully extracted text — save it
+        if (userId) {
+          const { data: existing } = await supabase.from("resumes").select("id").eq("user_id", userId).eq("is_primary", true).limit(1);
+          if (existing?.length) {
+            await supabase.from("resumes").update({
+              parsed_content: { rawText: extractedText, fullText: extractedText, text: extractedText, source: "whatsapp_media", media_url: mediaUrl },
+            }).eq("id", existing[0].id);
+          } else {
+            await supabase.from("resumes").insert({
+              user_id: userId,
+              title: "WhatsApp Upload",
+              is_primary: true,
+              parsed_content: { rawText: extractedText, fullText: extractedText, text: extractedText, source: "whatsapp_media", media_url: mediaUrl },
+            });
+          }
+        }
+        reply = `📄 Got your resume! Extracted ${extractedText.length} characters of text.\n\nWhat job titles are you interested in?`;
       } else {
         newContext.resume_text = messageBody;
         // Save pasted text as a resume record
