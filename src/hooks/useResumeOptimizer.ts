@@ -78,9 +78,13 @@ export function useResumeOptimizer() {
   // Store resumeId for continue calls
   const resumeIdRef = useRef<string>("");
 
+  // Track auto-continue continuation ID for post-stream pickup
+  const autoContinueIdRef = useRef<string | null>(null);
+
   const processSSEStream = useCallback(
     async (response: Response) => {
       if (!response.body) throw new Error("No response body");
+      autoContinueIdRef.current = null;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
