@@ -320,28 +320,65 @@ async function runOptimizationPipeline(
         await sendProgress(`✅ *Quality gate passed!* Score: ${scores.overall}/100`);
         break;
       }
-      if (decision === "stop_data_needed" || decision === "stop_unfixable_truth") {
-        const dataNeeded = scorecard.data_needed || scorecard.blocking_issues || [];
-        const reasons = dataNeeded
+
+      if (decision === "stop_data_needed") {
+        const dataNeeded = scorecard.data_needed || [];
+        const blockingData = dataNeeded.filter((d: any) => d.impact === "high");
+        const reasons = (blockingData.length > 0 ? blockingData : dataNeeded)
           .map((d: any) => {
-            const text = d.question || d.description || d.issue || d.detail || d.message || d.field || (typeof d === "string" ? d : JSON.stringify(d));
-            return `• ${text}`;
+            const q = d.question || d.description || (typeof d === "string" ? d : JSON.stringify(d));
+            const where = d.where_it_would_help ? ` (for ${d.where_it_would_help})` : "";
+            return `• ${q}${where}`;
           })
           .join("\n") || "Missing critical information";
-        
-        if (round < MAX_ROUNDS) {
-          await sendProgress(`⚠️ Missing info noted, continuing:\n${reasons}`);
-          scorecard.decision_recommendation = "revise";
-          continue;
+
+        await sendProgress(
+          `🛑 *Optimization paused — missing data*\n\n` +
+          `The AI cannot produce a quality resume without this info:\n${reasons}\n\n` +
+          `Please reply with the missing details, then say *Optimize* again.`
+        );
+        // Do NOT continue — exit the loop entirely
+        // Save partial results with a flag
+        const partialOverall = scores.overall ?? 0;
+        const { data: resumes } = await supabase
+          .from("resumes")
+          .select("id, parsed_content")
+          .eq("user_id", userId)
+          .eq("is_primary", true)
+          .limit(1);
+
+        if (resumes?.length) {
+          const existing = resumes[0].parsed_content ?? {};
+          await supabase.from("resumes").update({
+            parsed_content: {
+              ...existing,
+              rawText: resumeText,
+              optimization: {
+                status: "paused_data_needed",
+                partial_score: partialOverall,
+                data_needed: reasons,
+                rounds_completed: round,
+                target_role: targetRole,
+                optimized_at: new Date().toISOString(),
+              },
+            },
+          }).eq("id", resumes[0].id);
         }
-        
-        await sendProgress(`⚠️ Completed with notes:\n${reasons}`);
-        break;
+        return; // EXIT — do not save as complete
+      }
+
+      if (decision === "stop_unfixable_truth") {
+        await sendProgress(
+          `🛑 *Optimization stopped*\n\n` +
+          `The resume cannot adequately support the target role "${targetRole}". ` +
+          `Consider targeting a different role or providing more relevant experience details.`
+        );
+        return; // EXIT
       }
 
       if (decision !== "revise") {
         await sendProgress(`⚠️ Unexpected decision: "${decision}". Stopping.`);
-        break;
+        return;
       }
 
       if (round < MAX_ROUNDS) {
@@ -349,9 +386,26 @@ async function runOptimizationPipeline(
       }
     }
 
-    // ── SAVE RESULTS ──
+    // ── QUALITY GATE: Refuse to save garbage ──
     const overall = scorecard?.scores?.overall ?? 0;
     const atsScore = scorecard?.scores?.ats_compliance ?? 0;
+    const MIN_ACCEPTABLE_SCORE = 60;
+
+    if (overall < MIN_ACCEPTABLE_SCORE) {
+      const dataNeeded = scorecard?.data_needed || [];
+      const reasons = dataNeeded
+        .map((d: any) => `• ${d.question || d.description || JSON.stringify(d)}`)
+        .join("\n") || "• Employment history with dates and company names\n• Specific metrics and achievements";
+
+      await sendProgress(
+        `⚠️ *Optimization incomplete* (Score: ${overall}/100)\n\n` +
+        `The resume still has too many gaps to be usable. Missing:\n${reasons}\n\n` +
+        `Please provide the missing details and say *Optimize* again.`
+      );
+      return; // Do NOT save a low-quality resume as "complete"
+    }
+
+    // ── SAVE RESULTS (only if quality is acceptable) ──
 
     // Find user's primary resume to update
     const { data: resumes } = await supabase
@@ -371,6 +425,7 @@ async function runOptimizationPipeline(
           ...existing,
           rawText: resumeText,
           optimization: {
+            status: "complete",
             ats_text: writerDraft?.ATS_TEXT || "",
             pretty_md: writerDraft?.PRETTY_MD || "",
             changelog: writerDraft?.CHANGELOG?.join("\n") || "",
@@ -379,7 +434,10 @@ async function runOptimizationPipeline(
               ats_score: atsScore,
               keyword_coverage_score: scorecard?.scores?.keyword_coverage ?? 0,
               clarity_score: scorecard?.scores?.clarity_signal ?? 0,
+              truthfulness_score: scorecard?.scores?.truthfulness ?? 0,
+              role_alignment_score: scorecard?.scores?.role_alignment ?? 0,
             },
+            rounds_completed: MAX_ROUNDS,
             target_role: targetRole,
             optimized_at: new Date().toISOString(),
           },
@@ -394,7 +452,9 @@ async function runOptimizationPipeline(
       `🎉 *Resume Optimization Complete!*\n\n` +
       `📊 *Scores:*\n` +
       `• Overall: ${overall}/100\n` +
+      `• Truthfulness: ${scorecard?.scores?.truthfulness ?? 0}/100\n` +
       `• ATS Compliance: ${atsScore}/100\n` +
+      `• Role Alignment: ${scorecard?.scores?.role_alignment ?? 0}/100\n` +
       `• Keyword Coverage: ${scorecard?.scores?.keyword_coverage ?? 0}/100\n` +
       `• Clarity: ${scorecard?.scores?.clarity_signal ?? 0}/100\n\n` +
       `🎯 Target Role: ${targetRole}\n` +
