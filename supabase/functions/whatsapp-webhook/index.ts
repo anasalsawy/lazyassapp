@@ -398,7 +398,7 @@ async function runOptimizationPipeline(
       `• Keyword Coverage: ${scorecard?.scores?.keyword_coverage ?? 0}/100\n` +
       `• Clarity: ${scorecard?.scores?.clarity_signal ?? 0}/100\n\n` +
       `🎯 Target Role: ${targetRole}\n` +
-      `🔄 Rounds: ${scorecard ? "completed" : "N/A"}\n\n` +
+      `🔄 Rounds completed: ${MAX_ROUNDS}\n\n` +
       `Your optimized resume is below ⬇️`;
 
     await sendProgress(resultHeader);
