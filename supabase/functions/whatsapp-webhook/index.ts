@@ -245,8 +245,10 @@ async function runOptimizationPipeline(
     const MAX_ROUNDS = 100; // No practical cap — runs until quality gate
     const QUALITY_GATE_SCORE = 90;
     const initialRound = startRound || 1;
+    let lastCompletedRound = initialRound - 1;
 
     for (let round = initialRound; round <= MAX_ROUNDS; round++) {
+      lastCompletedRound = round;
       // Writer
       await sendProgress(`✍️ *Writing round ${round}/${MAX_ROUNDS}*...`);
 
