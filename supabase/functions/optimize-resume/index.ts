@@ -240,7 +240,7 @@ async function callAI(config: AICallConfig): Promise<string> {
         { role: "system", content: systemPrompt },
         { role: "user", content: userPayload },
       ],
-      temperature,
+      // Note: temperature omitted for Lovable AI gateway as some models only support default
     }),
   });
 
