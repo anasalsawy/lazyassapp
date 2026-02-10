@@ -240,7 +240,7 @@ async function callAI(config: AICallConfig): Promise<string> {
         { role: "system", content: systemPrompt },
         { role: "user", content: userPayload },
       ],
-      temperature,
+      // Note: temperature omitted for Lovable AI gateway as some models only support default
     }),
   });
 
@@ -359,7 +359,7 @@ serve(async (req) => {
   const OPENAI_TEMPERATURE = parseFloat(Deno.env.get("OPENAI_TEMPERATURE") || "0.1");
 
   const RESEARCHER_MODEL = useOpenAI ? OPENAI_MODEL : "google/gemini-3-flash-preview";
-  const WRITER_MODEL = useOpenAI ? OPENAI_MODEL : "openai/gpt-5";
+  const WRITER_MODEL = useOpenAI ? OPENAI_MODEL : "google/gemini-2.5-flash";
   const CRITIC_MODEL = useOpenAI ? OPENAI_MODEL : "google/gemini-3-flash-preview";
   const BASE_TEMP = useOpenAI ? OPENAI_TEMPERATURE : 0.1;
 
