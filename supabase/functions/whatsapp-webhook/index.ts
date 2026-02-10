@@ -104,14 +104,14 @@ async function callAIForPipeline(
   userPayload: string,
   model: string,
 ): Promise<string> {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model,
+      model: mapModel(model),
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPayload },
