@@ -977,6 +977,109 @@ async function handleConversation(
       break;
     }
 
+    // ── GAP FILLING: One question at a time ──
+    case "gap_filling": {
+      const gapState = context.gap_filling;
+      if (!gapState || !gapState.questions) {
+        reply = "Something went wrong with the gap-filling flow. Type *Optimize* to start over.";
+        newState = "idle";
+        break;
+      }
+
+      const currentIdx = gapState.current_question_index || 0;
+      const isSkip = messageBody.toLowerCase().trim() === "skip";
+      const isCancel = messageBody.toLowerCase().trim() === "cancel";
+
+      if (isCancel) {
+        reply = "Optimization cancelled. Type *Optimize* to start fresh.";
+        newState = "idle";
+        newContext = {};
+        break;
+      }
+
+      // Save the answer (or skip)
+      if (!isSkip) {
+        const questionKey = `q${currentIdx}`;
+        gapState.answers[questionKey] = messageBody.trim();
+        gapState.answers[`q${currentIdx}_question`] = gapState.questions[currentIdx].question;
+      }
+
+      const nextIdx = currentIdx + 1;
+
+      if (nextIdx < gapState.questions.length) {
+        // Ask next question
+        gapState.current_question_index = nextIdx;
+        const nextQ = gapState.questions[nextIdx];
+        reply =
+          `✅ Got it!\n\n` +
+          `Question ${nextIdx + 1} of ${gapState.questions.length}:\n` +
+          `❓ ${nextQ.question}\n\n` +
+          `_Reply with your answer, or type *skip* to skip._`;
+        newContext.gap_filling = gapState;
+        newState = "gap_filling";
+      } else {
+        // All questions answered — append answers to resume text and re-optimize
+        const answeredPairs: string[] = [];
+        for (let i = 0; i < gapState.questions.length; i++) {
+          const answer = gapState.answers[`q${i}`];
+          if (answer) {
+            const question = gapState.answers[`q${i}_question`] || gapState.questions[i].question;
+            answeredPairs.push(`${question}: ${answer}`);
+          }
+        }
+
+        if (answeredPairs.length === 0) {
+          reply = "You skipped all questions. Type *Optimize* to try again with more details in your resume.";
+          newState = "idle";
+          newContext = {};
+          break;
+        }
+
+        // Append new data to resume text
+        const additionalInfo = "\n\n--- ADDITIONAL INFORMATION PROVIDED ---\n" + answeredPairs.join("\n");
+        const enrichedResume = gapState.resume_text + additionalInfo;
+
+        // Update resume in database
+        if (userId) {
+          const { data: resumes } = await supabase
+            .from("resumes")
+            .select("id, parsed_content")
+            .eq("user_id", userId)
+            .eq("is_primary", true)
+            .limit(1);
+
+          if (resumes?.length) {
+            const existing = resumes[0].parsed_content ?? {};
+            await supabase.from("resumes").update({
+              parsed_content: {
+                ...existing,
+                rawText: enrichedResume,
+                fullText: enrichedResume,
+                text: enrichedResume,
+              },
+            }).eq("id", resumes[0].id);
+          }
+        }
+
+        reply =
+          `✅ Got all ${answeredPairs.length} answers!\n\n` +
+          `🚀 Re-running optimization with your new details...\n` +
+          `Previous score: ${gapState.partial_score}/100 → targeting 90+`;
+
+        // Fire and forget — re-run pipeline with enriched resume
+        runOptimizationPipeline(
+          supabase,
+          userId!,
+          enrichedResume,
+          gapState.target_role,
+          from,
+        );
+        newState = "idle";
+        newContext = {};
+      }
+      break;
+    }
+
     default:
       reply = await askAI(
         "You are Career Compass, a WhatsApp career assistant. Keep responses brief and helpful.",
