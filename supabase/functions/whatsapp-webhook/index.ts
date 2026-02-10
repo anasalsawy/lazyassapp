@@ -22,6 +22,7 @@ type ConversationState =
   | "onboarding_resume"
   | "onboarding_job_prefs"
   | "idle"
+  | "optimizing_awaiting_role"
   | "optimizing"
   | "searching"
   | "applying"
@@ -29,20 +30,6 @@ type ConversationState =
   | "gap_filling";
 
 // ── Twilio helpers ──
-async function validateTwilioSignature(
-  req: Request,
-  body: string,
-): Promise<boolean> {
-  // In production, implement full Twilio signature validation
-  // For now, verify the request has expected Twilio fields
-  const sig = req.headers.get("x-twilio-signature");
-  if (!sig) {
-    console.warn("No Twilio signature header — skipping validation in dev");
-    return true; // Allow in dev; tighten for production
-  }
-  return true;
-}
-
 async function sendWhatsAppMessage(to: string, body: string): Promise<string> {
   const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;
   const params = new URLSearchParams({
@@ -54,8 +41,7 @@ async function sendWhatsAppMessage(to: string, body: string): Promise<string> {
   const resp = await fetch(url, {
     method: "POST",
     headers: {
-      Authorization:
-        "Basic " + btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`),
+      Authorization: "Basic " + btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`),
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: params.toString(),
@@ -69,33 +55,28 @@ async function sendWhatsAppMessage(to: string, body: string): Promise<string> {
   return data.sid;
 }
 
-// ── AI Chat helper ──
+// ── AI helpers ──
 async function askAI(
   systemPrompt: string,
   userMessage: string,
-  conversationHistory: Array<{ role: string; content: string }> = [],
+  model = "google/gemini-3-flash-preview",
+  maxTokens = 500,
 ): Promise<string> {
-  const messages = [
-    { role: "system", content: systemPrompt },
-    ...conversationHistory,
-    { role: "user", content: userMessage },
-  ];
-
-  const resp = await fetch(
-    "https://ai.gateway.lovable.dev/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages,
-        max_tokens: 500,
-      }),
+  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+      max_tokens: maxTokens,
+    }),
+  });
 
   if (!resp.ok) {
     const errText = await resp.text();
@@ -107,27 +88,63 @@ async function askAI(
   return data.choices?.[0]?.message?.content?.trim() || "I'm sorry, I couldn't process that.";
 }
 
+async function callAIForPipeline(
+  systemPrompt: string,
+  userPayload: string,
+  model: string,
+): Promise<string> {
+  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPayload },
+      ],
+    }),
+  });
+
+  if (!resp.ok) {
+    const status = resp.status;
+    if (status === 429) throw new Error("RATE_LIMIT");
+    if (status === 402) throw new Error("CREDITS_EXHAUSTED");
+    const text = await resp.text();
+    throw new Error(`AI error ${status}: ${text}`);
+  }
+
+  const data = await resp.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
+function safeJsonParse(text: string): any {
+  try { return JSON.parse(text.trim()); } catch { /* */ }
+  const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlock) {
+    try { return JSON.parse(codeBlock[1].trim()); } catch { /* */ }
+  }
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (jsonMatch) return JSON.parse(jsonMatch[0]);
+  throw new Error("No valid JSON found in AI response");
+}
+
 // ── Intent detection ──
-async function detectIntent(
-  message: string,
-): Promise<{
-  intent: string;
-  entities: Record<string, string>;
-}> {
-  const resp = await fetch(
-    "https://ai.gateway.lovable.dev/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash-lite",
-        messages: [
-          {
-            role: "system",
-            content: `You are an intent classifier for a career automation assistant. Classify the user message into one of these intents:
+async function detectIntent(message: string): Promise<{ intent: string; entities: Record<string, string> }> {
+  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash-lite",
+      messages: [
+        {
+          role: "system",
+          content: `You are an intent classifier for a career automation assistant. Classify the user message into one of these intents:
 - optimize_resume: User wants to optimize/improve their resume
 - search_jobs: User wants to find/search for jobs
 - apply_jobs: User wants to apply to jobs
@@ -138,29 +155,244 @@ async function detectIntent(
 - greeting: User is saying hello
 - other: Anything else
 
-Return ONLY valid JSON: {"intent": "...", "entities": {}}`,
-          },
-          { role: "user", content: message },
-        ],
-        max_tokens: 100,
-      }),
-    },
-  );
+Also extract entities like "role" (target role) if mentioned.
+Return ONLY valid JSON: {"intent": "...", "entities": {"role": "..."}}`,
+        },
+        { role: "user", content: message },
+      ],
+      max_tokens: 100,
+    }),
+  });
 
   if (!resp.ok) return { intent: "other", entities: {} };
   const data = await resp.json();
   try {
     const content = data.choices?.[0]?.message?.content?.trim() || "";
-    // Extract JSON from potential markdown code blocks
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (jsonMatch) return JSON.parse(jsonMatch[0]);
-  } catch {
-    // fallback
-  }
+  } catch { /* */ }
   return { intent: "other", entities: {} };
 }
 
-// ── State Machine ──
+// ══════════════════════════════════════════════════════════════
+// RESUME OPTIMIZATION PIPELINE (3-agent: Researcher→Writer→Critic)
+// ══════════════════════════════════════════════════════════════
+
+const RESEARCHER_PROMPT = `You are the RESEARCHER agent in a multi-agent resume optimization system.
+You ONLY generate CHECKLIST_JSON. You do NOT write the resume.
+INPUTS: RAW_RESUME (sole source of facts), JOB_DESCRIPTION (optional, vocabulary only), SYSTEM_CONFIG.
+OUTPUT: JSON-ONLY with schema_version, target_role, resume_strategy, required_sections, recommended_section_order, ats_rules (8+, 3+ blocking), keyword_clusters (6+), bullet_quality_standard, common_rejection_risks, data_requests, success_criteria, notes.
+TRUTH BOUNDARY: Candidate facts ONLY from RAW_RESUME. Do NOT invent details.
+If RAW_RESUME missing: {"error":{"code":"RAW_RESUME_MISSING","message":"RAW_RESUME is required."}}`;
+
+const WRITER_PROMPT = `You are the WRITER agent in a multi-agent resume optimization system.
+INPUT JSON: RAW_RESUME, JOB_DESCRIPTION, CHECKLIST_JSON, PRIOR_CRITIC_SCORECARD, SYSTEM_CONFIG.
+RAW_RESUME is the ONLY source of truth. Do NOT invent facts. Use [PLACEHOLDER] for missing info.
+Follow CHECKLIST_JSON strictly. Apply PRIOR_CRITIC_SCORECARD required_edits if present.
+OUTPUT STRICT JSON: {"ATS_TEXT":"string","PRETTY_MD":"string","CHANGELOG":["string"],"meta":{"round":number,"placeholders_used":[],"critic_edits_applied":0,"critic_edits_skipped_due_to_truth":0}}`;
+
+const CRITIC_PROMPT = `You are the CRITIC agent. Adversarial by design. Assume draft is wrong until proven.
+INPUTS: RAW_RESUME, CHECKLIST_JSON, WRITER_DRAFT, JOB_DESCRIPTION, SYSTEM_CONFIG.
+RAW_RESUME is sole source of truth. Flag any invented facts.
+OUTPUT STRICT JSON: {"schema_version":"1.0","scores":{"overall":number,"truthfulness":number,"ats_compliance":number,"role_alignment":number,"clarity_signal":number,"keyword_coverage":number},"decision_recommendation":"pass|revise|stop_data_needed|stop_unfixable_truth","blocking_issues":[],"non_blocking_issues":[],"truth_violations":[],"section_compliance":[],"keyword_cluster_coverage":[],"required_edits":[],"data_needed":[],"praise_to_preserve":[],"notes_for_supervisor":[]}`;
+
+async function runOptimizationPipeline(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  resumeText: string,
+  targetRole: string,
+  from: string,
+): Promise<void> {
+  // Send progress messages via WhatsApp as the pipeline runs
+  const sendProgress = async (msg: string) => {
+    try { await sendWhatsAppMessage(from, msg); } catch (e) { console.error("Progress msg failed:", e); }
+  };
+
+  try {
+    await sendProgress(`🔬 *Step 1/3: Research*\nAnalyzing industry requirements for "${targetRole}"...`);
+
+    // ── RESEARCHER ──
+    const researcherPayload = JSON.stringify({
+      RAW_RESUME: resumeText,
+      JOB_DESCRIPTION: null,
+      SYSTEM_CONFIG: { max_writer_critic_rounds: 3, target_role: targetRole },
+    });
+
+    const researcherOutput = await callAIForPipeline(RESEARCHER_PROMPT, researcherPayload, "google/gemini-3-flash-preview");
+    const checklist = safeJsonParse(researcherOutput);
+
+    if (checklist.error) {
+      await sendProgress(`❌ Research failed: ${checklist.error.message}`);
+      return;
+    }
+
+    await sendProgress(`✅ Research complete!\n\n✍️ *Step 2/3: Writing*\nCrafting your optimized resume...`);
+
+    // ── WRITER → CRITIC LOOP (max 3 rounds) ──
+    let writerDraft: any = null;
+    let scorecard: any = null;
+    const MAX_ROUNDS = 3;
+    const EARLY_EXIT_SCORE = 85;
+
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
+      // Writer
+      const writerPayload = JSON.stringify({
+        RAW_RESUME: resumeText,
+        JOB_DESCRIPTION: null,
+        CHECKLIST_JSON: checklist,
+        PRIOR_CRITIC_SCORECARD: scorecard,
+        SYSTEM_CONFIG: { round },
+      });
+
+      const writerOutput = await callAIForPipeline(WRITER_PROMPT, writerPayload, "google/gemini-2.5-flash");
+      writerDraft = safeJsonParse(writerOutput);
+
+      if (writerDraft.error) {
+        await sendProgress(`❌ Writing failed: ${writerDraft.error.message}`);
+        return;
+      }
+
+      // Critic
+      if (round < MAX_ROUNDS) {
+        await sendProgress(`🔍 *Step 3/3: Review* (round ${round}/${MAX_ROUNDS})\nAdversarial quality review...`);
+      }
+
+      const criticPayload = JSON.stringify({
+        RAW_RESUME: resumeText,
+        JOB_DESCRIPTION: null,
+        CHECKLIST_JSON: checklist,
+        WRITER_DRAFT: writerDraft,
+        SYSTEM_CONFIG: { round },
+      });
+
+      const criticOutput = await callAIForPipeline(CRITIC_PROMPT, criticPayload, "google/gemini-3-flash-preview");
+      scorecard = safeJsonParse(criticOutput);
+
+      if (scorecard.error) {
+        await sendProgress(`❌ Review failed: ${scorecard.error.message}`);
+        return;
+      }
+
+      const decision = scorecard.decision_recommendation;
+      const score = scorecard.scores?.overall ?? 0;
+
+      if (decision === "pass" || score >= EARLY_EXIT_SCORE) {
+        break;
+      }
+      if (decision === "stop_data_needed" || decision === "stop_unfixable_truth") {
+        const reasons = scorecard.data_needed?.map((d: any) => `• ${d.question}`).join("\n") || "Missing critical information";
+        await sendProgress(`⚠️ Optimization paused:\n\n${reasons}\n\nPlease provide this info and try again.`);
+        return;
+      }
+      // "revise" → continue loop with scorecard as feedback
+    }
+
+    // ── SAVE RESULTS ──
+    const overall = scorecard?.scores?.overall ?? 0;
+    const atsScore = scorecard?.scores?.ats_compliance ?? 0;
+
+    // Find user's primary resume to update
+    const { data: resumes } = await supabase
+      .from("resumes")
+      .select("id, parsed_content")
+      .eq("user_id", userId)
+      .eq("is_primary", true)
+      .limit(1);
+
+    if (resumes?.length) {
+      const resumeId = resumes[0].id;
+      const existing = resumes[0].parsed_content ?? {};
+
+      await supabase.from("resumes").update({
+        ats_score: atsScore,
+        parsed_content: {
+          ...existing,
+          rawText: resumeText,
+          optimization: {
+            ats_text: writerDraft?.ATS_TEXT || "",
+            pretty_md: writerDraft?.PRETTY_MD || "",
+            changelog: writerDraft?.CHANGELOG?.join("\n") || "",
+            scorecard: {
+              overall_score: overall,
+              ats_score: atsScore,
+              keyword_coverage_score: scorecard?.scores?.keyword_coverage ?? 0,
+              clarity_score: scorecard?.scores?.clarity_signal ?? 0,
+            },
+            target_role: targetRole,
+            optimized_at: new Date().toISOString(),
+          },
+        },
+      }).eq("id", resumeId);
+    }
+
+    // ── SEND RESULT ──
+    const atsText = writerDraft?.ATS_TEXT || "";
+    // WhatsApp has a 1600 char limit per message, split if needed
+    const resultHeader =
+      `🎉 *Resume Optimization Complete!*\n\n` +
+      `📊 *Scores:*\n` +
+      `• Overall: ${overall}/100\n` +
+      `• ATS Compliance: ${atsScore}/100\n` +
+      `• Keyword Coverage: ${scorecard?.scores?.keyword_coverage ?? 0}/100\n` +
+      `• Clarity: ${scorecard?.scores?.clarity_signal ?? 0}/100\n\n` +
+      `🎯 Target Role: ${targetRole}\n` +
+      `🔄 Rounds: ${scorecard ? "completed" : "N/A"}\n\n` +
+      `Your optimized resume is below ⬇️`;
+
+    await sendProgress(resultHeader);
+
+    // Send optimized resume in chunks (WhatsApp ~1600 char limit)
+    if (atsText) {
+      const chunks = splitText(atsText, 1500);
+      for (const chunk of chunks) {
+        await sendProgress(chunk);
+      }
+    }
+
+    // Praise highlights
+    const praise = scorecard?.praise_to_preserve;
+    if (praise?.length) {
+      await sendProgress(`💪 *Strengths preserved:*\n${praise.map((p: string) => `• ${p}`).join("\n")}`);
+    }
+
+    await sendProgress(
+      `✅ Done! Your resume has been saved and updated.\n\n` +
+      `What's next?\n📄 *Optimize* again for a different role\n🔍 *Search* for jobs\n📨 *Apply* to matched jobs`
+    );
+  } catch (error: any) {
+    console.error("Optimization pipeline error:", error);
+    let errorMsg = "❌ Optimization failed. Please try again later.";
+    if (error.message === "RATE_LIMIT") {
+      errorMsg = "⏳ Rate limit hit. Please wait a minute and try again.";
+    } else if (error.message === "CREDITS_EXHAUSTED") {
+      errorMsg = "💳 AI credits exhausted. Please add more credits.";
+    }
+    await sendProgress(errorMsg);
+  }
+}
+
+function splitText(text: string, maxLen: number): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining);
+      break;
+    }
+    // Find a good break point (newline or space)
+    let breakAt = remaining.lastIndexOf("\n", maxLen);
+    if (breakAt < maxLen * 0.5) breakAt = remaining.lastIndexOf(" ", maxLen);
+    if (breakAt < maxLen * 0.3) breakAt = maxLen;
+    chunks.push(remaining.substring(0, breakAt));
+    remaining = remaining.substring(breakAt).trimStart();
+  }
+  return chunks;
+}
+
+// ══════════════════════════════════════════════════════════════
+// STATE MACHINE
+// ══════════════════════════════════════════════════════════════
+
 async function handleConversation(
   supabase: ReturnType<typeof createClient>,
   from: string,
@@ -174,21 +406,17 @@ async function handleConversation(
     .eq("phone_number", from)
     .single();
 
-  // Look up user by phone in profiles; if not found, this is a new user
+  // Look up user by phone in profiles
   let userId: string | null = null;
   if (conv) {
     userId = conv.user_id;
   } else {
-    // Check if phone exists in profiles
     const { data: profile } = await supabase
       .from("profiles")
       .select("user_id")
       .eq("phone", from.replace("whatsapp:", ""))
       .single();
-
-    if (profile) {
-      userId = profile.user_id;
-    }
+    if (profile) userId = profile.user_id;
   }
 
   const state: ConversationState = conv?.state || "greeting";
@@ -199,6 +427,7 @@ async function handleConversation(
   let newContext = { ...context };
 
   switch (state) {
+    // ── GREETING ──
     case "greeting": {
       if (!userId) {
         reply =
@@ -219,6 +448,7 @@ async function handleConversation(
       break;
     }
 
+    // ── ONBOARDING ──
     case "onboarding_name": {
       newContext.full_name = messageBody.trim();
       reply = `Nice to meet you, ${newContext.full_name}! 🎉\n\nWhat's your email address? (This is where we'll send job alerts and updates)`;
@@ -234,7 +464,6 @@ async function handleConversation(
       }
       newContext.email = email;
 
-      // Create auth user and profile
       const { data: authData, error: authError } = await supabase.auth.admin.createUser({
         email,
         email_confirm: true,
@@ -242,7 +471,6 @@ async function handleConversation(
       });
 
       if (authError) {
-        // User might already exist
         const { data: existingProfile } = await supabase
           .from("profiles")
           .select("user_id")
@@ -251,9 +479,7 @@ async function handleConversation(
 
         if (existingProfile) {
           userId = existingProfile.user_id;
-          // Update phone
-          await supabase
-            .from("profiles")
+          await supabase.from("profiles")
             .update({ phone: from.replace("whatsapp:", ""), first_name: newContext.full_name?.split(" ")[0], last_name: newContext.full_name?.split(" ").slice(1).join(" ") })
             .eq("user_id", userId);
         } else {
@@ -262,14 +488,8 @@ async function handleConversation(
         }
       } else if (authData?.user) {
         userId = authData.user.id;
-        // Update profile with phone and name
-        await supabase
-          .from("profiles")
-          .update({
-            phone: from.replace("whatsapp:", ""),
-            first_name: newContext.full_name?.split(" ")[0],
-            last_name: newContext.full_name?.split(" ").slice(1).join(" "),
-          })
+        await supabase.from("profiles")
+          .update({ phone: from.replace("whatsapp:", ""), first_name: newContext.full_name?.split(" ")[0], last_name: newContext.full_name?.split(" ").slice(1).join(" ") })
           .eq("user_id", userId);
       }
 
@@ -284,29 +504,45 @@ async function handleConversation(
 
     case "onboarding_resume": {
       if (messageBody.toLowerCase().trim() === "skip") {
-        reply =
-          "No problem! You can send your resume anytime.\n\n" +
-          "What job titles are you looking for? (e.g., Software Engineer, Data Analyst)\n\n" +
-          "Or type *skip* to set this up later.";
+        reply = "No problem! You can send your resume anytime.\n\nWhat job titles are you looking for? (e.g., Software Engineer, Data Analyst)\n\nOr type *skip* to set this up later.";
         newState = "onboarding_job_prefs";
         break;
       }
 
-      // If media (document), note it for later processing
       if (mediaUrl) {
         newContext.resume_media_url = mediaUrl;
-        reply =
-          "📄 Got your resume! I'll analyze it shortly.\n\n" +
-          "What job titles are you interested in? (e.g., Medical Coder, Clinical Data Analyst)";
-        newState = "onboarding_job_prefs";
+        // Save as resume record
+        if (userId) {
+          await supabase.from("resumes").insert({
+            user_id: userId,
+            title: "WhatsApp Upload",
+            is_primary: true,
+            parsed_content: { source: "whatsapp_media", media_url: mediaUrl },
+          });
+        }
+        reply = "📄 Got your resume! I'll analyze it shortly.\n\nWhat job titles are you interested in?";
       } else {
-        // Treat the message body as pasted resume text
         newContext.resume_text = messageBody;
-        reply =
-          "📄 Got your resume text! I'll process it.\n\n" +
-          "What job titles are you looking for? (e.g., Medical Coder, Clinical Data Analyst)";
-        newState = "onboarding_job_prefs";
+        // Save pasted text as a resume record
+        if (userId) {
+          // Upsert primary resume
+          const { data: existing } = await supabase.from("resumes").select("id").eq("user_id", userId).eq("is_primary", true).limit(1);
+          if (existing?.length) {
+            await supabase.from("resumes").update({
+              parsed_content: { rawText: messageBody, fullText: messageBody, text: messageBody },
+            }).eq("id", existing[0].id);
+          } else {
+            await supabase.from("resumes").insert({
+              user_id: userId,
+              title: "WhatsApp Resume",
+              is_primary: true,
+              parsed_content: { rawText: messageBody, fullText: messageBody, text: messageBody },
+            });
+          }
+        }
+        reply = "📄 Got your resume text! I'll process it.\n\nWhat job titles are you looking for?";
       }
+      newState = "onboarding_job_prefs";
       break;
     }
 
@@ -314,34 +550,88 @@ async function handleConversation(
       if (messageBody.toLowerCase().trim() !== "skip") {
         const titles = messageBody.split(",").map((t: string) => t.trim()).filter(Boolean);
         if (titles.length > 0 && userId) {
-          await supabase
-            .from("job_preferences")
-            .update({ job_titles: titles })
-            .eq("user_id", userId);
+          // Upsert job preferences
+          const { data: existing } = await supabase.from("job_preferences").select("id").eq("user_id", userId).limit(1);
+          if (existing?.length) {
+            await supabase.from("job_preferences").update({ job_titles: titles }).eq("id", existing[0].id);
+          } else {
+            await supabase.from("job_preferences").insert({ user_id: userId, job_titles: titles });
+          }
         }
       }
 
       reply =
-        "🎉 You're all set up!\n\n" +
-        "Here's what I can do for you:\n\n" +
+        "🎉 You're all set up!\n\nHere's what I can do:\n\n" +
         "📄 *Optimize* — Optimize your resume for a target role\n" +
         "🔍 *Search* — Find matching jobs\n" +
         "📨 *Apply* — Auto-apply to matched jobs\n" +
         "📊 *Status* — Check application status\n" +
-        "🛒 *Shop* — Find best deals on products\n" +
+        "🛒 *Shop* — Find best deals\n" +
         "❓ *Help* — See all commands\n\n" +
         "What would you like to do?";
       newState = "idle";
       break;
     }
 
+    // ── IDLE: INTENT ROUTING ──
     case "idle": {
-      const { intent } = await detectIntent(messageBody);
+      const { intent, entities } = await detectIntent(messageBody);
 
       switch (intent) {
-        case "optimize_resume":
-          reply = await handleOptimizeIntent(supabase, userId!, messageBody, newContext);
+        case "optimize_resume": {
+          if (!userId) {
+            reply = "You need to set up your account first. What's your full name?";
+            newState = "onboarding_name";
+            break;
+          }
+
+          // Check if user has a resume
+          const { data: resumes } = await supabase
+            .from("resumes")
+            .select("id, title, ats_score, parsed_content")
+            .eq("user_id", userId)
+            .eq("is_primary", true)
+            .limit(1);
+
+          if (!resumes?.length) {
+            reply = "📄 You don't have a resume uploaded yet.\n\nPaste your resume text here and I'll save it for you:";
+            newContext.pending_action = "optimize_after_resume";
+            newState = "onboarding_resume";
+            break;
+          }
+
+          const resume = resumes[0];
+          const resumeText = resume.parsed_content?.rawText || resume.parsed_content?.fullText || resume.parsed_content?.text || "";
+
+          if (!resumeText || resumeText.length < 50) {
+            reply = "📄 Your resume doesn't have enough text to optimize.\n\nPlease paste your full resume text:";
+            newContext.pending_action = "optimize_after_resume";
+            newState = "onboarding_resume";
+            break;
+          }
+
+          // If role was extracted from intent, start immediately
+          const extractedRole = entities?.role;
+          if (extractedRole) {
+            reply = `📄 Found your resume: *${resume.title}*\n\n🚀 Starting optimization for *${extractedRole}*...\n\nThis takes 2-4 minutes. I'll send progress updates!`;
+            newContext.optimize_resume_text = resumeText;
+            newContext.optimize_resume_id = resume.id;
+            // Fire and forget the pipeline (runs async, sends results via WhatsApp)
+            runOptimizationPipeline(supabase, userId, resumeText, extractedRole, from);
+            newState = "idle"; // Stay idle, pipeline sends messages directly
+          } else {
+            reply =
+              `📄 Found your resume: *${resume.title}*\n` +
+              (resume.ats_score ? `Current ATS Score: ${resume.ats_score}%\n\n` : "\n") +
+              "What target role should I optimize it for?\n\n" +
+              "Example: _Medical Coding Specialist_ or _Software Engineer_";
+            newContext.optimize_resume_text = resumeText;
+            newContext.optimize_resume_id = resume.id;
+            newState = "optimizing_awaiting_role";
+          }
           break;
+        }
+
         case "search_jobs":
           reply = await handleSearchIntent(supabase, userId!, messageBody);
           break;
@@ -352,17 +642,15 @@ async function handleConversation(
           reply = await handleStatusIntent(supabase, userId!);
           break;
         case "shop":
-          reply = await handleShopIntent(messageBody);
+          reply = "🛒 Auto-Shop activated!\n\nTell me what you're looking for and your budget.\n\nExample: _Buy wireless earbuds under $50_";
           break;
         case "greeting":
-          reply =
-            "Hey! 👋 Good to hear from you.\n\nWhat can I help with?\n\n" +
-            "📄 Optimize resume\n🔍 Search jobs\n📨 Apply\n📊 Status\n🛒 Shop";
+          reply = "Hey! 👋 Good to hear from you.\n\nWhat can I help with?\n\n📄 Optimize resume\n🔍 Search jobs\n📨 Apply\n📊 Status\n🛒 Shop";
           break;
         case "help":
           reply =
             "Here are my commands:\n\n" +
-            "📄 *Optimize* — AI resume optimization\n" +
+            "📄 *Optimize [role]* — AI resume optimization\n" +
             "🔍 *Search [role]* — Find jobs\n" +
             "📨 *Apply* — Auto-apply to matches\n" +
             "📊 *Status* — Application updates\n" +
@@ -371,12 +659,35 @@ async function handleConversation(
             "❓ *Help* — This menu";
           break;
         default:
-          // Use AI for natural conversation
           reply = await askAI(
             `You are Career Compass, a friendly WhatsApp career assistant. You help users with resume optimization, job searching, auto-applying, and shopping. Keep responses concise (under 300 chars for WhatsApp). If the user seems to want a specific action, suggest the relevant command.`,
             messageBody,
           );
       }
+      break;
+    }
+
+    // ── AWAITING TARGET ROLE FOR OPTIMIZATION ──
+    case "optimizing_awaiting_role": {
+      const targetRole = messageBody.trim();
+      if (targetRole.toLowerCase() === "cancel") {
+        reply = "Optimization cancelled. What else can I help with?";
+        newState = "idle";
+        break;
+      }
+
+      const resumeText = context.optimize_resume_text;
+      if (!resumeText || !userId) {
+        reply = "Something went wrong. Let's start over — type *Optimize* to try again.";
+        newState = "idle";
+        break;
+      }
+
+      reply = `🚀 Starting optimization for *${targetRole}*...\n\nThis takes 2-4 minutes. I'll send progress updates!`;
+      
+      // Fire and forget — pipeline sends WhatsApp messages directly
+      runOptimizationPipeline(supabase, userId, resumeText, targetRole, from);
+      newState = "idle";
       break;
     }
 
@@ -390,17 +701,15 @@ async function handleConversation(
 
   // Upsert conversation
   if (conv) {
-    await supabase
-      .from("conversations")
+    await supabase.from("conversations")
       .update({
         state: newState,
         context_json: newContext,
         last_message_at: new Date().toISOString(),
-        ...(userId ? { user_id: userId } : {}),
+        ...(userId && userId !== conv.user_id ? { user_id: userId } : {}),
       })
       .eq("id", conv.id);
   } else {
-    // Need a user_id — use a placeholder if none yet
     const effectiveUserId = userId || "00000000-0000-0000-0000-000000000000";
     await supabase.from("conversations").insert({
       user_id: effectiveUserId,
@@ -414,119 +723,27 @@ async function handleConversation(
   return reply;
 }
 
-// ── Intent Handlers ──
-async function handleOptimizeIntent(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  message: string,
-  context: Record<string, unknown>,
-): Promise<string> {
-  // Check if user has a resume
-  const { data: resumes } = await supabase
-    .from("resumes")
-    .select("id, title, ats_score")
-    .eq("user_id", userId)
-    .eq("is_primary", true)
-    .limit(1);
-
-  if (!resumes?.length) {
-    return "📄 You don't have a resume uploaded yet.\n\nSend me your resume as a document or paste the text, and I'll optimize it!";
-  }
-
-  const resume = resumes[0];
-  return (
-    `📄 Found your resume: *${resume.title}*\n` +
-    (resume.ats_score ? `Current ATS Score: ${resume.ats_score}%\n\n` : "\n") +
-    "What target role should I optimize it for?\n\n" +
-    "Example: _Optimize for Medical Coding Specialist_"
-  );
-}
-
-async function handleSearchIntent(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  message: string,
-): Promise<string> {
-  const { data: prefs } = await supabase
-    .from("job_preferences")
-    .select("job_titles, locations")
-    .eq("user_id", userId)
-    .single();
-
+// ── Other intent handlers ──
+async function handleSearchIntent(supabase: ReturnType<typeof createClient>, userId: string, message: string): Promise<string> {
+  const { data: prefs } = await supabase.from("job_preferences").select("job_titles, locations").eq("user_id", userId).single();
   const titles = prefs?.job_titles?.join(", ") || "not set";
   const locations = prefs?.locations?.join(", ") || "any location";
-
-  return (
-    `🔍 I'll search for jobs matching:\n\n` +
-    `*Titles:* ${titles}\n` +
-    `*Locations:* ${locations}\n\n` +
-    "I'm kicking off a deep search now. I'll message you when results are ready! 🚀\n\n" +
-    "_This typically takes 5-10 minutes._"
-  );
+  return `🔍 I'll search for jobs matching:\n\n*Titles:* ${titles}\n*Locations:* ${locations}\n\nI'm kicking off a deep search now. I'll message you when results are ready! 🚀\n\n_This typically takes 5-10 minutes._`;
 }
 
-async function handleApplyIntent(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-): Promise<string> {
-  const { data: jobs } = await supabase
-    .from("jobs")
-    .select("id, title, company, match_score")
-    .eq("user_id", userId)
-    .gte("match_score", 70)
-    .order("match_score", { ascending: false })
-    .limit(5);
-
-  if (!jobs?.length) {
-    return "📨 No matched jobs to apply to yet.\n\nTry *Search* first to find jobs, then I can auto-apply!";
-  }
-
-  const jobList = jobs
-    .map((j, i) => `${i + 1}. *${j.title}* at ${j.company} (${j.match_score}% match)`)
-    .join("\n");
-
+async function handleApplyIntent(supabase: ReturnType<typeof createClient>, userId: string): Promise<string> {
+  const { data: jobs } = await supabase.from("jobs").select("id, title, company, match_score").eq("user_id", userId).gte("match_score", 70).order("match_score", { ascending: false }).limit(5);
+  if (!jobs?.length) return "📨 No matched jobs to apply to yet.\n\nTry *Search* first to find jobs, then I can auto-apply!";
+  const jobList = jobs.map((j, i) => `${i + 1}. *${j.title}* at ${j.company} (${j.match_score}% match)`).join("\n");
   return `📨 Top matches ready to apply:\n\n${jobList}\n\nReply *apply all* to auto-apply, or *apply 1,3* for specific ones.`;
 }
 
-async function handleStatusIntent(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-): Promise<string> {
-  const { data: apps, count } = await supabase
-    .from("applications")
-    .select("status, company_name, job_title", { count: "exact" })
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(5);
-
-  if (!apps?.length) {
-    return "📊 No applications yet. Use *Search* to find jobs and *Apply* to get started!";
-  }
-
-  const statusEmoji: Record<string, string> = {
-    applied: "📤",
-    interview: "🎯",
-    offer: "🎉",
-    rejected: "❌",
-    pending: "⏳",
-  };
-
-  const list = apps
-    .map(
-      (a) =>
-        `${statusEmoji[a.status] || "📋"} *${a.job_title || "Unknown"}* at ${a.company_name || "Unknown"} — ${a.status}`,
-    )
-    .join("\n");
-
+async function handleStatusIntent(supabase: ReturnType<typeof createClient>, userId: string): Promise<string> {
+  const { data: apps, count } = await supabase.from("applications").select("status, company_name, job_title", { count: "exact" }).eq("user_id", userId).order("created_at", { ascending: false }).limit(5);
+  if (!apps?.length) return "📊 No applications yet. Use *Search* to find jobs and *Apply* to get started!";
+  const statusEmoji: Record<string, string> = { applied: "📤", interview: "🎯", offer: "🎉", rejected: "❌", pending: "⏳" };
+  const list = apps.map((a) => `${statusEmoji[a.status] || "📋"} *${a.job_title || "Unknown"}* at ${a.company_name || "Unknown"} — ${a.status}`).join("\n");
   return `📊 Your applications (${count} total):\n\n${list}\n\n_Showing latest 5_`;
-}
-
-async function handleShopIntent(message: string): Promise<string> {
-  return (
-    "🛒 Auto-Shop activated!\n\n" +
-    "Tell me what you're looking for and your budget.\n\n" +
-    "Example: _Buy wireless earbuds under $50_"
-  );
 }
 
 // ── Main Handler ──
@@ -535,7 +752,6 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  // Twilio sends webhooks as application/x-www-form-urlencoded
   try {
     const contentType = req.headers.get("content-type") || "";
     let from = "";
@@ -550,7 +766,6 @@ serve(async (req) => {
       mediaUrl = formData.get("MediaUrl0")?.toString() || null;
       messageSid = formData.get("MessageSid")?.toString() || "";
     } else if (contentType.includes("application/json")) {
-      // For testing via curl/API
       const json = await req.json();
       from = json.From || json.from || "";
       body = json.Body || json.body || json.message || "";
@@ -606,12 +821,10 @@ serve(async (req) => {
       });
     }
 
-    // Return TwiML empty response (Twilio expects this)
+    // Return TwiML empty response
     return new Response(
       '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/xml" },
-      },
+      { headers: { ...corsHeaders, "Content-Type": "application/xml" } },
     );
   } catch (error) {
     console.error("[WhatsApp] Error:", error);
