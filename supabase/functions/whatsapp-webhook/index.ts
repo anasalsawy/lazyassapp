@@ -316,8 +316,8 @@ async function runOptimizationPipeline(
 
       await sendProgress(roundReport);
 
-      if (decision === "pass" || scores.overall >= EARLY_EXIT_SCORE) {
-        await sendProgress(`✅ *Quality gate passed!* Score: ${scores.overall}/100`);
+      if (decision === "pass" || scores.overall >= QUALITY_GATE_SCORE) {
+        await sendProgress(`✅ *Quality gate passed!* Score: ${scores.overall}/100 (target: ${QUALITY_GATE_SCORE})`);
         break;
       }
 
