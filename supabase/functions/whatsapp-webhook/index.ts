@@ -1063,6 +1063,22 @@ async function handleConversation(
 
     // ── IDLE: INTENT ROUTING ──
     case "idle": {
+      // Check for pending destructive action confirmation
+      if (context.pending_data_action) {
+        const answer = messageBody.toLowerCase().trim();
+        if (answer === "yes" || answer === "y" || answer === "confirm") {
+          const result = await executeDataPlan(supabase, userId!, context.pending_data_action, from);
+          reply = result.reply;
+          newContext = result.newContext;
+          newState = result.newState;
+          break;
+        } else {
+          reply = "❌ Cancelled. No data was changed.\n\nWhat else can I help with?";
+          delete newContext.pending_data_action;
+          break;
+        }
+      }
+
       const { intent, entities } = await detectIntent(messageBody);
 
       switch (intent) {
@@ -1104,9 +1120,8 @@ async function handleConversation(
             reply = `📄 Found your resume: *${resume.title}*\n\n🚀 Starting optimization for *${extractedRole}*...\n\nThis takes 2-4 minutes. I'll send progress updates!`;
             newContext.optimize_resume_text = resumeText;
             newContext.optimize_resume_id = resume.id;
-            // Fire and forget the pipeline (runs async, sends results via WhatsApp)
             runOptimizationPipeline(supabase, userId, resumeText, extractedRole, from);
-            newState = "idle"; // Stay idle, pipeline sends messages directly
+            newState = "idle";
           } else {
             reply =
               `📄 Found your resume: *${resume.title}*\n` +
@@ -1117,6 +1132,19 @@ async function handleConversation(
             newContext.optimize_resume_id = resume.id;
             newState = "optimizing_awaiting_role";
           }
+          break;
+        }
+
+        case "manage_data": {
+          if (!userId) {
+            reply = "You need to set up your account first. What's your full name?";
+            newState = "onboarding_name";
+            break;
+          }
+          const result = await handleDataManagement(supabase, userId, messageBody, from, newContext);
+          reply = result.reply;
+          newContext = result.newContext;
+          newState = result.newState;
           break;
         }
 
@@ -1133,7 +1161,7 @@ async function handleConversation(
           reply = "🛒 Auto-Shop activated!\n\nTell me what you're looking for and your budget.\n\nExample: _Buy wireless earbuds under $50_";
           break;
         case "greeting":
-          reply = "Hey! 👋 Good to hear from you.\n\nWhat can I help with?\n\n📄 Optimize resume\n🔍 Search jobs\n📨 Apply\n📊 Status\n🛒 Shop";
+          reply = "Hey! 👋 Good to hear from you.\n\nWhat can I help with?\n\n📄 Optimize resume\n🔍 Search jobs\n📨 Apply\n📊 Status\n🛒 Shop\n🛠 Manage data";
           break;
         case "help":
           reply =
@@ -1144,11 +1172,12 @@ async function handleConversation(
             "📊 *Status* — Application updates\n" +
             "🛒 *Shop [product]* — Find best deals\n" +
             "👤 *Update profile* — Edit your info\n" +
+            "🛠 *Manage data* — Delete, reset, or modify your data\n" +
             "❓ *Help* — This menu";
           break;
         default:
           reply = await askAI(
-            `You are Career Compass, a friendly WhatsApp career assistant. You help users with resume optimization, job searching, auto-applying, and shopping. Keep responses concise (under 300 chars for WhatsApp). If the user seems to want a specific action, suggest the relevant command.`,
+            `You are Career Compass, a friendly WhatsApp career assistant. You help users with resume optimization, job searching, auto-applying, shopping, and managing their data. Keep responses concise (under 300 chars for WhatsApp). If the user seems to want a specific action, suggest the relevant command. For data management (delete, reset, fill, add to), tell them to just describe what they want naturally.`,
             messageBody,
           );
       }
