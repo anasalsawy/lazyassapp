@@ -236,6 +236,8 @@ async function runOptimizationPipeline(
 
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       // Writer
+      await sendProgress(`✍️ *Writing round ${round}/${MAX_ROUNDS}*...`);
+
       const writerPayload = JSON.stringify({
         RAW_RESUME: resumeText,
         JOB_DESCRIPTION: null,
@@ -252,10 +254,18 @@ async function runOptimizationPipeline(
         return;
       }
 
+      // Report writer meta
+      const meta = writerDraft.meta || {};
+      const changelogPreview = (writerDraft.CHANGELOG || []).slice(0, 3).map((c: string) => `  • ${c}`).join("\n");
+      await sendProgress(
+        `✅ *Draft v${round} written*\n` +
+        `• Critic edits applied: ${meta.critic_edits_applied ?? "N/A"}\n` +
+        `• Placeholders used: ${(meta.placeholders_used || []).length}\n` +
+        (changelogPreview ? `\n📝 *Changes:*\n${changelogPreview}` : "")
+      );
+
       // Critic
-      if (round < MAX_ROUNDS) {
-        await sendProgress(`🔍 *Step 3/3: Review* (round ${round}/${MAX_ROUNDS})\nAdversarial quality review...`);
-      }
+      await sendProgress(`🔍 *Reviewing round ${round}/${MAX_ROUNDS}*...`);
 
       const criticPayload = JSON.stringify({
         RAW_RESUME: resumeText,
@@ -274,13 +284,43 @@ async function runOptimizationPipeline(
       }
 
       const decision = scorecard.decision_recommendation;
-      const score = scorecard.scores?.overall ?? 0;
+      const scores = scorecard.scores || {};
+      const truthViolations = scorecard.truth_violations || [];
+      const blockingIssues = scorecard.blocking_issues || [];
+      const requiredEdits = scorecard.required_edits || [];
 
-      if (decision === "pass" || score >= EARLY_EXIT_SCORE) {
+      // ── Send detailed round scorecard ──
+      let roundReport =
+        `📊 *Round ${round} Scorecard:*\n` +
+        `• Overall: *${scores.overall ?? "?"}/100*\n` +
+        `• Truthfulness: ${scores.truthfulness ?? "?"}/100\n` +
+        `• ATS Compliance: ${scores.ats_compliance ?? "?"}/100\n` +
+        `• Role Alignment: ${scores.role_alignment ?? "?"}/100\n` +
+        `• Clarity/Signal: ${scores.clarity_signal ?? "?"}/100\n` +
+        `• Keyword Coverage: ${scores.keyword_coverage ?? "?"}/100\n` +
+        `\n🏷 Decision: *${decision}*`;
+
+      if (truthViolations.length > 0) {
+        roundReport += `\n\n⚠️ *Truth violations (${truthViolations.length}):*\n` +
+          truthViolations.slice(0, 3).map((tv: any) => `  • "${tv.draft_claim}" — ${tv.recommended_fix}`).join("\n");
+      }
+
+      if (blockingIssues.length > 0) {
+        roundReport += `\n\n🚫 *Blocking issues (${blockingIssues.length}):*\n` +
+          blockingIssues.slice(0, 3).map((b: any) => `  • ${b.description}`).join("\n");
+      }
+
+      if (requiredEdits.length > 0) {
+        roundReport += `\n\n🔧 *Required edits: ${requiredEdits.length}* (${requiredEdits.filter((e: any) => e.severity === "blocking").length} blocking)`;
+      }
+
+      await sendProgress(roundReport);
+
+      if (decision === "pass" || scores.overall >= EARLY_EXIT_SCORE) {
+        await sendProgress(`✅ *Quality gate passed!* Score: ${scores.overall}/100`);
         break;
       }
       if (decision === "stop_data_needed" || decision === "stop_unfixable_truth") {
-        // data_needed items may use different property names depending on model output
         const dataNeeded = scorecard.data_needed || scorecard.blocking_issues || [];
         const reasons = dataNeeded
           .map((d: any) => {
@@ -289,17 +329,24 @@ async function runOptimizationPipeline(
           })
           .join("\n") || "Missing critical information";
         
-        // Instead of stopping, treat as "revise" for WhatsApp (be more lenient)
         if (round < MAX_ROUNDS) {
-          await sendProgress(`⚠️ Some info is missing but I'll do my best:\n${reasons}\n\nContinuing optimization...`);
+          await sendProgress(`⚠️ Missing info noted, continuing:\n${reasons}`);
           scorecard.decision_recommendation = "revise";
           continue;
         }
         
-        await sendProgress(`⚠️ Optimization completed with notes:\n\n${reasons}\n\nI've optimized what I could. See results below!`);
+        await sendProgress(`⚠️ Completed with notes:\n${reasons}`);
         break;
       }
-      // "revise" → continue loop with scorecard as feedback
+
+      if (decision !== "revise") {
+        await sendProgress(`⚠️ Unexpected decision: "${decision}". Stopping.`);
+        break;
+      }
+
+      if (round < MAX_ROUNDS) {
+        await sendProgress(`🔄 Revising for round ${round + 1}...`);
+      }
     }
 
     // ── SAVE RESULTS ──
@@ -351,7 +398,7 @@ async function runOptimizationPipeline(
       `• Keyword Coverage: ${scorecard?.scores?.keyword_coverage ?? 0}/100\n` +
       `• Clarity: ${scorecard?.scores?.clarity_signal ?? 0}/100\n\n` +
       `🎯 Target Role: ${targetRole}\n` +
-      `🔄 Rounds: ${scorecard ? "completed" : "N/A"}\n\n` +
+      `🔄 Rounds completed: ${MAX_ROUNDS}\n\n` +
       `Your optimized resume is below ⬇️`;
 
     await sendProgress(resultHeader);
