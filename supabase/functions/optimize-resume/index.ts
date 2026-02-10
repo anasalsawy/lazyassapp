@@ -718,7 +718,7 @@ serve(async (req) => {
           sendSSE(controller, encoder, "error", { message: msg });
         }
       } finally {
-        controller.close();
+        try { controller.close(); } catch { /* already closed */ }
       }
     },
   });
