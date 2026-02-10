@@ -258,8 +258,15 @@ async function runOptimizationPipeline(
         SYSTEM_CONFIG: { round },
       });
 
-      const writerOutput = await callAIForPipeline(WRITER_PROMPT, writerPayload, "google/gemini-2.5-flash");
-      writerDraft = safeJsonParse(writerOutput);
+      let writerOutput: string;
+      try {
+        writerOutput = await callAIForPipeline(WRITER_PROMPT, writerPayload, "google/gemini-2.5-flash");
+        writerDraft = safeJsonParse(writerOutput);
+      } catch (e: any) {
+        console.error(`Writer round ${round} parse error:`, e.message);
+        await sendProgress(`⚠️ Writer output malformed in round ${round}, retrying...`);
+        continue;
+      }
 
       if (writerDraft.error) {
         await sendProgress(`❌ Writing failed: ${writerDraft.error.message}`);
