@@ -202,39 +202,51 @@ async function runOptimizationPipeline(
   resumeText: string,
   targetRole: string,
   from: string,
+  existingChecklist?: any,
+  existingScorecard?: any,
+  startRound?: number,
 ): Promise<void> {
+  // Reference for updating conversation context (for gap-filling)
+  let newConvContext: Record<string, any> = {};
   // Send progress messages via WhatsApp as the pipeline runs
   const sendProgress = async (msg: string) => {
     try { await sendWhatsAppMessage(from, msg); } catch (e) { console.error("Progress msg failed:", e); }
   };
 
   try {
-    await sendProgress(`🔬 *Step 1/3: Research*\nAnalyzing industry requirements for "${targetRole}"...`);
+    // ── RESEARCHER (skip if we already have a checklist from gap-filling resume) ──
+    let checklist = existingChecklist || null;
 
-    // ── RESEARCHER ──
-    const researcherPayload = JSON.stringify({
-      RAW_RESUME: resumeText,
-      JOB_DESCRIPTION: null,
-      SYSTEM_CONFIG: { max_writer_critic_rounds: 3, target_role: targetRole },
-    });
+    if (!checklist) {
+      await sendProgress(`🔬 *Step 1/3: Research*\nAnalyzing industry requirements for "${targetRole}"...`);
 
-    const researcherOutput = await callAIForPipeline(RESEARCHER_PROMPT, researcherPayload, "google/gemini-3-flash-preview");
-    const checklist = safeJsonParse(researcherOutput);
+      const researcherPayload = JSON.stringify({
+        RAW_RESUME: resumeText,
+        JOB_DESCRIPTION: null,
+        SYSTEM_CONFIG: { max_writer_critic_rounds: 100, target_role: targetRole },
+      });
 
-    if (checklist.error) {
-      await sendProgress(`❌ Research failed: ${checklist.error.message}`);
-      return;
+      const researcherOutput = await callAIForPipeline(RESEARCHER_PROMPT, researcherPayload, "google/gemini-3-flash-preview");
+      checklist = safeJsonParse(researcherOutput);
+
+      if (checklist.error) {
+        await sendProgress(`❌ Research failed: ${checklist.error.message}`);
+        return;
+      }
+
+      await sendProgress(`✅ Research complete!\n\n✍️ *Step 2/3: Writing*\nCrafting your optimized resume...`);
+    } else {
+      await sendProgress(`✍️ *Resuming optimization* with new information...`);
     }
 
-    await sendProgress(`✅ Research complete!\n\n✍️ *Step 2/3: Writing*\nCrafting your optimized resume...`);
-
-    // ── WRITER → CRITIC LOOP (max 3 rounds) ──
+    // ── WRITER → CRITIC LOOP (runs until 90+ or data needed) ──
     let writerDraft: any = null;
-    let scorecard: any = null;
-    const MAX_ROUNDS = 3;
-    const EARLY_EXIT_SCORE = 85;
+    let scorecard: any = existingScorecard || null;
+    const MAX_ROUNDS = 100; // No practical cap — runs until quality gate
+    const QUALITY_GATE_SCORE = 90;
+    const initialRound = startRound || 1;
 
-    for (let round = 1; round <= MAX_ROUNDS; round++) {
+    for (let round = initialRound; round <= MAX_ROUNDS; round++) {
       // Writer
       await sendProgress(`✍️ *Writing round ${round}/${MAX_ROUNDS}*...`);
 
@@ -316,55 +328,82 @@ async function runOptimizationPipeline(
 
       await sendProgress(roundReport);
 
-      if (decision === "pass" || scores.overall >= EARLY_EXIT_SCORE) {
-        await sendProgress(`✅ *Quality gate passed!* Score: ${scores.overall}/100`);
+      if (decision === "pass" || scores.overall >= QUALITY_GATE_SCORE) {
+        await sendProgress(`✅ *Quality gate passed!* Score: ${scores.overall}/100 (target: ${QUALITY_GATE_SCORE})`);
         break;
       }
 
       if (decision === "stop_data_needed") {
         const dataNeeded = scorecard.data_needed || [];
-        const blockingData = dataNeeded.filter((d: any) => d.impact === "high");
-        const reasons = (blockingData.length > 0 ? blockingData : dataNeeded)
-          .map((d: any) => {
-            const q = d.question || d.description || (typeof d === "string" ? d : JSON.stringify(d));
-            const where = d.where_it_would_help ? ` (for ${d.where_it_would_help})` : "";
-            return `• ${q}${where}`;
-          })
-          .join("\n") || "Missing critical information";
+        // Build gap-filling question list
+        const questions = dataNeeded
+          .filter((d: any) => d.impact === "high" || d.impact === "medium")
+          .map((d: any) => ({
+            question: d.question || d.description || (typeof d === "string" ? d : JSON.stringify(d)),
+            where: d.where_it_would_help || "resume",
+            impact: d.impact || "high",
+          }));
 
-        await sendProgress(
-          `🛑 *Optimization paused — missing data*\n\n` +
-          `The AI cannot produce a quality resume without this info:\n${reasons}\n\n` +
-          `Please reply with the missing details, then say *Optimize* again.`
-        );
-        // Do NOT continue — exit the loop entirely
-        // Save partial results with a flag
-        const partialOverall = scores.overall ?? 0;
-        const { data: resumes } = await supabase
-          .from("resumes")
-          .select("id, parsed_content")
-          .eq("user_id", userId)
-          .eq("is_primary", true)
-          .limit(1);
-
-        if (resumes?.length) {
-          const existing = resumes[0].parsed_content ?? {};
-          await supabase.from("resumes").update({
-            parsed_content: {
-              ...existing,
-              rawText: resumeText,
-              optimization: {
-                status: "paused_data_needed",
-                partial_score: partialOverall,
-                data_needed: reasons,
-                rounds_completed: round,
-                target_role: targetRole,
-                optimized_at: new Date().toISOString(),
-              },
-            },
-          }).eq("id", resumes[0].id);
+        if (questions.length === 0) {
+          // Fallback: extract from blocking_issues
+          const blockingIssues = scorecard.blocking_issues || [];
+          for (const b of blockingIssues) {
+            questions.push({
+              question: b.description || JSON.stringify(b),
+              where: b.category || "resume",
+              impact: "high",
+            });
+          }
         }
-        return; // EXIT — do not save as complete
+
+        if (questions.length > 0) {
+          // Save state for gap-filling: questions, partial results, resume context
+          const gapState = {
+            questions,
+            current_question_index: 0,
+            answers: {} as Record<string, string>,
+            resume_text: resumeText,
+            target_role: targetRole,
+            partial_score: scores.overall ?? 0,
+            rounds_completed: round,
+            checklist,
+            writer_draft: writerDraft,
+            scorecard,
+          };
+
+          // Save to conversation context
+          await supabase.from("conversations")
+            .update({
+              state: "gap_filling",
+              context_json: {
+                ...newConvContext,
+                gap_filling: gapState,
+              },
+            })
+            .eq("phone_number", from);
+
+          // Ask the first question
+          const firstQ = questions[0];
+          await sendProgress(
+            `🔍 *I need more information to get your score above 90.*\n` +
+            `Current score: *${scores.overall}/100*\n\n` +
+            `Question 1 of ${questions.length}:\n` +
+            `❓ ${firstQ.question}\n\n` +
+            `_Reply with your answer, or type *skip* to skip this question._`
+          );
+          return; // EXIT — wait for user response
+        }
+
+        // No specific questions — generic ask
+        await sendProgress(
+          `🛑 *Optimization paused — missing data* (Score: ${scores.overall}/100)\n\n` +
+          `The AI needs more details to reach 90+. Please provide:\n` +
+          `• Employment history with company names and dates\n` +
+          `• Specific achievements with metrics\n` +
+          `• Tools and systems you've used\n\n` +
+          `Reply with the details, then say *Optimize* again.`
+        );
+        return;
       }
 
       if (decision === "stop_unfixable_truth") {
@@ -389,20 +428,54 @@ async function runOptimizationPipeline(
     // ── QUALITY GATE: Refuse to save garbage ──
     const overall = scorecard?.scores?.overall ?? 0;
     const atsScore = scorecard?.scores?.ats_compliance ?? 0;
-    const MIN_ACCEPTABLE_SCORE = 60;
+    const MIN_ACCEPTABLE_SCORE = 90;
 
     if (overall < MIN_ACCEPTABLE_SCORE) {
+      // Trigger gap-filling instead of giving up
       const dataNeeded = scorecard?.data_needed || [];
-      const reasons = dataNeeded
-        .map((d: any) => `• ${d.question || d.description || JSON.stringify(d)}`)
-        .join("\n") || "• Employment history with dates and company names\n• Specific metrics and achievements";
+      const questions = dataNeeded
+        .map((d: any) => ({
+          question: d.question || d.description || (typeof d === "string" ? d : JSON.stringify(d)),
+          where: d.where_it_would_help || "resume",
+          impact: d.impact || "high",
+        }))
+        .filter((q: any) => q.question);
+
+      if (questions.length > 0) {
+        const gapState = {
+          questions,
+          current_question_index: 0,
+          answers: {} as Record<string, string>,
+          resume_text: resumeText,
+          target_role: targetRole,
+          partial_score: overall,
+          rounds_completed: MAX_ROUNDS,
+          checklist: null, // Will re-research with new data
+        };
+
+        await supabase.from("conversations")
+          .update({
+            state: "gap_filling",
+            context_json: { gap_filling: gapState },
+          })
+          .eq("phone_number", from);
+
+        const firstQ = questions[0];
+        await sendProgress(
+          `⚠️ *Score: ${overall}/100* — need 90+ to complete.\n\n` +
+          `I need ${questions.length} piece(s) of information.\n\n` +
+          `Question 1 of ${questions.length}:\n` +
+          `❓ ${firstQ.question}\n\n` +
+          `_Reply with your answer, or type *skip* to skip._`
+        );
+        return;
+      }
 
       await sendProgress(
-        `⚠️ *Optimization incomplete* (Score: ${overall}/100)\n\n` +
-        `The resume still has too many gaps to be usable. Missing:\n${reasons}\n\n` +
-        `Please provide the missing details and say *Optimize* again.`
+        `⚠️ *Score: ${overall}/100* — target is 90+.\n\n` +
+        `Please provide more details about your work history, then say *Optimize* again.`
       );
-      return; // Do NOT save a low-quality resume as "complete"
+      return;
     }
 
     // ── SAVE RESULTS (only if quality is acceptable) ──
@@ -901,6 +974,109 @@ async function handleConversation(
       // Fire and forget — pipeline sends WhatsApp messages directly
       runOptimizationPipeline(supabase, userId, resumeText, targetRole, from);
       newState = "idle";
+      break;
+    }
+
+    // ── GAP FILLING: One question at a time ──
+    case "gap_filling": {
+      const gapState = context.gap_filling;
+      if (!gapState || !gapState.questions) {
+        reply = "Something went wrong with the gap-filling flow. Type *Optimize* to start over.";
+        newState = "idle";
+        break;
+      }
+
+      const currentIdx = gapState.current_question_index || 0;
+      const isSkip = messageBody.toLowerCase().trim() === "skip";
+      const isCancel = messageBody.toLowerCase().trim() === "cancel";
+
+      if (isCancel) {
+        reply = "Optimization cancelled. Type *Optimize* to start fresh.";
+        newState = "idle";
+        newContext = {};
+        break;
+      }
+
+      // Save the answer (or skip)
+      if (!isSkip) {
+        const questionKey = `q${currentIdx}`;
+        gapState.answers[questionKey] = messageBody.trim();
+        gapState.answers[`q${currentIdx}_question`] = gapState.questions[currentIdx].question;
+      }
+
+      const nextIdx = currentIdx + 1;
+
+      if (nextIdx < gapState.questions.length) {
+        // Ask next question
+        gapState.current_question_index = nextIdx;
+        const nextQ = gapState.questions[nextIdx];
+        reply =
+          `✅ Got it!\n\n` +
+          `Question ${nextIdx + 1} of ${gapState.questions.length}:\n` +
+          `❓ ${nextQ.question}\n\n` +
+          `_Reply with your answer, or type *skip* to skip._`;
+        newContext.gap_filling = gapState;
+        newState = "gap_filling";
+      } else {
+        // All questions answered — append answers to resume text and re-optimize
+        const answeredPairs: string[] = [];
+        for (let i = 0; i < gapState.questions.length; i++) {
+          const answer = gapState.answers[`q${i}`];
+          if (answer) {
+            const question = gapState.answers[`q${i}_question`] || gapState.questions[i].question;
+            answeredPairs.push(`${question}: ${answer}`);
+          }
+        }
+
+        if (answeredPairs.length === 0) {
+          reply = "You skipped all questions. Type *Optimize* to try again with more details in your resume.";
+          newState = "idle";
+          newContext = {};
+          break;
+        }
+
+        // Append new data to resume text
+        const additionalInfo = "\n\n--- ADDITIONAL INFORMATION PROVIDED ---\n" + answeredPairs.join("\n");
+        const enrichedResume = gapState.resume_text + additionalInfo;
+
+        // Update resume in database
+        if (userId) {
+          const { data: resumes } = await supabase
+            .from("resumes")
+            .select("id, parsed_content")
+            .eq("user_id", userId)
+            .eq("is_primary", true)
+            .limit(1);
+
+          if (resumes?.length) {
+            const existing = resumes[0].parsed_content ?? {};
+            await supabase.from("resumes").update({
+              parsed_content: {
+                ...existing,
+                rawText: enrichedResume,
+                fullText: enrichedResume,
+                text: enrichedResume,
+              },
+            }).eq("id", resumes[0].id);
+          }
+        }
+
+        reply =
+          `✅ Got all ${answeredPairs.length} answers!\n\n` +
+          `🚀 Re-running optimization with your new details...\n` +
+          `Previous score: ${gapState.partial_score}/100 → targeting 90+`;
+
+        // Fire and forget — re-run pipeline with enriched resume
+        runOptimizationPipeline(
+          supabase,
+          userId!,
+          enrichedResume,
+          gapState.target_role,
+          from,
+        );
+        newState = "idle";
+        newContext = {};
+      }
       break;
     }
 
