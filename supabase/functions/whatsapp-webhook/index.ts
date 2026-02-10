@@ -12,7 +12,18 @@ const TWILIO_AUTH_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
 const TWILIO_WHATSAPP_NUMBER = Deno.env.get("TWILIO_WHATSAPP_NUMBER")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
+
+// Map Lovable model names to OpenAI equivalents
+function mapModel(model: string): string {
+  const map: Record<string, string> = {
+    "google/gemini-3-flash-preview": "gpt-4o-mini",
+    "google/gemini-2.5-flash": "gpt-4o-mini",
+    "google/gemini-2.5-flash-lite": "gpt-4o-mini",
+    "google/gemini-2.5-pro": "gpt-4o",
+  };
+  return map[model] || model;
+}
 
 // ── Conversation States ──
 type ConversationState =
@@ -62,14 +73,14 @@ async function askAI(
   model = "google/gemini-3-flash-preview",
   maxTokens = 500,
 ): Promise<string> {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model,
+      model: mapModel(model),
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
@@ -93,14 +104,14 @@ async function callAIForPipeline(
   userPayload: string,
   model: string,
 ): Promise<string> {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model,
+      model: mapModel(model),
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPayload },
@@ -133,14 +144,14 @@ function safeJsonParse(text: string): any {
 
 // ── Intent detection ──
 async function detectIntent(message: string): Promise<{ intent: string; entities: Record<string, string> }> {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash-lite",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -184,14 +195,14 @@ async function handleDataManagement(
   context: Record<string, any>,
 ): Promise<{ reply: string; newContext: Record<string, any>; newState: ConversationState }> {
   // Use AI to interpret the command and map to database operations
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
