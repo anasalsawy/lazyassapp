@@ -607,6 +607,12 @@ serve(async (req) => {
               break;
             }
 
+            // Early exit: accept draft if score is good enough to avoid timeout on extra rounds
+            if (finalDecision === "revise" && scorecard.scores.overall >= EARLY_EXIT_SCORE) {
+              sendSSE(controller, encoder, "progress", { step: "quality_gate", round, message: `✅ Score ${scorecard.scores.overall} meets threshold (${EARLY_EXIT_SCORE}+). Accepting draft.` });
+              break;
+            }
+
             if (finalDecision === "stop_data_needed") {
               sendSSE(controller, encoder, "gatekeeper_blocked", {
                 step: "QUALITY_GATE", blocking_issues: scorecard.data_needed?.map((d: any) => d.question) || ["Missing data blocks progress"],
