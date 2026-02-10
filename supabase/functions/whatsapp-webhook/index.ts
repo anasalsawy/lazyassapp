@@ -314,12 +314,18 @@ async function runOptimizationPipeline(
 
       if (truthViolations.length > 0) {
         roundReport += `\n\n⚠️ *Truth violations (${truthViolations.length}):*\n` +
-          truthViolations.slice(0, 3).map((tv: any) => `  • "${tv.draft_claim}" — ${tv.recommended_fix}`).join("\n");
+          truthViolations.slice(0, 3).map((tv: any) => {
+            if (typeof tv === "string") return `  • ${tv}`;
+            return `  • ${tv.draft_claim || tv.claim || tv.description || JSON.stringify(tv)}${tv.recommended_fix ? ` — ${tv.recommended_fix}` : ""}`;
+          }).join("\n");
       }
 
       if (blockingIssues.length > 0) {
         roundReport += `\n\n🚫 *Blocking issues (${blockingIssues.length}):*\n` +
-          blockingIssues.slice(0, 3).map((b: any) => `  • ${b.description}`).join("\n");
+          blockingIssues.slice(0, 3).map((b: any) => {
+            if (typeof b === "string") return `  • ${b}`;
+            return `  • ${b.description || b.issue || b.message || JSON.stringify(b)}`;
+          }).join("\n");
       }
 
       if (requiredEdits.length > 0) {
