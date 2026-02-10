@@ -324,7 +324,7 @@ export function useResumeOptimizer() {
       resumeIdRef.current = resumeId;
 
       try {
-        await callEdgeFunction({
+        await callWithAutoResume({
           resumeId,
           targetRole,
           location,
