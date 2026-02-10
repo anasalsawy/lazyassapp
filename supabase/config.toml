@@ -47,3 +47,6 @@ verify_jwt = false
 
 [functions.optimize-resume]
 verify_jwt = false
+
+[functions.whatsapp-webhook]
+verify_jwt = false
