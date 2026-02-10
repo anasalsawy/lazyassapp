@@ -338,7 +338,7 @@ export function useResumeOptimizer() {
         toast({ title: "Optimization failed", description: e.message || "Please try again.", variant: "destructive" });
       }
     },
-    [callEdgeFunction, toast],
+    [callWithAutoResume, toast],
   );
 
   const continueOptimization = useCallback(
