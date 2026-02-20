@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FileText,
   Download,
@@ -21,6 +22,8 @@ import {
   ChevronDown,
   ChevronUp,
   Eye,
+  X,
+  Copy,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -507,32 +510,111 @@ export default function Resume() {
                           </div>
                         )}
 
-                        {/* ATS text preview */}
-                        {result.atsText && (
-                          <div className="p-4 rounded-lg border bg-card">
-                            <p className="font-semibold text-sm mb-2">📄 ATS Plain Text</p>
-                            <pre className="text-xs text-muted-foreground whitespace-pre-wrap max-h-48 overflow-y-auto font-mono">
-                              {result.atsText.substring(0, 1500)}
-                              {result.atsText.length > 1500 ? "\n…" : ""}
-                            </pre>
-                          </div>
-                        )}
+                        {/* Resume viewer tabs */}
+                        {(result.atsText || result.htmlPreview) && (
+                          <div className="rounded-lg border bg-card overflow-hidden">
+                            <Tabs defaultValue={result.htmlPreview ? "preview" : "ats"}>
+                              <div className="flex items-center justify-between px-4 pt-3 pb-0 border-b">
+                                <TabsList className="h-8">
+                                  {result.htmlPreview && (
+                                    <TabsTrigger value="preview" className="text-xs gap-1">
+                                      <Eye className="w-3 h-3" /> Formatted Resume
+                                    </TabsTrigger>
+                                  )}
+                                  {result.atsText && (
+                                    <TabsTrigger value="ats" className="text-xs gap-1">
+                                      <FileText className="w-3 h-3" /> ATS Plain Text
+                                    </TabsTrigger>
+                                  )}
+                                </TabsList>
+                                <div className="flex gap-2 pb-1">
+                                  {result.htmlPreview && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      onClick={() => setPreviewResumeId(resume.id)}
+                                    >
+                                      <Eye className="w-3 h-3 mr-1" />
+                                      Full Screen
+                                    </Button>
+                                  )}
+                                  {result.atsText && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      onClick={() => {
+                                        const blob = new Blob([result.atsText], { type: "text/plain" });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement("a");
+                                        a.href = url;
+                                        a.download = `${resume.title}_optimized.txt`;
+                                        a.click();
+                                        URL.revokeObjectURL(url);
+                                      }}
+                                    >
+                                      <Download className="w-3 h-3 mr-1" />
+                                      Download ATS
+                                    </Button>
+                                  )}
+                                  {result.htmlPreview && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 text-xs"
+                                      onClick={() => {
+                                        const blob = new Blob([result.htmlPreview], { type: "text/html" });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement("a");
+                                        a.href = url;
+                                        a.download = `${resume.title}_optimized.html`;
+                                        a.click();
+                                        URL.revokeObjectURL(url);
+                                      }}
+                                    >
+                                      <Download className="w-3 h-3 mr-1" />
+                                      Download HTML
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
 
-                        {/* HTML preview */}
-                        {result.htmlPreview && (
-                          <div className="p-4 rounded-lg border bg-card">
-                            <div className="flex items-center justify-between mb-2">
-                              <p className="font-semibold text-sm">🎨 Formatted Preview</p>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setPreviewResumeId(resume.id)}
-                              >
-                                <Eye className="w-3 h-3 mr-1" />
-                                Full Preview
-                              </Button>
-                            </div>
-                            <div className="text-xs text-muted-foreground">Click "Full Preview" to see the styled HTML resume.</div>
+                              {result.htmlPreview && (
+                                <TabsContent value="preview" className="m-0">
+                                  <div className="h-[500px] overflow-auto bg-white">
+                                    <iframe
+                                      srcDoc={result.htmlPreview}
+                                      className="w-full h-full border-0"
+                                      title="Optimized Resume Preview"
+                                      sandbox="allow-same-origin"
+                                    />
+                                  </div>
+                                </TabsContent>
+                              )}
+
+                              {result.atsText && (
+                                <TabsContent value="ats" className="m-0">
+                                  <div className="relative">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="absolute top-2 right-2 h-7 text-xs z-10"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(result.atsText);
+                                        toast({ title: "Copied to clipboard!" });
+                                      }}
+                                    >
+                                      <Copy className="w-3 h-3 mr-1" />
+                                      Copy
+                                    </Button>
+                                    <pre className="text-xs text-foreground whitespace-pre-wrap p-4 font-mono h-[500px] overflow-auto bg-muted/30">
+                                      {result.atsText}
+                                    </pre>
+                                  </div>
+                                </TabsContent>
+                              )}
+                            </Tabs>
                           </div>
                         )}
                       </div>
@@ -544,22 +626,46 @@ export default function Resume() {
           </div>
         )}
 
-        {/* Full HTML Preview Modal */}
+        {/* Full Screen HTML Preview Modal */}
         {previewResumeId && optimizationResult[previewResumeId]?.htmlPreview && (
-          <div
-            className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-            onClick={() => setPreviewResumeId(null)}
-          >
-            <div
-              className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex justify-end p-3 border-b">
-                <Button variant="ghost" size="sm" onClick={() => setPreviewResumeId(null)}>Close</Button>
+          <div className="fixed inset-0 z-50 bg-black/80 flex flex-col">
+            <div className="flex items-center justify-between bg-background px-4 py-3 border-b shrink-0">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-primary" />
+                <span className="font-semibold text-sm">Optimized Resume — Full Preview</span>
+                <Badge variant="secondary" className="text-success bg-success/10">
+                  Score: {optimizationResult[previewResumeId].finalScore}
+                </Badge>
               </div>
-              <div
-                className="p-4"
-                dangerouslySetInnerHTML={{ __html: optimizationResult[previewResumeId].htmlPreview }}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const res = optimizationResult[previewResumeId];
+                    const blob = new Blob([res.htmlPreview], { type: "text/html" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "optimized_resume.html";
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                >
+                  <Download className="w-4 h-4 mr-1" />
+                  Download HTML
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setPreviewResumeId(null)}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+            <div className="flex-1 bg-muted overflow-hidden">
+              <iframe
+                srcDoc={optimizationResult[previewResumeId].htmlPreview}
+                className="w-full h-full border-0"
+                title="Full Resume Preview"
+                sandbox="allow-same-origin"
               />
             </div>
           </div>
