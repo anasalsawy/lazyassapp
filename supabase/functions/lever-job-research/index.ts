@@ -386,6 +386,23 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
         experienceSummary && `Work Experience:\n${experienceSummary}`,
       ].filter(Boolean).join("\n");
 
+      // Generate a signed URL for the resume PDF so Skyvern can download & upload it
+      let resumeDownloadUrl = "";
+      if (resume.file_path) {
+        const { data: signedData } = await supabase.storage
+          .from("resumes")
+          .createSignedUrl(resume.file_path, 3600); // 1 hour expiry
+        if (signedData?.signedUrl) {
+          resumeDownloadUrl = signedData.signedUrl;
+          console.log(`[LeverResearch] Resume signed URL generated for upload`);
+        }
+      }
+
+      const resumeUploadInstructions = resumeDownloadUrl
+        ? `7. IMPORTANT - RESUME UPLOAD: When you see a file upload field for resume/CV, download the file from this URL and upload it: ${resumeDownloadUrl}
+   - The file is a PDF. Navigate to the upload input, click it, and provide this file.`
+        : `7. If a resume upload field appears, skip it - no file is available.`;
+
       const applicationPrompt = `You are applying to a job on behalf of this candidate. Use ONLY the following candidate information to fill out the application form. Do NOT invent or guess any information not provided below.
 
 CANDIDATE INFORMATION:
@@ -394,10 +411,11 @@ ${candidateInfo}
 INSTRUCTIONS:
 1. Fill out all required fields using the candidate data above.
 2. For fields not covered by the candidate data (e.g. "How did you hear about us?"), use reasonable defaults like "Online job search".
-3. Upload the resume if an upload field is available - if not, skip it.
-4. Answer any EEO/demographic questions with "Prefer not to say" or "Decline to answer".
-5. Your goal is complete when the page confirms the application was submitted successfully.
-6. If you encounter a blocker (CAPTCHA, login wall, broken form), terminate and report the issue.`;
+3. Answer any EEO/demographic questions with "Prefer not to say" or "Decline to answer".
+4. Your goal is complete when the page confirms the application was submitted successfully.
+5. If you encounter a blocker (CAPTCHA, login wall, broken form), terminate and report the issue.
+6. Do NOT invent information. If a required field has no matching data, use "N/A".
+${resumeUploadInstructions}`;
 
       const applyUrls = qualifiedJobs
         .filter((j) => j.recommendation === "apply")
