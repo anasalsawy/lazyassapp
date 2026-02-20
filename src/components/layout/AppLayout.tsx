@@ -19,7 +19,8 @@ import {
   Activity,
   Menu,
   LogOut,
-  User
+  User,
+  Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -47,47 +48,47 @@ export function AppLayout({ children }: AppLayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background mesh-bg">
       {/* Navigation Header */}
-      <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
-        <div className="container max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+      <header className="sticky top-0 z-50 border-b border-border/40 bg-background/60 backdrop-blur-2xl">
+        <div className="container max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
           {/* Logo */}
-          <Link to="/dashboard" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Bot className="w-5 h-5 text-primary-foreground" />
+          <Link to="/dashboard" className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center">
+              <Bot className="w-4.5 h-4.5 text-primary-foreground" />
             </div>
-            <span className="font-bold text-lg hidden sm:block">Career Compass</span>
+            <span className="font-display font-bold text-lg hidden sm:block">Career Compass</span>
           </Link>
 
           {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center gap-1">
+          <nav className="hidden md:flex items-center gap-0.5">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname === item.path;
               return (
                 <Link key={item.path} to={item.path}>
                   <Button
-                    variant={isActive ? "secondary" : "ghost"}
+                    variant="ghost"
                     size="sm"
                     className={cn(
-                      "gap-2",
-                      isActive && "bg-secondary font-medium"
+                      "gap-2 rounded-lg text-muted-foreground hover:text-foreground transition-all",
+                      isActive && "bg-primary/10 text-primary font-medium hover:text-primary"
                     )}
                   >
                     <Icon className="w-4 h-4" />
-                    {item.label}
+                    <span className="text-sm">{item.label}</span>
                   </Button>
                 </Link>
               );
             })}
           </nav>
 
-          {/* Right Side - User Menu */}
+          {/* Right Side */}
           <div className="flex items-center gap-2">
             {/* Mobile Menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild className="md:hidden">
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" className="h-9 w-9">
                   <Menu className="w-5 h-5" />
                 </Button>
               </DropdownMenuTrigger>
@@ -116,9 +117,9 @@ export function AppLayout({ children }: AppLayoutProps) {
             {/* User Dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
-                    <User className="w-4 h-4 text-primary" />
+                <Button variant="ghost" size="sm" className="gap-2 rounded-full pl-1.5 pr-3">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center">
+                    <User className="w-3.5 h-3.5 text-white" />
                   </div>
                   <span className="hidden sm:block text-sm truncate max-w-[100px]">
                     {user?.email?.split("@")[0]}
