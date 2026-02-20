@@ -16,6 +16,7 @@ import {
   Settings, 
   Link2, 
   ShoppingCart,
+  Activity,
   Menu,
   LogOut,
   User
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { path: "/resume", label: "Resume", icon: FileText },
   { path: "/connections", label: "Connections", icon: Link2 },
   { path: "/shop", label: "Auto-Shop", icon: ShoppingCart },
+  { path: "/monitoring", label: "Monitoring", icon: Activity },
 ];
 
 interface AppLayoutProps {

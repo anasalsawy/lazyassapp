@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { ApplicationDrawer } from "@/components/dashboard/ApplicationDrawer";
+import { PipelineStatusWidget } from "@/components/dashboard/PipelineStatusWidget";
 import { 
   Briefcase, 
   Send, 
@@ -456,6 +457,9 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Agent Pipeline Widget */}
+        <PipelineStatusWidget />
 
         {/* Applications Timeline */}
         <Card>

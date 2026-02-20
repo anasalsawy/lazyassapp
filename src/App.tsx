@@ -19,6 +19,7 @@ import Resume from "./pages/Resume";
 import Settings from "./pages/Settings";
 import JobAgent from "./pages/JobAgent";
 import AutoShop from "./pages/AutoShop";
+import AgentMonitoring from "./pages/AgentMonitoring";
 
 const queryClient = new QueryClient();
 
@@ -100,6 +101,16 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <AutoShop />
+              </ProtectedRoute>
+            }
+          />
+          
+          {/* Agent Monitoring */}
+          <Route
+            path="/monitoring"
+            element={
+              <ProtectedRoute>
+                <AgentMonitoring />
               </ProtectedRoute>
             }
           />
