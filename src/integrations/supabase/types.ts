@@ -375,12 +375,16 @@ export type Database = {
           completed_at: string | null
           created_at: string
           error_message: string | null
+          failure_analysis: string | null
           id: string
+          last_retry_at: string | null
           max_price: number | null
+          max_retries: number
           notes: string | null
           order_confirmation: string | null
           product_query: string
           quantity: number | null
+          retry_count: number
           selected_deal_price: number | null
           selected_deal_site: string | null
           selected_deal_url: string | null
@@ -396,12 +400,16 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           error_message?: string | null
+          failure_analysis?: string | null
           id?: string
+          last_retry_at?: string | null
           max_price?: number | null
+          max_retries?: number
           notes?: string | null
           order_confirmation?: string | null
           product_query: string
           quantity?: number | null
+          retry_count?: number
           selected_deal_price?: number | null
           selected_deal_site?: string | null
           selected_deal_url?: string | null
@@ -417,12 +425,16 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           error_message?: string | null
+          failure_analysis?: string | null
           id?: string
+          last_retry_at?: string | null
           max_price?: number | null
+          max_retries?: number
           notes?: string | null
           order_confirmation?: string | null
           product_query?: string
           quantity?: number | null
+          retry_count?: number
           selected_deal_price?: number | null
           selected_deal_site?: string | null
           selected_deal_url?: string | null

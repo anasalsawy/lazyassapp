@@ -188,7 +188,6 @@ serve(async (req) => {
         return await handleCreateProfile(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "start_login": {
-        // Clean up stale sessions before starting new one
         await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
         return await handleStartLogin(supabase, user.id, payload.site || "gmail", BROWSER_USE_API_KEY);
       }
@@ -199,7 +198,6 @@ serve(async (req) => {
         return await handleCancelLogin(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "restart_session": {
-        // Force cleanup and restart a fresh session for a site
         await cleanupStaleSessions(supabase, user.id, BROWSER_USE_API_KEY);
         return await handleStartLogin(supabase, user.id, payload.site || "gmail", BROWSER_USE_API_KEY);
       }
@@ -207,18 +205,15 @@ serve(async (req) => {
         return await handleCleanupSessions(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "start_order": {
-        // CONCURRENT ORDERS: Do NOT cleanup any sessions before starting new order
-        // Each order gets its own independent session - multiple orders can run simultaneously
         return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, SKYVERN_API_KEY, supabaseUrl);
       }
       case "check_order_status": {
         return await handleCheckOrderStatus(supabase, user.id, payload.orderId!, SKYVERN_API_KEY);
       }
       case "sync_all_orders": {
-        return await handleSyncAllOrders(supabase, user.id, SKYVERN_API_KEY);
+        return await handleSyncAllOrders(supabase, user, SKYVERN_API_KEY, supabaseUrl, BROWSER_USE_API_KEY);
       }
       case "sync_order_emails": {
-        // CONCURRENT: Do NOT cleanup sessions before email sync
         return await handleSyncOrderEmails(supabase, user.id, BROWSER_USE_API_KEY);
       }
       case "set_proxy": {
@@ -1402,13 +1397,294 @@ async function handleCheckOrderStatus(
   );
 }
 
-// Sync all pending orders for a user via Skyvern
+// Analyze failure and produce a diagnosis + workaround for retry
+function analyzeFailure(errorMessage: string, order: Record<string, unknown>): { diagnosis: string; workaround: string; canRetry: boolean } {
+  const err = (errorMessage || "").toLowerCase();
+
+  if (err.includes("max number of") && err.includes("steps")) {
+    return {
+      diagnosis: "Agent ran out of steps before completing the purchase. It may have been stuck in a loop (e.g., phone field blocker, CAPTCHA, or repeated site abandonment).",
+      workaround: "Increasing max_steps to 100 and adding explicit instructions to skip problematic sites and use guest checkout more aggressively.",
+      canRetry: true,
+    };
+  }
+  if (err.includes("phone number") || err.includes("mandatory phone")) {
+    return {
+      diagnosis: "Agent abandoned checkout because a phone number was required and treated as a blocker.",
+      workaround: "Providing a default phone number and instructing agent that phone fields are normal checkout fields.",
+      canRetry: true,
+    };
+  }
+  if (err.includes("captcha") || err.includes("recaptcha") || err.includes("bot detection")) {
+    return {
+      diagnosis: "Site detected the agent as a bot and presented a CAPTCHA challenge.",
+      workaround: "Skipping this site and trying alternative retailers. Using residential proxy.",
+      canRetry: true,
+    };
+  }
+  if (err.includes("out of stock") || err.includes("unavailable") || err.includes("not found")) {
+    return {
+      diagnosis: "Product appears to be out of stock or unavailable at tried sites.",
+      workaround: "Broadening search terms and trying additional retailers.",
+      canRetry: true,
+    };
+  }
+  if (err.includes("payment") || err.includes("card declined") || err.includes("card error")) {
+    return {
+      diagnosis: "Payment was declined or card processing failed.",
+      workaround: "Trying next available payment card.",
+      canRetry: true,
+    };
+  }
+  if (err.includes("session creation failed") || err.includes("402") || err.includes("insufficient") || err.includes("credits")) {
+    return {
+      diagnosis: "API credits are insufficient to run the agent.",
+      workaround: "Cannot retry without credits. User needs to top up their account.",
+      canRetry: false,
+    };
+  }
+  if (err.includes("timed_out") || err.includes("timeout")) {
+    return {
+      diagnosis: "The agent task timed out before completing.",
+      workaround: "Retrying with more focused instructions and fewer sites to try.",
+      canRetry: true,
+    };
+  }
+  if (err.includes("blocked")) {
+    return {
+      diagnosis: "The agent was blocked by a site's security measures.",
+      workaround: "Using residential proxy and trying different retailers.",
+      canRetry: true,
+    };
+  }
+
+  // Generic retryable failure
+  return {
+    diagnosis: `Task failed: ${errorMessage?.substring(0, 200) || "Unknown error"}`,
+    workaround: "Retrying with adjusted instructions and increased step limit.",
+    canRetry: true,
+  };
+}
+
+// Auto-retry a failed order with adjusted parameters
+// deno-lint-ignore no-explicit-any
+async function autoRetryOrder(
+  supabase: any,
+  user: { id: string; email?: string },
+  order: Record<string, unknown>,
+  analysis: { diagnosis: string; workaround: string },
+  skyvernApiKey: string,
+  supabaseUrl: string,
+  browserUseApiKey: string,
+) {
+  const retryCount = ((order.retry_count as number) || 0) + 1;
+  const maxRetries = (order.max_retries as number) || 3;
+
+  console.log(`[AutoShop] Auto-retrying order ${order.id} (attempt ${retryCount}/${maxRetries})`);
+
+  // Log the retry
+  await supabase.from("agent_logs").insert({
+    user_id: user.id,
+    agent_name: "auto_shop",
+    log_level: "warn",
+    message: `Auto-retrying order "${order.product_query}" (attempt ${retryCount}/${maxRetries})`,
+    metadata: {
+      orderId: order.id,
+      diagnosis: analysis.diagnosis,
+      workaround: analysis.workaround,
+      previousError: (order.error_message as string)?.substring(0, 300),
+    },
+  });
+
+  // Update order status to retrying
+  await supabase
+    .from("auto_shop_orders")
+    .update({
+      status: "searching",
+      retry_count: retryCount,
+      failure_analysis: `Attempt ${retryCount}: ${analysis.diagnosis}\nFix: ${analysis.workaround}`,
+      last_retry_at: new Date().toISOString(),
+      error_message: null,
+      completed_at: null,
+      browser_use_task_id: null,
+    })
+    .eq("id", order.id);
+
+  // Fetch required data for re-submission
+  const { data: profile } = await supabase
+    .from("browser_profiles")
+    .select("*")
+    .eq("user_id", user.id)
+    .single();
+
+  const sitesLoggedIn: string[] = Array.isArray(profile?.shop_sites_logged_in)
+    ? profile.shop_sites_logged_in
+    : [];
+
+  // Fetch shipping address
+  const { data: shipping } = await supabase
+    .from("shipping_addresses")
+    .select("*")
+    .eq("id", order.shipping_address_id)
+    .single();
+
+  if (!shipping) {
+    console.error(`[AutoShop] No shipping address found for retry of order ${order.id}`);
+    await supabase.from("auto_shop_orders").update({
+      status: "failed",
+      error_message: "Auto-retry failed: shipping address not found",
+    }).eq("id", order.id);
+    return null;
+  }
+
+  // Fetch payment cards
+  const { data: cards } = await supabase
+    .from("payment_cards")
+    .select("*")
+    .eq("user_id", user.id);
+
+  if (!cards || cards.length === 0) {
+    await supabase.from("auto_shop_orders").update({
+      status: "failed",
+      error_message: "Auto-retry failed: no payment cards found",
+    }).eq("id", order.id);
+    return null;
+  }
+
+  // Decrypt cards
+  const encKey = "SHOP_PROXY_KEY_2024";
+  const decryptedCards: PaymentCard[] = cards.map((c: Record<string, string>) => {
+    const decrypt = (enc: string) => {
+      try {
+        const decoded = atob(enc);
+        let result = "";
+        for (let i = 0; i < decoded.length; i++) {
+          result += String.fromCharCode(decoded.charCodeAt(i) ^ encKey.charCodeAt(i % encKey.length));
+        }
+        return result;
+      } catch { return enc; }
+    };
+    return {
+      id: c.id,
+      cardNumber: decrypt(c.card_number_enc),
+      expiry: decrypt(c.expiry_enc),
+      cvv: decrypt(c.cvv_enc),
+      cardholderName: c.cardholder_name,
+      billingAddress: c.billing_address,
+      billingCity: c.billing_city,
+      billingState: c.billing_state,
+      billingZip: c.billing_zip,
+      billingCountry: c.billing_country,
+    };
+  });
+
+  // Fetch site credentials
+  const { data: siteCreds } = await supabase
+    .from("site_credentials")
+    .select("site_domain, email_used, password_enc")
+    .eq("user_id", user.id);
+
+  const decryptedCreds: { site: string; email: string; password: string }[] = [];
+  if (siteCreds) {
+    for (const cred of siteCreds) {
+      try {
+        const decoded = atob(cred.password_enc);
+        let decrypted = "";
+        for (let i = 0; i < decoded.length; i++) {
+          decrypted += String.fromCharCode(decoded.charCodeAt(i) ^ encKey.charCodeAt(i % encKey.length));
+        }
+        decryptedCreds.push({ site: cred.site_domain, email: cred.email_used, password: decrypted });
+      } catch { /* skip */ }
+    }
+  }
+
+  // Build prompt with retry-specific adjustments
+  const retryPromptPrefix = `
+=== AUTO-RETRY ATTEMPT ${retryCount} ===
+PREVIOUS FAILURE: ${analysis.diagnosis}
+APPLIED FIX: ${analysis.workaround}
+
+CRITICAL RULES FOR THIS RETRY:
+- Do NOT repeat the same mistakes from the previous attempt
+- If a site blocks you, IMMEDIATELY move to a different retailer
+- Phone number fields are NORMAL - always enter the provided phone number
+- Prefer GUEST CHECKOUT to avoid account creation issues
+- If stuck on any page for more than 3 steps, ABANDON that site and try another
+- Try at least 3 DIFFERENT retailers before giving up
+=== END RETRY CONTEXT ===
+
+`;
+
+  const agentPrompt = retryPromptPrefix + buildShoppingAgentInstruction(
+    order.product_query as string,
+    order.max_price as number | undefined,
+    (order.quantity as number) || 1,
+    shipping as ShippingAddress,
+    decryptedCards,
+    user.email || "",
+    sitesLoggedIn,
+    supabaseUrl,
+    profile?.use_browserstack ?? false,
+    decryptedCreds,
+  );
+
+  // Submit to Skyvern with increased steps for retry
+  const skyvernPayload: Record<string, unknown> = {
+    prompt: agentPrompt,
+    url: "https://www.google.com/shopping",
+    proxy_location: "RESIDENTIAL",
+    max_steps_override: 80 + (retryCount * 20), // More steps for each retry
+  };
+
+  if (order.max_price) {
+    skyvernPayload.navigation_payload = {
+      max_price: order.max_price,
+      product_query: order.product_query,
+      quantity: (order.quantity as number) || 1,
+    };
+  }
+
+  const skyvernResponse = await fetch(`${SKYVERN_API_BASE}/run/tasks`, {
+    method: "POST",
+    headers: {
+      "x-api-key": skyvernApiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(skyvernPayload),
+  });
+
+  if (!skyvernResponse.ok) {
+    const errorText = await skyvernResponse.text();
+    console.error(`[AutoShop] Retry Skyvern API error:`, skyvernResponse.status, errorText);
+    await supabase.from("auto_shop_orders").update({
+      status: "failed",
+      error_message: `Auto-retry Skyvern error: ${skyvernResponse.status}`,
+    }).eq("id", order.id);
+    return null;
+  }
+
+  const result = await skyvernResponse.json();
+  const runId = result.run_id || result.id;
+  console.log(`[AutoShop] Retry task submitted: ${runId}`);
+
+  await supabase.from("auto_shop_orders").update({
+    browser_use_task_id: runId,
+    status: "searching",
+  }).eq("id", order.id);
+
+  return runId;
+}
+
+// Sync all pending orders for a user via Skyvern (with auto-retry on failure)
 // deno-lint-ignore no-explicit-any
 async function handleSyncAllOrders(
   supabase: any,
-  userId: string,
-  skyvernApiKey: string
+  user: { id: string; email?: string },
+  skyvernApiKey: string,
+  supabaseUrl: string,
+  browserUseApiKey: string,
 ) {
+  const userId = user.id;
   // Get all orders with browser_use_task_id that aren't completed/failed
   const { data: orders } = await supabase
     .from("auto_shop_orders")
@@ -1419,12 +1695,14 @@ async function handleSyncAllOrders(
 
   if (!orders || orders.length === 0) {
     return new Response(
-      JSON.stringify({ success: true, synced: 0, orders: [] }),
+      JSON.stringify({ success: true, synced: 0, orders: [], retried: 0 }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 
   const updatedOrders = [];
+  let retriedCount = 0;
+
   for (const order of orders) {
     try {
       const runId = order.browser_use_task_id;
@@ -1436,6 +1714,37 @@ async function handleSyncAllOrders(
         const taskData = await taskRes.json();
         const updated = await updateOrderFromSkyvernRun(supabase, order, taskData);
         updatedOrders.push(updated);
+
+        // Check if order just failed and is eligible for auto-retry
+        if (
+          updated.status === "failed" &&
+          order.status !== "failed" && // Just transitioned to failed
+          (updated.retry_count || 0) < (updated.max_retries || 3)
+        ) {
+          const analysis = analyzeFailure(updated.error_message || "", updated);
+          if (analysis.canRetry) {
+            console.log(`[AutoShop] Auto-retrying order ${order.id}: ${analysis.diagnosis}`);
+
+            // Update the failure analysis before retrying
+            await supabase.from("auto_shop_orders").update({
+              failure_analysis: `${analysis.diagnosis}\nFix: ${analysis.workaround}`,
+            }).eq("id", order.id);
+
+            const retryRunId = await autoRetryOrder(
+              supabase, user, { ...updated }, analysis, skyvernApiKey, supabaseUrl, browserUseApiKey
+            );
+
+            if (retryRunId) {
+              retriedCount++;
+              console.log(`[AutoShop] Order ${order.id} auto-retried with run ${retryRunId}`);
+            }
+          } else {
+            // Can't retry - update with analysis
+            await supabase.from("auto_shop_orders").update({
+              failure_analysis: `${analysis.diagnosis} (NOT RETRYABLE: ${analysis.workaround})`,
+            }).eq("id", order.id);
+          }
+        }
       }
     } catch (e) {
       console.error(`[AutoShop] Failed to sync order ${order.id}:`, e);
@@ -1443,7 +1752,7 @@ async function handleSyncAllOrders(
   }
 
   return new Response(
-    JSON.stringify({ success: true, synced: updatedOrders.length, orders: updatedOrders }),
+    JSON.stringify({ success: true, synced: updatedOrders.length, orders: updatedOrders, retried: retriedCount }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 }
