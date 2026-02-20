@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Briefcase, Mail, Lock, User, ArrowRight, Loader2 } from "lucide-react";
+import { Bot, Mail, Lock, User, ArrowRight, Loader2, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const Auth = () => {
@@ -68,17 +68,18 @@ const Auth = () => {
   return (
     <div className="min-h-screen flex">
       {/* Left side - Form */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-md">
+      <div className="flex-1 flex items-center justify-center p-8 relative">
+        <div className="absolute inset-0 mesh-bg opacity-50" />
+        <div className="w-full max-w-md relative z-10">
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-2 mb-8">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-              <Briefcase className="w-5 h-5 text-primary-foreground" />
+          <Link to="/" className="flex items-center gap-2.5 mb-10">
+            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center glow">
+              <Bot className="w-5 h-5 text-primary-foreground" />
             </div>
-            <span className="font-bold text-xl text-foreground">AutoApply</span>
+            <span className="font-display font-bold text-xl">Career Compass</span>
           </Link>
 
-          <h1 className="text-3xl font-bold text-foreground mb-2">
+          <h1 className="text-3xl font-display font-bold mb-2">
             {isLogin ? "Welcome back" : "Create your account"}
           </h1>
           <p className="text-muted-foreground mb-8">
@@ -87,7 +88,7 @@ const Auth = () => {
               : "Start automating your job applications today"}
           </p>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             {!isLogin && (
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -152,7 +153,7 @@ const Auth = () => {
               </div>
             </div>
 
-            <Button type="submit" className="w-full" size="lg" disabled={loading}>
+            <Button type="submit" className="w-full rounded-xl h-12" size="lg" disabled={loading}>
               {loading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
@@ -188,25 +189,28 @@ const Auth = () => {
 
       {/* Right side - Decorative */}
       <div className="hidden lg:flex flex-1 hero-gradient items-center justify-center p-12 relative overflow-hidden">
-        <div className="absolute inset-0 bg-hero-pattern opacity-20" />
-        <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-primary/30 rounded-full blur-3xl animate-float" />
-        <div className="absolute bottom-1/4 right-1/4 w-48 h-48 bg-accent/30 rounded-full blur-3xl animate-float" style={{ animationDelay: "-3s" }} />
+        <div className="absolute inset-0 dot-pattern opacity-20" />
+        <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-primary/20 rounded-full blur-[100px] animate-float" />
+        <div className="absolute bottom-1/4 right-1/4 w-48 h-48 bg-accent/20 rounded-full blur-[80px] animate-float" style={{ animationDelay: "-3s" }} />
         
         <div className="relative z-10 text-center max-w-lg">
-          <h2 className="text-4xl font-bold text-card mb-4">
+          <div className="w-20 h-20 rounded-3xl bg-primary/20 backdrop-blur-xl border border-white/10 flex items-center justify-center mx-auto mb-8 animate-float">
+            <Sparkles className="w-10 h-10 text-primary-foreground/80" />
+          </div>
+          <h2 className="text-4xl font-display font-bold text-white/90 mb-4">
             Automate Your Job Search
           </h2>
-          <p className="text-card/70 text-lg mb-8">
+          <p className="text-white/50 text-lg mb-10">
             Let AI optimize your resume, find perfect matches, and apply automatically while you focus on what matters.
           </p>
-          <div className="grid grid-cols-2 gap-6">
-            <div className="glass-card rounded-xl p-4 text-left">
-              <div className="text-2xl font-bold text-card">70%</div>
-              <div className="text-sm text-card/60">Time Saved</div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="glass-card-dark rounded-2xl p-5 text-left">
+              <div className="text-3xl font-display font-bold text-white/90">70%</div>
+              <div className="text-sm text-white/40 mt-1">Time Saved</div>
             </div>
-            <div className="glass-card rounded-xl p-4 text-left">
-              <div className="text-2xl font-bold text-card">3x</div>
-              <div className="text-sm text-card/60">More Interviews</div>
+            <div className="glass-card-dark rounded-2xl p-5 text-left">
+              <div className="text-3xl font-display font-bold text-white/90">3x</div>
+              <div className="text-sm text-white/40 mt-1">More Interviews</div>
             </div>
           </div>
         </div>

@@ -55,16 +55,16 @@ const RUN_TYPE_LABELS: Record<string, { label: string; icon: React.ElementType }
 };
 
 const STATUS_STYLES: Record<string, { color: string; icon: React.ElementType }> = {
-  running: { color: "bg-primary/20 text-primary", icon: Loader2 },
-  completed: { color: "bg-green-500/20 text-green-600", icon: CheckCircle2 },
-  failed: { color: "bg-destructive/20 text-destructive", icon: XCircle },
-  stale: { color: "bg-yellow-500/20 text-yellow-600", icon: AlertTriangle },
+  running: { color: "bg-primary/15 text-primary", icon: Loader2 },
+  completed: { color: "bg-success/15 text-success", icon: CheckCircle2 },
+  failed: { color: "bg-destructive/15 text-destructive", icon: XCircle },
+  stale: { color: "bg-warning/15 text-warning", icon: AlertTriangle },
   queued: { color: "bg-muted text-muted-foreground", icon: Clock },
 };
 
 const LOG_LEVEL_COLORS: Record<string, string> = {
-  info: "text-blue-500",
-  warn: "text-yellow-500",
+  info: "text-primary",
+  warn: "text-warning",
   error: "text-destructive",
   debug: "text-muted-foreground",
 };
@@ -125,7 +125,6 @@ export default function AgentMonitoring() {
     }
   };
 
-  // Stats
   const runningCount = runs.filter(r => r.status === "running").length;
   const completedToday = runs.filter(r => {
     if (r.status !== "completed") return false;
@@ -149,13 +148,15 @@ export default function AgentMonitoring() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold flex items-center gap-3">
-              <Activity className="w-8 h-8 text-primary" />
+            <h1 className="text-3xl font-display font-bold flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Activity className="w-5 h-5 text-primary" />
+              </div>
               Agent Monitoring
             </h1>
-            <p className="text-muted-foreground">Track pipeline runs, logs, and Skyvern task status</p>
+            <p className="text-muted-foreground mt-1">Track pipeline runs, logs, and task status</p>
           </div>
-          <Button onClick={triggerSync} disabled={isSyncing}>
+          <Button onClick={triggerSync} disabled={isSyncing} className="rounded-full">
             {isSyncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
             Sync Statuses
           </Button>
@@ -163,81 +164,46 @@ export default function AgentMonitoring() {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="pt-6">
+          {[
+            { icon: Zap, value: runningCount, label: "Active Runs", accent: "primary" },
+            { icon: CheckCircle2, value: completedToday, label: "Completed Today", accent: "success" },
+            { icon: XCircle, value: failedCount, label: "Failed / Stale", accent: "destructive" },
+            { icon: Bot, value: runs.length, label: "Total Runs", accent: "primary" },
+          ].map((card) => (
+            <div key={card.label} className="stat-card">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <Zap className="w-5 h-5 text-primary" />
+                <div className={`w-10 h-10 rounded-xl bg-${card.accent}/10 flex items-center justify-center`}>
+                  <card.icon className={`w-5 h-5 text-${card.accent}`} />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{runningCount}</p>
-                  <p className="text-xs text-muted-foreground">Active Runs</p>
+                  <p className="text-2xl font-display font-bold">{card.value}</p>
+                  <p className="text-xs text-muted-foreground">{card.label}</p>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
-                  <CheckCircle2 className="w-5 h-5 text-green-500" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{completedToday}</p>
-                  <p className="text-xs text-muted-foreground">Completed Today</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center">
-                  <XCircle className="w-5 h-5 text-destructive" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{failedCount}</p>
-                  <p className="text-xs text-muted-foreground">Failed / Stale</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                  <Bot className="w-5 h-5 text-blue-500" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{runs.length}</p>
-                  <p className="text-xs text-muted-foreground">Total Runs</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+          ))}
         </div>
 
         {/* Tabs */}
         <Tabs defaultValue="runs">
-          <TabsList>
+          <TabsList className="bg-secondary/50">
             <TabsTrigger value="runs">Agent Runs</TabsTrigger>
             <TabsTrigger value="logs">Logs</TabsTrigger>
             <TabsTrigger value="pipeline">Pipeline View</TabsTrigger>
           </TabsList>
 
-          {/* RUNS TAB */}
           <TabsContent value="runs">
-            <Card>
+            <Card className="border-border/40">
               <CardHeader>
-                <CardTitle>Agent Runs</CardTitle>
+                <CardTitle className="font-display">Agent Runs</CardTitle>
                 <CardDescription>All pipeline executions and their outcomes</CardDescription>
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-[500px]">
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {runs.length === 0 ? (
                       <div className="text-center py-12 text-muted-foreground">
-                        <Bot className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <Bot className="w-12 h-12 mx-auto mb-4 opacity-30" />
                         <p>No agent runs yet</p>
                       </div>
                     ) : (
@@ -252,14 +218,14 @@ export default function AgentMonitoring() {
                         return (
                           <div
                             key={run.id}
-                            className={`p-4 rounded-lg border cursor-pointer transition-colors ${
-                              isSelected ? "border-primary bg-primary/5" : "hover:bg-secondary/50"
+                            className={`p-4 rounded-xl border cursor-pointer transition-all duration-200 ${
+                              isSelected ? "border-primary/40 bg-primary/5 shadow-md" : "border-border/30 hover:border-border hover:bg-secondary/30"
                             }`}
                             onClick={() => setSelectedRun(isSelected ? null : run)}
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-lg bg-secondary flex items-center justify-center">
+                                <div className="w-9 h-9 rounded-xl bg-secondary/60 flex items-center justify-center">
                                   <TypeIcon className="w-4 h-4" />
                                 </div>
                                 <div>
@@ -273,30 +239,27 @@ export default function AgentMonitoring() {
                               </div>
                               <div className="flex items-center gap-2">
                                 {summary.jobs_qualified !== undefined && (
-                                  <span className="text-xs text-muted-foreground">
-                                    {summary.jobs_qualified} matches
-                                  </span>
+                                  <span className="text-xs text-muted-foreground">{summary.jobs_qualified} matches</span>
                                 )}
-                                <Badge className={`${statusStyle.color} gap-1`}>
+                                <Badge className={`${statusStyle.color} gap-1 rounded-full`}>
                                   <StatusIcon className={`w-3 h-3 ${run.status === "running" ? "animate-spin" : ""}`} />
                                   {run.status}
                                 </Badge>
                               </div>
                             </div>
 
-                            {/* Expanded details */}
                             {isSelected && (
-                              <div className="mt-4 pt-4 border-t border-border space-y-2">
+                              <div className="mt-4 pt-4 border-t border-border/30 space-y-2">
                                 {run.error_message && (
-                                  <div className="p-3 rounded bg-destructive/10 text-destructive text-sm">
+                                  <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
                                     {run.error_message}
                                   </div>
                                 )}
                                 {Object.keys(summary).length > 0 && (
                                   <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                                     {Object.entries(summary).map(([key, val]) => (
-                                      <div key={key} className="p-2 rounded bg-secondary/50">
-                                        <p className="text-xs text-muted-foreground">{key.replace(/_/g, " ")}</p>
+                                      <div key={key} className="p-2.5 rounded-lg bg-secondary/40">
+                                        <p className="text-xs text-muted-foreground capitalize">{key.replace(/_/g, " ")}</p>
                                         <p className="text-sm font-medium truncate">
                                           {Array.isArray(val) ? (val as string[]).join(", ") : String(val)}
                                         </p>
@@ -320,31 +283,30 @@ export default function AgentMonitoring() {
             </Card>
           </TabsContent>
 
-          {/* LOGS TAB */}
           <TabsContent value="logs">
-            <Card>
+            <Card className="border-border/40">
               <CardHeader>
-                <CardTitle>Agent Logs</CardTitle>
+                <CardTitle className="font-display">Agent Logs</CardTitle>
                 <CardDescription>Detailed execution logs across all agents</CardDescription>
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-[500px]">
-                  <div className="space-y-1 font-mono text-sm">
+                  <div className="space-y-0.5 font-mono text-sm">
                     {logs.length === 0 ? (
                       <div className="text-center py-12 text-muted-foreground">
-                        <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <FileText className="w-12 h-12 mx-auto mb-4 opacity-30" />
                         <p>No logs yet</p>
                       </div>
                     ) : (
                       logs.map((log) => (
-                        <div key={log.id} className="flex gap-3 py-1.5 px-2 rounded hover:bg-secondary/30">
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        <div key={log.id} className="flex gap-3 py-1.5 px-3 rounded-lg hover:bg-secondary/30 transition-colors">
+                          <span className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">
                             {log.created_at ? format(new Date(log.created_at), "HH:mm:ss") : "--"}
                           </span>
-                          <span className={`text-xs uppercase w-12 ${LOG_LEVEL_COLORS[log.log_level] || ""}`}>
+                          <span className={`text-xs uppercase w-12 font-semibold ${LOG_LEVEL_COLORS[log.log_level] || ""}`}>
                             {log.log_level}
                           </span>
-                          <Badge variant="outline" className="text-xs h-5">
+                          <Badge variant="outline" className="text-xs h-5 rounded-full">
                             {log.agent_name}
                           </Badge>
                           <span className="text-sm flex-1">{log.message}</span>
@@ -357,11 +319,10 @@ export default function AgentMonitoring() {
             </Card>
           </TabsContent>
 
-          {/* PIPELINE VIEW TAB */}
           <TabsContent value="pipeline">
-            <Card>
+            <Card className="border-border/40">
               <CardHeader>
-                <CardTitle>Pipeline Status</CardTitle>
+                <CardTitle className="font-display">Pipeline Status</CardTitle>
                 <CardDescription>Visual overview of the CV → Research → Apply pipeline</CardDescription>
               </CardHeader>
               <CardContent>
@@ -380,21 +341,9 @@ function PipelineView({ runs }: { runs: AgentRun[] }) {
   const latestResearch = runs.find(r => r.run_type === "lever_job_research");
 
   const stages = [
-    {
-      label: "CV Optimization",
-      icon: FileText,
-      run: latestResume,
-    },
-    {
-      label: "Job Research",
-      icon: Search,
-      run: latestResearch,
-    },
-    {
-      label: "Auto Apply",
-      icon: Send,
-      run: latestResearch?.summary_json?.jobs_submitted_to_skyvern > 0 ? latestResearch : null,
-    },
+    { label: "CV Optimization", icon: FileText, run: latestResume },
+    { label: "Job Research", icon: Search, run: latestResearch },
+    { label: "Auto Apply", icon: Send, run: latestResearch?.summary_json?.jobs_submitted_to_skyvern > 0 ? latestResearch : null },
   ];
 
   return (
@@ -408,14 +357,14 @@ function PipelineView({ runs }: { runs: AgentRun[] }) {
 
         return (
           <div key={stage.label} className="flex items-center gap-2 flex-1">
-            <div className={`flex-1 p-4 rounded-xl border ${run ? "border-primary/30" : "border-border"} text-center`}>
-              <div className={`w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center ${run ? style.color : "bg-muted"}`}>
+            <div className={`flex-1 p-6 rounded-2xl border ${run ? "border-primary/30 bg-primary/3" : "border-border/30"} text-center transition-all`}>
+              <div className={`w-14 h-14 rounded-2xl mx-auto mb-4 flex items-center justify-center ${run ? style.color : "bg-muted/50"}`}>
                 <Icon className="w-6 h-6" />
               </div>
-              <p className="font-medium text-sm">{stage.label}</p>
+              <p className="font-display font-semibold text-sm">{stage.label}</p>
               {run ? (
-                <div className="mt-2">
-                  <Badge className={`${style.color} gap-1`}>
+                <div className="mt-3">
+                  <Badge className={`${style.color} gap-1 rounded-full`}>
                     <StIcon className={`w-3 h-3 ${status === "running" ? "animate-spin" : ""}`} />
                     {status}
                   </Badge>
@@ -430,12 +379,10 @@ function PipelineView({ runs }: { runs: AgentRun[] }) {
                   )}
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground mt-2">Not started</p>
+                <p className="text-xs text-muted-foreground mt-3">Not started</p>
               )}
             </div>
-            {i < stages.length - 1 && (
-              <ArrowRight className="w-5 h-5 text-muted-foreground hidden md:block flex-shrink-0" />
-            )}
+            {i < 2 && <ArrowRight className="w-4 h-4 text-muted-foreground/30 flex-shrink-0" />}
           </div>
         );
       })}

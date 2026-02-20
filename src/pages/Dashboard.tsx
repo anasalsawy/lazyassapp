@@ -407,7 +407,7 @@ export default function Dashboard() {
         {/* Page Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Dashboard</h1>
+            <h1 className="text-3xl font-display font-bold">Dashboard</h1>
             <p className="text-muted-foreground">
               Track your applications and agent activity
             </p>
@@ -416,7 +416,7 @@ export default function Dashboard() {
             <span className="text-sm text-muted-foreground hidden sm:block">
               {lastChecked && `Last checked: ${formatDistanceToNow(lastChecked, { addSuffix: true })}`}
             </span>
-            <Button variant="outline" size="sm" onClick={refreshAllStatuses} disabled={isRefreshing}>
+            <Button variant="outline" size="sm" className="rounded-full" onClick={refreshAllStatuses} disabled={isRefreshing}>
               {isRefreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             </Button>
           </div>
@@ -648,18 +648,16 @@ function StatsCard({ title, value, icon: Icon, description }: {
   description: string;
 }) {
   return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Icon className="w-6 h-6 text-primary" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold">{value}</p>
-            <p className="text-sm text-muted-foreground">{description}</p>
-          </div>
+    <div className="stat-card">
+      <div className="flex items-center gap-4">
+        <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+          <Icon className="w-6 h-6 text-primary" />
         </div>
-      </CardContent>
-    </Card>
+        <div>
+          <p className="text-3xl font-display font-bold">{value}</p>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+      </div>
+    </div>
   );
 }
