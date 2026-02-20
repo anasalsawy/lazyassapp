@@ -148,17 +148,17 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
 
       await logAgent(supabase, userId, runId, "query_inference", queryData);
 
-      // ---- STEP 3: Scrape Lever jobs ----
+      // ---- STEP 3: Search for Lever jobs using Firecrawl web search ----
       const allJobs: LeverJob[] = [];
       const seenUrls = new Set<string>();
 
       for (const query of queryData.queries) {
         try {
-          const leverUrl = `https://jobs.lever.co/?search=${encodeURIComponent(query)}`;
-          console.log(`[LeverResearch] Scraping: ${leverUrl}`);
+          const searchQuery = `site:jobs.lever.co ${query}`;
+          console.log(`[LeverResearch] Searching: "${searchQuery}"`);
 
-          const scrapeResult = await fetch(
-            "https://api.firecrawl.dev/v1/scrape",
+          const searchResult = await fetch(
+            "https://api.firecrawl.dev/v1/search",
             {
               method: "POST",
               headers: {
@@ -166,66 +166,43 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                url: leverUrl,
-                formats: ["links", "markdown"],
-                onlyMainContent: true,
-                waitFor: 3000,
+                query: searchQuery,
+                limit: 10,
               }),
             }
           );
 
-          if (!scrapeResult.ok) {
-            console.error(`[LeverResearch] Firecrawl error for "${query}": ${scrapeResult.status}`);
+          if (!searchResult.ok) {
+            console.error(`[LeverResearch] Firecrawl search error for "${query}": ${searchResult.status}`);
             continue;
           }
 
-          const scrapeData = await scrapeResult.json();
-          const links: string[] = scrapeData.data?.links || scrapeData.links || [];
-          const markdown: string = scrapeData.data?.markdown || scrapeData.markdown || "";
+          const searchData = await searchResult.json();
+          const results: any[] = searchData.data || [];
 
-          // Extract Lever job URLs (format: https://jobs.lever.co/company/job-id)
-          const leverJobLinks = links.filter(
-            (l: string) =>
-              l.match(/^https:\/\/jobs\.lever\.co\/[^/]+\/[a-f0-9-]+/) && !seenUrls.has(l)
-          );
+          for (const result of results) {
+            const url = result.url || "";
+            // Match Lever job URLs: https://jobs.lever.co/company/uuid
+            if (url.match(/^https:\/\/jobs\.lever\.co\/[^/]+\/[a-f0-9-]+/) && !seenUrls.has(url)) {
+              seenUrls.add(url);
+              const urlParts = url.match(/jobs\.lever\.co\/([^/]+)\//);
+              const company = urlParts ? urlParts[1].replace(/-/g, " ") : "Unknown";
 
-          for (const link of leverJobLinks) {
-            seenUrls.add(link);
-            // Extract company from URL
-            const urlParts = link.match(/jobs\.lever\.co\/([^/]+)\//);
-            const company = urlParts ? urlParts[1].replace(/-/g, " ") : "Unknown";
-
-            allJobs.push({
-              url: link,
-              company,
-              title: "", // Will be enriched
-              description: "",
-              searchQuery: query,
-            });
-          }
-
-          // Also try to extract job info from markdown
-          const jobBlocks = markdown.split(/\n(?=#{1,3}\s)/).filter(Boolean);
-          for (const block of jobBlocks) {
-            const titleMatch = block.match(/#{1,3}\s*\[?([^\]\n]+)\]?\(?([^)]*lever\.co[^)]*)\)?/);
-            if (titleMatch && titleMatch[2] && !seenUrls.has(titleMatch[2])) {
-              seenUrls.add(titleMatch[2]);
-              const urlParts = titleMatch[2].match(/jobs\.lever\.co\/([^/]+)\//);
               allJobs.push({
-                url: titleMatch[2],
-                company: urlParts ? urlParts[1].replace(/-/g, " ") : "Unknown",
-                title: titleMatch[1].trim(),
-                description: block.substring(0, 500),
+                url,
+                company,
+                title: result.title || "",
+                description: result.description || result.markdown?.substring(0, 500) || "",
                 searchQuery: query,
               });
             }
           }
 
           console.log(
-            `[LeverResearch] Query "${query}" found ${leverJobLinks.length} job links`
+            `[LeverResearch] Query "${query}" found ${results.filter((r: any) => r.url?.match(/jobs\.lever\.co\/[^/]+\/[a-f0-9-]+/)).length} job links`
           );
         } catch (e) {
-          console.error(`[LeverResearch] Error scraping query "${query}":`, e);
+          console.error(`[LeverResearch] Error searching query "${query}":`, e);
         }
       }
 
