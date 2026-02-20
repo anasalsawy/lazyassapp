@@ -167,7 +167,7 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
               },
               body: JSON.stringify({
                 query: searchQuery,
-                limit: 10,
+                limit: 20,
               }),
             }
           );
@@ -226,7 +226,7 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
       }
 
       // ---- STEP 4: Enrich jobs with details (batch scrape top jobs) ----
-      const jobsToEnrich = allJobs.slice(0, 20); // Cap at 20 to avoid timeout
+      const jobsToEnrich = allJobs.slice(0, 40); // Cap at 40 for broader coverage
       const enrichedJobs: LeverJob[] = [];
 
       for (const job of jobsToEnrich) {
@@ -304,7 +304,7 @@ Return a JSON array of objects:
   "recommendation": "apply" | "review" | "skip"
 }]
 
-Score HONESTLY. 80+ means strong match. Consider: skill overlap, seniority fit, role alignment, industry relevance.`;
+Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority fit, role alignment, industry relevance. Be generous - if the candidate could realistically do the job, score 65+.`;
 
       const scoringResponse = await callOpenAI(OPENAI_API_KEY, {
         model: "gpt-4o",
@@ -329,7 +329,7 @@ Score HONESTLY. 80+ means strong match. Consider: skill overlap, seniority fit, 
         const job = enrichedJobs[score.index];
         if (!job) continue;
 
-        if (score.score >= 80) {
+        if (score.score >= 60) {
           qualifiedJobs.push({
             url: job.url,
             title: job.title || "Unknown Position",
