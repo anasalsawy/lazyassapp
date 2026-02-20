@@ -13,14 +13,14 @@ const TIME_BUDGET_MS = 50_000; // Save state if < 50s remain (function timeout ~
 
 const AI_BASE = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
-async function callAI(apiKey: string, model: string, messages: any[], temperature = 0.3): Promise<string> {
+async function callAI(apiKey: string, model: string, messages: any[]): Promise<string> {
   const res = await fetch(AI_BASE, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ model, messages, temperature }),
+    body: JSON.stringify({ model, messages }),
   });
   if (!res.ok) throw new Error(`AI error ${res.status}: ${await res.text()}`);
   const data = await res.json();
@@ -170,7 +170,7 @@ Email: ${profile?.email || user.email}`;
       const researchRaw = await callAI(LOVABLE_API_KEY, "openai/gpt-5-mini", [
         { role: "system", content: "You are an expert career strategist and ATS optimization specialist. Return only valid JSON." },
         { role: "user", content: researcherPrompt },
-      ], 0.2);
+      ]);
 
       try {
         researchChecklist = parseJSON(researchRaw);
@@ -233,7 +233,7 @@ Return a JSON object with the full rewritten resume:
       const writerRaw = await callAI(LOVABLE_API_KEY, "openai/gpt-5-mini", [
         { role: "system", content: writerSystemPrompt },
         { role: "user", content: `RAW RESUME:\n${rawText.substring(0, 5000)}\n\nWrite the optimized resume now.` },
-      ], 0.4);
+      ]);
 
       try {
         const parsed = parseJSON(writerRaw);
@@ -293,7 +293,7 @@ Return ONLY valid JSON:
       const criticRaw = await callAI(LOVABLE_API_KEY, "openai/gpt-5-mini", [
         { role: "system", content: criticSystemPrompt },
         { role: "user", content: `WRITER DRAFT:\n${writerDraft.substring(0, 5000)}\n\nAudit this now.` },
-      ], 0.2);
+      ]);
 
       let criticResult: any;
       try {
