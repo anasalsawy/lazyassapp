@@ -47,3 +47,6 @@ verify_jwt = false
 
 [functions.lever-job-research]
 verify_jwt = false
+
+[functions.sync-agent-status]
+verify_jwt = false
