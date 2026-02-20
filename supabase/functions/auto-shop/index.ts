@@ -1656,9 +1656,12 @@ CRITICAL RULES FOR THIS RETRY:
   if (!skyvernResponse.ok) {
     const errorText = await skyvernResponse.text();
     console.error(`[AutoShop] Retry Skyvern API error:`, skyvernResponse.status, errorText);
+    const nextRetryCount = (order.retry_count || 0) + 1;
     await supabase.from("auto_shop_orders").update({
       status: "failed",
       error_message: `Auto-retry Skyvern error: ${skyvernResponse.status}`,
+      retry_count: nextRetryCount,
+      last_retry_at: new Date().toISOString(),
     }).eq("id", order.id);
     return null;
   }
@@ -1686,12 +1689,13 @@ async function handleSyncAllOrders(
 ) {
   const userId = user.id;
   // Get all orders with browser_use_task_id that aren't completed/failed
+  // Include "failed" orders that still have retries remaining
   const { data: orders } = await supabase
     .from("auto_shop_orders")
     .select("*")
     .eq("user_id", userId)
     .not("browser_use_task_id", "is", null)
-    .in("status", ["pending", "searching", "found_deals", "ordering"]);
+    .in("status", ["pending", "searching", "found_deals", "ordering", "failed"]);
 
   if (!orders || orders.length === 0) {
     return new Response(
@@ -1705,6 +1709,34 @@ async function handleSyncAllOrders(
 
   for (const order of orders) {
     try {
+      // Handle already-failed orders that still have retries remaining
+      if (order.status === "failed" && (order.retry_count || 0) < (order.max_retries || 3)) {
+        // Cooldown: don't retry if last retry was less than 30 seconds ago
+        const lastRetry = order.last_retry_at ? new Date(order.last_retry_at).getTime() : 0;
+        if (Date.now() - lastRetry < 30000) {
+          updatedOrders.push(order);
+          continue;
+        }
+
+        const analysis = analyzeFailure(order.error_message || "", order);
+        if (analysis.canRetry) {
+          console.log(`[AutoShop] Retrying previously failed order ${order.id} (attempt ${(order.retry_count || 0) + 1})`);
+          await supabase.from("auto_shop_orders").update({
+            failure_analysis: `${analysis.diagnosis}\nFix: ${analysis.workaround}`,
+          }).eq("id", order.id);
+
+          const retryRunId = await autoRetryOrder(
+            supabase, user, { ...order }, analysis, skyvernApiKey, supabaseUrl, browserUseApiKey
+          );
+          if (retryRunId) {
+            retriedCount++;
+            console.log(`[AutoShop] Order ${order.id} auto-retried with run ${retryRunId}`);
+          }
+        }
+        updatedOrders.push(order);
+        continue;
+      }
+
       const runId = order.browser_use_task_id;
       const taskRes = await fetch(`${SKYVERN_API_BASE}/runs/${runId}`, {
         headers: { "x-api-key": skyvernApiKey },
@@ -1718,14 +1750,13 @@ async function handleSyncAllOrders(
         // Check if order just failed and is eligible for auto-retry
         if (
           updated.status === "failed" &&
-          order.status !== "failed" && // Just transitioned to failed
+          order.status !== "failed" &&
           (updated.retry_count || 0) < (updated.max_retries || 3)
         ) {
           const analysis = analyzeFailure(updated.error_message || "", updated);
           if (analysis.canRetry) {
             console.log(`[AutoShop] Auto-retrying order ${order.id}: ${analysis.diagnosis}`);
 
-            // Update the failure analysis before retrying
             await supabase.from("auto_shop_orders").update({
               failure_analysis: `${analysis.diagnosis}\nFix: ${analysis.workaround}`,
             }).eq("id", order.id);
@@ -1739,7 +1770,6 @@ async function handleSyncAllOrders(
               console.log(`[AutoShop] Order ${order.id} auto-retried with run ${retryRunId}`);
             }
           } else {
-            // Can't retry - update with analysis
             await supabase.from("auto_shop_orders").update({
               failure_analysis: `${analysis.diagnosis} (NOT RETRYABLE: ${analysis.workaround})`,
             }).eq("id", order.id);
