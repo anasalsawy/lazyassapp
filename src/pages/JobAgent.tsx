@@ -172,7 +172,7 @@ export default function JobAgent() {
       )}
 
       {/* Run Agent */}
-      {hasProfile && sitesLoggedIn.length > 0 && (
+      {hasProfile && (
         <Card className="bg-gradient-to-r from-primary/10 to-primary/5 border-primary/20">
           <CardContent className="py-6">
             <div className="flex items-center justify-between">
