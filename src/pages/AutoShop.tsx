@@ -1133,6 +1133,11 @@ const AutoShop = () => {
                             <div className="flex items-center gap-2">
                               <h3 className="font-semibold">{order.product_query}</h3>
                               {getStatusBadge(order.status)}
+                              {(order as any).retry_count > 0 && (
+                                <Badge variant="outline" className="text-xs">
+                                  Retry {(order as any).retry_count}/{(order as any).max_retries || 3}
+                                </Badge>
+                              )}
                             </div>
                             <p className="text-sm text-muted-foreground">
                               Qty: {order.quantity}{order.max_price && ` • Max: $${order.max_price}`}
@@ -1146,12 +1151,32 @@ const AutoShop = () => {
                             {order.order_confirmation && (
                               <p className="text-sm text-green-600">✓ Confirmation: {order.order_confirmation}</p>
                             )}
-                            {order.error_message && (
+                            {(order as any).failure_analysis && order.status === "failed" && (
+                              <div className="mt-2 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                                <p className="text-xs font-medium text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                                  <Zap className="h-3 w-3" /> Failure Analysis
+                                </p>
+                                <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 whitespace-pre-line">
+                                  {(order as any).failure_analysis}
+                                </p>
+                                {(order as any).retry_count >= ((order as any).max_retries || 3) && (
+                                  <p className="text-xs text-destructive mt-1 font-medium">Max retries reached. Manual intervention needed.</p>
+                                )}
+                              </div>
+                            )}
+                            {order.error_message && !((order as any).failure_analysis) && (
                               <p className="text-sm text-destructive">✗ {order.error_message}</p>
+                            )}
+                            {order.status === "searching" && (order as any).retry_count > 0 && (
+                              <div className="mt-1 flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Auto-retrying with adjusted strategy...
+                              </div>
                             )}
                             <p className="text-xs text-muted-foreground">
                               {new Date(order.created_at).toLocaleString()}
                               {order.completed_at && ` • Completed: ${new Date(order.completed_at).toLocaleString()}`}
+                              {(order as any).last_retry_at && ` • Last retry: ${new Date((order as any).last_retry_at).toLocaleString()}`}
                             </p>
                           </div>
                           {(order.status === "pending" || order.status === "searching") && (
