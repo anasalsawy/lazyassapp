@@ -240,6 +240,30 @@ Location: ${profile?.location || ""}`,
 
     console.log("Resume redesigned successfully");
 
+    // ---- AUTO-TRIGGER: Lever Job Research Agent ----
+    // Fire-and-forget: kick off job research using the optimized resume
+    try {
+      console.log(`[RedesignResume] Auto-triggering Lever Job Research for resume: ${resumeId}`);
+      const leverResearchUrl = `${supabaseUrl}/functions/v1/lever-job-research`;
+      fetch(leverResearchUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${supabaseServiceKey}`,
+          "Content-Type": "application/json",
+          apikey: supabaseServiceKey,
+        },
+        body: JSON.stringify({
+          resumeId,
+          userId: user.id,
+        }),
+      }).catch((e) =>
+        console.error("[RedesignResume] Lever research trigger failed:", e)
+      );
+    } catch (triggerError) {
+      console.error("[RedesignResume] Error triggering lever research:", triggerError);
+      // Don't fail the main response if trigger fails
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -250,6 +274,7 @@ Location: ${profile?.location || ""}`,
           improvementsMade: redesignedResume.improvements?.length || 0,
           keywordsAdded: redesignedResume.keywordsAdded?.length || 0,
         },
+        jobResearchTriggered: true,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
