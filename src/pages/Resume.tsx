@@ -165,48 +165,85 @@ export default function Resume() {
     });
 
     try {
-      // Animate through stages optimistically
-      const stageTimings: Array<[OptimizingState["stage"], number]> = [
-        ["researcher", 4000],
-        ["writer", 8000],
-        ["critic", 8000],
-      ];
-
-      let delay = 0;
-      for (const [stage, ms] of stageTimings) {
-        delay += ms;
-        setTimeout(() => {
-          setOptimizingState((prev) =>
-            prev?.resumeId === resumeId ? { ...prev, stage } : prev
-          );
-        }, delay);
-      }
-
+      // Kick off the pipeline (returns immediately)
       const { data, error } = await supabase.functions.invoke("optimize-resume", {
-        body: { resumeId },
+        body: { resumeId, action: "start" },
       });
 
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
-      setOptimizationResult((prev) => ({ ...prev, [resumeId]: data as OptimizationResult }));
-      setOptimizingState({ resumeId, stage: "done", round: data.rounds, score: data.finalScore });
-      setExpandedResult(resumeId);
+      // Poll for completion
+      let pollCount = 0;
+      const maxPolls = 120; // 2 minutes max polling
+      const pollInterval = setInterval(async () => {
+        pollCount++;
+        if (pollCount > maxPolls) {
+          clearInterval(pollInterval);
+          toast({ title: "Optimization timed out", description: "Please try again.", variant: "destructive" });
+          setOptimizingState(null);
+          return;
+        }
 
-      if (data.qualityGatePassed) {
-        toast({
-          title: `✅ Quality gate passed! Score: ${data.finalScore}`,
-          description: `${data.rounds} round(s) of Writer ↔ Critic optimization.`,
-        });
-      } else {
-        toast({
-          title: `⚠️ Optimization complete. Score: ${data.finalScore}`,
-          description: `Pipeline ran ${data.rounds} rounds but didn't reach 90. Check the feedback below.`,
-          variant: "destructive",
-        });
-      }
+        try {
+          const { data: pollData } = await supabase.functions.invoke("optimize-resume", {
+            body: { resumeId, action: "poll" },
+          });
 
-      fetchResumes();
+          if (!pollData) return;
+
+          // Update stage display from result
+          if (pollData.status === "running" && pollData.result) {
+            const r = pollData.result;
+            setOptimizingState((prev) =>
+              prev?.resumeId === resumeId
+                ? { ...prev, stage: r.stage || "researcher", round: r.round || 0, score: r.score || 0 }
+                : prev
+            );
+          }
+
+          if (pollData.status === "completed" && pollData.result) {
+            clearInterval(pollInterval);
+            const r = pollData.result;
+            const resultObj: OptimizationResult = {
+              finalScore: r.finalScore || r.score || 0,
+              qualityGatePassed: (r.finalScore || r.score || 0) >= 90,
+              rounds: r.rounds || r.round || 0,
+              optimizedResume: null,
+              htmlPreview: r.htmlPreview || "",
+              atsText: r.atsText || "",
+              researchChecklist: r.researchChecklist,
+              lastCriticFeedback: r.lastCriticFeedback,
+            };
+            setOptimizationResult((prev) => ({ ...prev, [resumeId]: resultObj }));
+            setOptimizingState({ resumeId, stage: "done", round: resultObj.rounds, score: resultObj.finalScore });
+            setExpandedResult(resumeId);
+
+            if (resultObj.qualityGatePassed) {
+              toast({
+                title: `✅ Quality gate passed! Score: ${resultObj.finalScore}`,
+                description: `${resultObj.rounds} round(s) of Writer ↔ Critic optimization.`,
+              });
+            } else {
+              toast({
+                title: `⚠️ Optimization complete. Score: ${resultObj.finalScore}`,
+                description: `Pipeline ran ${resultObj.rounds} rounds. Check the feedback below.`,
+                variant: "destructive",
+              });
+            }
+            fetchResumes();
+          }
+
+          if (pollData.status === "failed") {
+            clearInterval(pollInterval);
+            toast({ title: "Optimization failed", description: pollData.error || "Unknown error", variant: "destructive" });
+            setOptimizingState(null);
+          }
+        } catch {
+          // Ignore transient poll errors
+        }
+      }, 3000); // Poll every 3 seconds
+
     } catch (error: any) {
       toast({ title: "Optimization failed", description: error.message, variant: "destructive" });
       setOptimizingState(null);
