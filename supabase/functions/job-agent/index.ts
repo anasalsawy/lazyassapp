@@ -6,9 +6,11 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Browser Use Cloud v2 API base URL
+// Browser Use Cloud v2 API base URL (used for profile/login management only)
 const BROWSER_USE_BASE_URL = "https://api.browser-use.com";
 
+// Skyvern API configuration (used for run_agent pipeline)
+const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
 // Unified profile naming - shared between job-agent and auto-shop
 // This ensures authentication cookies (Gmail, etc.) are shared across features
 const getProfileName = (userId: string) => `user-${userId.substring(0, 8)}`;
@@ -56,10 +58,18 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+  const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
 
   if (!BROWSER_USE_API_KEY) {
     return new Response(
       JSON.stringify({ error: "BROWSER_USE_API_KEY not configured" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  if (!SKYVERN_API_KEY) {
+    return new Response(
+      JSON.stringify({ error: "SKYVERN_API_KEY not configured" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
@@ -300,7 +310,7 @@ serve(async (req) => {
       // RUN AGENT - Background job scraping & applying
       // ============================================
       case "run_agent": {
-        await log("🚀 Starting job agent run...");
+        await log("🚀 Starting job agent run via Skyvern...");
 
         // Get user's profile and preferences
         const { data: browserProfile } = await supabase
@@ -336,6 +346,12 @@ serve(async (req) => {
           .eq("user_id", user.id)
           .single();
 
+        // Fetch site credentials for auto-login during Skyvern task
+        const { data: siteCreds } = await supabase
+          .from("site_credentials")
+          .select("*")
+          .eq("user_id", user.id);
+
         // Create an agent run record
         const { data: run } = await supabase
           .from("agent_runs")
@@ -348,15 +364,21 @@ serve(async (req) => {
           .select()
           .single();
 
-        // Build the mega-instruction for the agent
+        // Build the mega-instruction for Skyvern
         const jobTitles = jobPrefs?.job_titles?.join(", ") || "Software Engineer";
         const locations = jobPrefs?.locations?.join(", ") || "Remote";
         const minSalary = jobPrefs?.salary_min || 50000;
+
+        // Build credential instructions for Skyvern
+        const credentialSection = siteCreds && siteCreds.length > 0
+          ? `\nSITE CREDENTIALS (use these to log in if needed):\n${siteCreds.map(c => `- ${c.site_domain}: email=${c.email_used}`).join("\n")}`
+          : "";
 
         const agentInstruction = `
 You are an autonomous job agent. Your mission is to find and apply to jobs for the user.
 
 CONNECTED ACCOUNTS: ${browserProfile.sites_logged_in.join(", ")}
+${credentialSection}
 
 USER PROFILE:
 - Name: ${userProfile?.first_name || "User"} ${userProfile?.last_name || ""}
@@ -369,12 +391,12 @@ JOB PREFERENCES:
 - Minimum Salary: $${minSalary}
 
 RESUME SUMMARY:
-${resume?.parsed_content?.text?.substring(0, 2000) || "No resume uploaded"}
+${resume?.parsed_content ? JSON.stringify(resume.parsed_content).substring(0, 2000) : "No resume uploaded"}
 Skills: ${resume?.skills?.join(", ") || "Not specified"}
 Experience: ${resume?.experience_years || 0} years
 
 YOUR TASKS (in order):
-1. SCRAPE JOBS: Go to each logged-in job site and search for matching jobs. Look for roles matching "${jobTitles}" in "${locations}".
+1. SCRAPE JOBS: Go to job sites and search for matching jobs. Look for roles matching "${jobTitles}" in "${locations}".
 
 2. EVALUATE EACH JOB: For each listing found:
    - Extract: title, company, salary, location, requirements
@@ -403,54 +425,67 @@ REPORT FORMAT (return this JSON at the end):
 DO NOT STOP. Work through all sites methodically. Complete as many applications as possible.
 `;
 
-        // Create session with profile, then create task
-        const sessionResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions", {
+        // Determine start URL based on connected sites
+        const startUrl = browserProfile.sites_logged_in.includes("linkedin")
+          ? "https://www.linkedin.com/jobs/"
+          : browserProfile.sites_logged_in.includes("indeed")
+          ? "https://www.indeed.com/"
+          : "https://www.google.com/search?q=jobs";
+
+        // Submit task to Skyvern API
+        const skyvernPayload = {
+          prompt: agentInstruction,
+          url: startUrl,
+          max_steps_override: 100,
+          proxy_location: "RESIDENTIAL",
+          navigation_payload: {
+            job_titles: jobTitles,
+            locations: locations,
+            min_salary: minSalary,
+          },
+        };
+
+        console.log(`[JobAgent] Submitting task to Skyvern API`);
+
+        const skyvernResponse = await fetch(`${SKYVERN_API_BASE}/run/tasks`, {
           method: "POST",
-          body: JSON.stringify({
-            profileId: browserProfile.browser_use_profile_id,
-            keepAlive: false, // Auto-close when done
-          }),
+          headers: {
+            "x-api-key": SKYVERN_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(skyvernPayload),
         });
 
-        if (!sessionResponse.ok) {
-          const error = await sessionResponse.text();
-          throw new Error(`Failed to create agent session: ${error}`);
+        if (!skyvernResponse.ok) {
+          const errorData = await skyvernResponse.text();
+          console.error("[JobAgent] Skyvern API error:", skyvernResponse.status, errorData);
+
+          await supabase.from("agent_runs").update({
+            status: "failed",
+            error_message: `Skyvern API error: ${skyvernResponse.status} - ${errorData}`,
+            ended_at: new Date().toISOString(),
+          }).eq("id", run?.id);
+
+          throw new Error(`Skyvern task creation failed: ${skyvernResponse.status} - ${errorData}`);
         }
 
-        const sessionData = await sessionResponse.json();
-
-        // Create the task in the session
-        const taskResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/tasks", {
-          method: "POST",
-          body: JSON.stringify({
-            task: agentInstruction,
-            sessionId: sessionData.id,
-            maxSteps: 100,
-          }),
-        });
-
-        if (!taskResponse.ok) {
-          const error = await taskResponse.text();
-          throw new Error(`Failed to create agent task: ${error}`);
-        }
-
-        const taskData = await taskResponse.json();
-        const taskId = taskData.id;
+        const skyvernResult = await skyvernResponse.json();
+        const taskId = skyvernResult.run_id || skyvernResult.id;
+        console.log("[JobAgent] Skyvern task submitted:", taskId);
 
         // Store task reference
         await supabase.from("agent_runs").update({
-          summary_json: { browser_use_task_id: taskId, session_id: sessionData.id },
+          summary_json: { skyvern_run_id: taskId },
         }).eq("id", run?.id);
 
-        await log("Agent task started", { taskId, sessionId: sessionData.id, runId: run?.id });
+        await log("Skyvern agent task started", { taskId, runId: run?.id });
 
         return new Response(
           JSON.stringify({
             success: true,
             runId: run?.id,
             taskId,
-            sessionId: sessionData.id,
-            message: "Job agent is running. Check back in a few minutes.",
+            message: "Job agent is running via Skyvern. Check back in a few minutes.",
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
