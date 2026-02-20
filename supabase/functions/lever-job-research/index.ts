@@ -14,10 +14,10 @@ const corsHeaders = {
 // 2. AI infers optimal search queries from the CV
 // 3. Scrapes Lever job boards via Firecrawl
 // 4. Scores each job for compatibility (80+ threshold)
-// 5. Submits each qualified URL to Skyvern for application
+// 5. Submits each qualified URL to Browser Use Cloud for application
 // =============================================
 
-const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
+const BROWSER_USE_API_BASE = "https://api.browser-use.com/api/v2";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -27,13 +27,13 @@ serve(async (req) => {
   try {
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
+    const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
     if (!FIRECRAWL_API_KEY) throw new Error("FIRECRAWL_API_KEY not configured");
-    if (!SKYVERN_API_KEY) throw new Error("SKYVERN_API_KEY not configured");
+    if (!BROWSER_USE_API_KEY) throw new Error("BROWSER_USE_API_KEY not configured");
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
