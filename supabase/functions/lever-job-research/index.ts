@@ -18,7 +18,6 @@ const corsHeaders = {
 // =============================================
 
 const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
-const SKYVERN_APPLICATION_PROMPT = `Fill out the job application form and apply to the job. Fill out any public burden questions if they appear in the form. Your goal is complete when the page says you've successfully applied to the job. Terminate if you are unable to apply successfully.`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -372,7 +371,34 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
         }
       }
 
-      // ---- STEP 8: Submit each qualified URL to Skyvern for application ----
+      // ---- STEP 8: Build resume-aware prompt & submit to Skyvern ----
+      const header = redesigned?.header || {};
+      const education = redesigned?.education || [];
+      const candidateInfo = [
+        header.name && `Full Name: ${header.name}`,
+        header.email && `Email: ${header.email}`,
+        header.phone && `Phone: ${header.phone}`,
+        header.location && `Location: ${header.location}`,
+        header.title && `Current Title: ${header.title}`,
+        skills.length && `Skills: ${skills.slice(0, 15).join(", ")}`,
+        resume.experience_years && `Years of Experience: ${resume.experience_years}`,
+        education.length && `Education: ${education.map((e: any) => `${e.degree || ""} ${e.school || ""} ${e.year || ""}`).join("; ")}`,
+        experienceSummary && `Work Experience:\n${experienceSummary}`,
+      ].filter(Boolean).join("\n");
+
+      const applicationPrompt = `You are applying to a job on behalf of this candidate. Use ONLY the following candidate information to fill out the application form. Do NOT invent or guess any information not provided below.
+
+CANDIDATE INFORMATION:
+${candidateInfo}
+
+INSTRUCTIONS:
+1. Fill out all required fields using the candidate data above.
+2. For fields not covered by the candidate data (e.g. "How did you hear about us?"), use reasonable defaults like "Online job search".
+3. Upload the resume if an upload field is available - if not, skip it.
+4. Answer any EEO/demographic questions with "Prefer not to say" or "Decline to answer".
+5. Your goal is complete when the page confirms the application was submitted successfully.
+6. If you encounter a blocker (CAPTCHA, login wall, broken form), terminate and report the issue.`;
+
       const applyUrls = qualifiedJobs
         .filter((j) => j.recommendation === "apply")
         .map((j) => j.url);
@@ -388,7 +414,7 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              prompt: SKYVERN_APPLICATION_PROMPT,
+              prompt: applicationPrompt,
               url: jobUrl,
             }),
           });
