@@ -315,50 +315,77 @@ serve(async (req) => {
           throw new Error("No primary resume found. Please upload and optimize your resume first.");
         }
 
-        await log("Delegating to lever-job-research pipeline", { resumeId: resume.id });
+        // Create an agent run record immediately so the frontend can poll it
+        const { data: agentRun } = await supabase
+          .from("agent_runs")
+          .insert({
+            user_id: user.id,
+            run_type: "job_agent",
+            status: "running",
+            started_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
 
-        // Call lever-job-research edge function directly (internal service call)
-        // This handles the full pipeline:
-        // 1. AI infers search queries from CV
-        // 2. Scrapes Lever job boards via Firecrawl
-        // 3. Scores each job for compatibility (80+ threshold)
-        // 4. Saves qualified jobs to DB
-        // 5. Submits each qualified URL to Skyvern with simple "apply" prompt
-        const leverResponse = await fetch(
-          `${Deno.env.get("SUPABASE_URL")}/functions/v1/lever-job-research`,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              resumeId: resume.id,
-              userId: user.id,
-            }),
+        const runId = agentRun?.id;
+        await log("Delegating to lever-job-research pipeline (background)", { resumeId: resume.id, runId });
+
+        // Run lever-job-research in the background so we don't timeout
+        const backgroundWork = async () => {
+          try {
+            const leverResponse = await fetch(
+              `${Deno.env.get("SUPABASE_URL")}/functions/v1/lever-job-research`,
+              {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  resumeId: resume.id,
+                  userId: user.id,
+                }),
+              }
+            );
+
+            const leverResult = leverResponse.ok ? await leverResponse.json() : null;
+            const stats = leverResult?.stats || {};
+
+            await supabase.from("agent_runs").update({
+              status: "completed",
+              ended_at: new Date().toISOString(),
+              summary_json: {
+                jobsFound: stats.found || 0,
+                jobsQualified: stats.qualified || 0,
+                submittedToSkyvern: stats.submittedToSkyvern || 0,
+              },
+            }).eq("id", runId);
+
+            console.log("[JobAgent] Background pipeline complete", stats);
+          } catch (err) {
+            console.error("[JobAgent] Background pipeline failed:", err);
+            await supabase.from("agent_runs").update({
+              status: "failed",
+              ended_at: new Date().toISOString(),
+              error_message: err instanceof Error ? err.message : String(err),
+            }).eq("id", runId);
           }
-        );
+        };
 
-        if (!leverResponse.ok) {
-          const errorText = await leverResponse.text();
-          console.error("[JobAgent] Lever research failed:", leverResponse.status, errorText);
-          throw new Error(`Job research pipeline failed: ${errorText}`);
+        // Fire-and-forget: return immediately, process in background
+        if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
+          (EdgeRuntime as any).waitUntil(backgroundWork());
+        } else {
+          // Fallback: still run but won't await
+          backgroundWork().catch(console.error);
         }
-
-        const leverResult = await leverResponse.json();
-        
-        await log("Pipeline complete", {
-          jobsFound: leverResult.stats?.found || 0,
-          jobsQualified: leverResult.stats?.qualified || 0,
-          submittedToSkyvern: leverResult.stats?.submittedToSkyvern || 0,
-        });
 
         return new Response(
           JSON.stringify({
             success: true,
-            stats: leverResult.stats,
-            jobs: leverResult.jobs,
-            message: `Found ${leverResult.stats?.found || 0} jobs, ${leverResult.stats?.qualified || 0} qualified (80+ match), ${leverResult.stats?.submittedToSkyvern || 0} submitted to Skyvern for auto-apply.`,
+            runId,
+            status: "running",
+            message: "Job agent started! The pipeline is running in the background. Check the Agent Runs tab for progress.",
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );

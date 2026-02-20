@@ -128,17 +128,50 @@ export function useJobAgent() {
     return data;
   }, [callAgent, fetchStatus]);
 
-  // Run the agent
+  // Run the agent - returns immediately, pipeline runs in background
   const runAgent = useCallback(async () => {
     setIsRunning(true);
-    toast.info("🤖 Starting job agent...");
+    toast.info("🤖 Starting job agent pipeline...");
+    
     const data = await callAgent("run_agent");
+    
     if (data?.success) {
-      toast.success("Agent is running! Check back in a few minutes.");
+      toast.success("🚀 Pipeline started! Jobs will appear as they're discovered. Refresh in a few minutes.", {
+        duration: 6000,
+      });
+      
+      // Poll for completion in background
+      if (data.runId) {
+        const pollInterval = setInterval(async () => {
+          const { data: run } = await supabase
+            .from("agent_runs")
+            .select("*")
+            .eq("id", data.runId)
+            .single();
+          
+          if (run?.status === "completed") {
+            clearInterval(pollInterval);
+            const summary = run.summary_json as any;
+            toast.success(
+              `✅ Pipeline complete! Found ${summary?.jobsFound || 0} jobs, ${summary?.jobsQualified || 0} qualified, ${summary?.submittedToSkyvern || 0} submitted.`,
+              { duration: 8000 }
+            );
+            fetchStatus();
+          } else if (run?.status === "failed") {
+            clearInterval(pollInterval);
+            toast.error("Pipeline failed. Check the Agent Runs tab for details.");
+            fetchStatus();
+          }
+        }, 5000);
+        
+        // Stop polling after 10 minutes max
+        setTimeout(() => clearInterval(pollInterval), 600_000);
+      }
     }
+    
     setIsRunning(false);
     return data;
-  }, [callAgent]);
+  }, [callAgent, fetchStatus]);
 
   return {
     profile,
