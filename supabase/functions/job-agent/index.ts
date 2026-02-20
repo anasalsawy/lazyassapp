@@ -353,7 +353,7 @@ serve(async (req) => {
           .eq("user_id", user.id);
 
         // Create an agent run record
-        const { data: run } = await supabase
+        const { data: run, error: runError } = await supabase
           .from("agent_runs")
           .insert({
             user_id: user.id,
@@ -363,6 +363,10 @@ serve(async (req) => {
           })
           .select()
           .single();
+
+        if (runError) {
+          console.error("[JobAgent] Failed to create agent_runs record:", runError);
+        }
 
         // Build the mega-instruction for Skyvern
         const jobTitles = jobPrefs?.job_titles?.join(", ") || "Software Engineer";

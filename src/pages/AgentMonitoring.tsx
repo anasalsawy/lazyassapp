@@ -52,6 +52,10 @@ const RUN_TYPE_LABELS: Record<string, { label: string; icon: React.ElementType }
   resume_optimization: { label: "Resume Optimization", icon: FileText },
   job_application: { label: "Job Application", icon: Send },
   email_monitoring: { label: "Email Monitor", icon: Activity },
+  job_agent: { label: "Job Agent", icon: Bot },
+  apply_jobs: { label: "Apply Jobs", icon: Send },
+  connect_account: { label: "Connect Account", icon: Zap },
+  email_process: { label: "Email Process", icon: Activity },
 };
 
 const STATUS_STYLES: Record<string, { color: string; icon: React.ElementType }> = {
@@ -339,11 +343,12 @@ export default function AgentMonitoring() {
 function PipelineView({ runs }: { runs: AgentRun[] }) {
   const latestResume = runs.find(r => r.run_type === "resume_optimization");
   const latestResearch = runs.find(r => r.run_type === "lever_job_research");
+  const latestJobAgent = runs.find(r => r.run_type === "job_agent" || r.run_type === "apply_jobs");
 
   const stages = [
     { label: "CV Optimization", icon: FileText, run: latestResume },
-    { label: "Job Research", icon: Search, run: latestResearch },
-    { label: "Auto Apply", icon: Send, run: latestResearch?.summary_json?.jobs_submitted_to_skyvern > 0 ? latestResearch : null },
+    { label: "Job Research", icon: Search, run: latestResearch || latestJobAgent },
+    { label: "Auto Apply", icon: Send, run: latestJobAgent || (latestResearch?.summary_json?.jobs_submitted_to_skyvern > 0 ? latestResearch : null) },
   ];
 
   return (
