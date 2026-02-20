@@ -78,9 +78,10 @@ serve(async (req) => {
       results.checked++;
 
       try {
-        // Poll Skyvern for task status
-        const statusResponse = await fetch(
-          `${SKYVERN_API_BASE}/run/tasks/${skyvernRunId}`,
+        // Poll Skyvern for workflow run status
+        // Try workflow endpoint first, fall back to task endpoint
+        let statusResponse = await fetch(
+          `${SKYVERN_API_BASE}/run/workflows/${skyvernRunId}`,
           {
             headers: {
               "x-api-key": SKYVERN_API_KEY,
@@ -89,6 +90,19 @@ serve(async (req) => {
           }
         );
 
+        // If workflow endpoint 404s, try the task endpoint as fallback
+        if (statusResponse.status === 404) {
+          statusResponse = await fetch(
+            `${SKYVERN_API_BASE}/run/tasks/${skyvernRunId}`,
+            {
+              headers: {
+                "x-api-key": SKYVERN_API_KEY,
+                "Content-Type": "application/json",
+              },
+            }
+          );
+        }
+
         if (!statusResponse.ok) {
           console.error(`[SyncAgentStatus] Skyvern API error for ${skyvernRunId}: ${statusResponse.status}`);
           results.errors.push(`${app.id}: Skyvern API ${statusResponse.status}`);
@@ -96,15 +110,16 @@ serve(async (req) => {
         }
 
         const taskData = await statusResponse.json();
-        const skyvernStatus = taskData.status || taskData.state || "unknown";
+        const skyvernStatus = (taskData.status || taskData.state || "unknown").toLowerCase();
 
         let newStatus: string | null = null;
         let statusMessage: string | null = null;
 
         // Map Skyvern statuses to our application statuses
-        switch (skyvernStatus.toLowerCase()) {
+        switch (skyvernStatus) {
           case "completed":
           case "success":
+          case "finished":
             newStatus = "applied";
             statusMessage = "Successfully applied via Skyvern";
             results.completed++;
@@ -112,6 +127,8 @@ serve(async (req) => {
           case "failed":
           case "terminated":
           case "error":
+          case "timed_out":
+          case "canceled":
             newStatus = "error";
             statusMessage = `Skyvern task ${skyvernStatus}: ${taskData.error || taskData.failure_reason || "Unknown error"}`;
             results.failed++;
@@ -119,6 +136,7 @@ serve(async (req) => {
           case "running":
           case "queued":
           case "pending":
+          case "created":
             // Still in progress, don't update
             break;
           default:
