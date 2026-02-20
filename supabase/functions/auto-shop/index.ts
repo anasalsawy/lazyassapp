@@ -914,8 +914,38 @@ async function handleStartOrder(
     : [];
   const userEmail = user.email || "";
 
+  // Fetch site credentials for authenticated shopping
+  const { data: siteCredentials } = await supabase
+    .from("site_credentials")
+    .select("site_domain, email_used, password_enc")
+    .eq("user_id", user.id);
+
+  // Decrypt site credentials
+  const decryptedCreds: { site: string; email: string; password: string }[] = [];
+  const encKey = "SHOP_PROXY_KEY_2024";
+  if (siteCredentials && siteCredentials.length > 0) {
+    for (const cred of siteCredentials) {
+      try {
+        const decoded = atob(cred.password_enc);
+        let decrypted = "";
+        for (let i = 0; i < decoded.length; i++) {
+          decrypted += String.fromCharCode(
+            decoded.charCodeAt(i) ^ encKey.charCodeAt(i % encKey.length)
+          );
+        }
+        decryptedCreds.push({
+          site: cred.site_domain,
+          email: cred.email_used,
+          password: decrypted,
+        });
+      } catch (e) {
+        console.error(`[AutoShop] Failed to decrypt credentials for ${cred.site_domain}:`, e);
+      }
+    }
+  }
+
   console.log(`[AutoShop] Starting order via Skyvern: "${productQuery}"`);
-  console.log(`[AutoShop] Email: ${userEmail}, Sites logged in: ${sitesLoggedIn.join(", ") || "none"}`);
+  console.log(`[AutoShop] Email: ${userEmail}, Sites logged in: ${sitesLoggedIn.join(", ") || "none"}, Credentials available: ${decryptedCreds.map(c => c.site).join(", ") || "none"}`);
 
   // Update order status
   await supabase
@@ -942,7 +972,8 @@ async function handleStartOrder(
     userEmail,
     sitesLoggedIn,
     supabaseUrl,
-    profile?.use_browserstack ?? false
+    profile?.use_browserstack ?? false,
+    decryptedCreds
   );
 
   // ============================================
@@ -1035,7 +1066,8 @@ function buildShoppingAgentInstruction(
   userEmail: string,
   sitesLoggedIn: string[],
   supabaseUrl: string,
-  useBrowserstack: boolean = false
+  useBrowserstack: boolean = false,
+  siteCredentials: { site: string; email: string; password: string }[] = []
 ): string {
   const priceConstraint = maxPrice 
     ? `\n- MAXIMUM PRICE: $${maxPrice} - DO NOT buy anything over this price` 
@@ -1056,6 +1088,27 @@ CARD ${index + 1}:
 
   const loggedInSites = sitesLoggedIn.length > 0
     ? `\nYou are already logged into: ${sitesLoggedIn.join(", ")}. USE THESE ACCOUNTS when possible.`
+    : "";
+
+  // Build site credentials section for Skyvern to log in during checkout
+  const credentialInstructions = siteCredentials.length > 0
+    ? `
+=== SITE LOGIN CREDENTIALS ===
+You have saved login credentials for the following sites. USE THESE TO LOG IN when shopping on these sites — do NOT use guest checkout if you have credentials for the site.
+
+${siteCredentials.map((cred, i) => `SITE ${i + 1}: ${cred.site}
+- Email: ${cred.email}
+- Password: ${cred.password}
+`).join("\n")}
+
+LOGIN STRATEGY:
+1. When you reach a shopping site, check if you have credentials above for that domain
+2. If yes, LOG IN with those credentials before adding to cart
+3. If login fails (wrong password, account locked), fall back to guest checkout
+4. If no credentials for this site, use guest checkout with email: ${userEmail}
+
+=== END SITE CREDENTIALS ===
+`
     : "";
 
   const emailInstructions = userEmail
@@ -1159,6 +1212,7 @@ PROCEED DIRECTLY to shopping sites - do NOT attempt to use BrowserStack.
 
 YOUR MISSION: Find the best deal for the requested product and complete the purchase autonomously.
 ${loggedInSites}
+${credentialInstructions}
 ${emailInstructions}
 PRODUCT TO FIND:
 - Search query: "${productQuery}"
@@ -1170,7 +1224,7 @@ STEP 1 - SEARCH FOR DEALS:
 1. Start at Google Shopping and search for "${productQuery}"
 2. Look at multiple results - compare prices across different sites
 3. Find the BEST DEAL (lowest price with good seller rating) from any reputable e-commerce site
-4. PRIORITIZE sites you're already logged into${sitesLoggedIn.length > 0 ? `: ${sitesLoggedIn.join(", ")}` : ""}
+4. PRIORITIZE sites where you have login credentials${siteCredentials.length > 0 ? `: ${siteCredentials.map(c => c.site).join(", ")}` : ""}${sitesLoggedIn.length > 0 ? `, then sites already logged in: ${sitesLoggedIn.join(", ")}` : ""}
 
 STEP 2 - VERIFY THE DEAL:
 1. Click through to the product page
@@ -1185,8 +1239,10 @@ STEP 3 - ADD TO CART AND CHECKOUT:
 1. Select quantity: ${quantity}
 2. Add to cart
 3. Proceed to checkout
-4. If already logged in, use existing account
-5. If account required and not logged in:
+4. CHECK if you have saved credentials for this site (see SITE LOGIN CREDENTIALS above)
+   - If YES: Log in with those credentials BEFORE proceeding to checkout
+   - If login fails: Fall back to guest checkout
+5. If no credentials and account required:
    - Try guest checkout first
    - If must create account, use email: ${userEmail}
    - Check Gmail for verification codes if needed
