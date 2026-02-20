@@ -14,8 +14,11 @@ const corsHeaders = {
 // 2. AI infers optimal search queries from the CV
 // 3. Scrapes Lever job boards via Firecrawl
 // 4. Scores each job for compatibility (80+ threshold)
-// 5. Returns URL list ready for Skyvern application
+// 5. Submits each qualified URL to Skyvern for application
 // =============================================
+
+const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
+const SKYVERN_APPLICATION_PROMPT = `Fill out the job application form and apply to the job. Fill out any public burden questions if they appear in the form. Your goal is complete when the page says you've successfully applied to the job. Terminate if you are unable to apply successfully.`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -25,11 +28,13 @@ serve(async (req) => {
   try {
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
     if (!FIRECRAWL_API_KEY) throw new Error("FIRECRAWL_API_KEY not configured");
+    if (!SKYVERN_API_KEY) throw new Error("SKYVERN_API_KEY not configured");
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -370,9 +375,10 @@ Score HONESTLY. 80+ means strong match. Consider: skill overlap, seniority fit, 
       );
 
       // ---- STEP 7: Save qualified jobs to DB ----
+      const savedJobIds: string[] = [];
       for (const job of qualifiedJobs) {
         try {
-          await supabase.from("jobs").insert({
+          const { data: savedJob } = await supabase.from("jobs").insert({
             user_id: userId,
             title: job.title,
             company: job.company,
@@ -382,17 +388,80 @@ Score HONESTLY. 80+ means strong match. Consider: skill overlap, seniority fit, 
             source: "lever_research_agent",
             platform: "lever",
             description: `Match reasons: ${job.matchReasons.join("; ")}`,
-          });
+          }).select("id").single();
+          if (savedJob) savedJobIds.push(savedJob.id);
         } catch (e) {
           console.error(`[LeverResearch] Error saving job:`, e);
         }
       }
+
+      // ---- STEP 8: Submit each qualified URL to Skyvern for application ----
+      const applyUrls = qualifiedJobs
+        .filter((j) => j.recommendation === "apply")
+        .map((j) => j.url);
+
+      const skyvernResults: { url: string; runId?: string; error?: string }[] = [];
+
+      for (const jobUrl of applyUrls) {
+        try {
+          const skyvernResponse = await fetch(`${SKYVERN_API_BASE}/run/tasks`, {
+            method: "POST",
+            headers: {
+              "x-api-key": SKYVERN_API_KEY,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              prompt: SKYVERN_APPLICATION_PROMPT,
+              url: jobUrl,
+            }),
+          });
+
+          if (!skyvernResponse.ok) {
+            const errText = await skyvernResponse.text();
+            console.error(`[LeverResearch] Skyvern error for ${jobUrl}: ${skyvernResponse.status} ${errText}`);
+            skyvernResults.push({ url: jobUrl, error: `${skyvernResponse.status}` });
+            continue;
+          }
+
+          const skyvernData = await skyvernResponse.json();
+          const runId = skyvernData.run_id || skyvernData.id;
+          console.log(`[LeverResearch] Skyvern task submitted for ${jobUrl}: ${runId}`);
+          skyvernResults.push({ url: jobUrl, runId });
+
+          // Create application record
+          const matchingJob = qualifiedJobs.find((j) => j.url === jobUrl);
+          const savedJobId = savedJobIds[qualifiedJobs.indexOf(matchingJob!)];
+          if (savedJobId) {
+            await supabase.from("applications").insert({
+              user_id: userId,
+              job_id: savedJobId,
+              job_title: matchingJob?.title || "Unknown",
+              company_name: matchingJob?.company || "Unknown",
+              job_url: jobUrl,
+              platform: "lever",
+              status: "applying",
+              status_source: "system",
+              status_message: `Skyvern task: ${runId}`,
+              extra_metadata: { skyvern_run_id: runId, match_score: matchingJob?.score },
+            });
+          }
+        } catch (e) {
+          console.error(`[LeverResearch] Error submitting to Skyvern:`, e);
+          skyvernResults.push({ url: jobUrl, error: String(e) });
+        }
+      }
+
+      await logAgent(supabase, userId, runId, "skyvern_submission", {
+        total_submitted: skyvernResults.filter((r) => r.runId).length,
+        total_errors: skyvernResults.filter((r) => r.error).length,
+      });
 
       // Update agent run
       await updateRun(supabase, runId, "completed", {
         jobs_found: allJobs.length,
         jobs_enriched: enrichedJobs.length,
         jobs_qualified: qualifiedJobs.length,
+        jobs_submitted_to_skyvern: skyvernResults.filter((r) => r.runId).length,
         queries_used: queryData.queries,
         target_roles: queryData.targetRoles,
         seniority: queryData.seniorityLevel,
@@ -405,17 +474,16 @@ Score HONESTLY. 80+ means strong match. Consider: skill overlap, seniority fit, 
           found: allJobs.length,
           enriched: enrichedJobs.length,
           qualified: qualifiedJobs.length,
+          submittedToSkyvern: skyvernResults.filter((r) => r.runId).length,
           queries: queryData.queries,
           targetRoles: queryData.targetRoles,
           seniorityLevel: queryData.seniorityLevel,
         },
-        skyvernUrls: qualifiedJobs
-          .filter((j) => j.recommendation === "apply")
-          .map((j) => j.url),
+        skyvernTasks: skyvernResults,
       };
 
       console.log(
-        `[LeverResearch] Complete. ${result.skyvernUrls.length} URLs ready for Skyvern`
+        `[LeverResearch] Complete. ${skyvernResults.filter((r) => r.runId).length} jobs submitted to Skyvern`
       );
 
       return new Response(JSON.stringify(result), {
