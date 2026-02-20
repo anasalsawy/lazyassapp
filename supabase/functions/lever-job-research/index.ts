@@ -371,7 +371,42 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
         }
       }
 
-      // ---- STEP 8: Build resume-aware prompt & submit to Skyvern ----
+      // ---- STEP 8: Upload resume to Skyvern & submit workflow ----
+      let skyvernResumeS3Uri = "";
+
+      // Upload resume PDF to Skyvern's file storage
+      if (resume.file_path) {
+        try {
+          const { data: fileData, error: dlError } = await supabase.storage
+            .from("resumes")
+            .download(resume.file_path);
+
+          if (dlError || !fileData) {
+            console.error(`[LeverResearch] Failed to download resume:`, dlError);
+          } else {
+            const filename = resume.original_filename || "resume.pdf";
+            const formData = new FormData();
+            formData.append("file", new File([fileData], filename, { type: "application/pdf" }));
+
+            const uploadResp = await fetch(`${SKYVERN_API_BASE}/files`, {
+              method: "POST",
+              headers: { "x-api-key": SKYVERN_API_KEY },
+              body: formData,
+            });
+
+            if (uploadResp.ok) {
+              const uploadData = await uploadResp.json();
+              skyvernResumeS3Uri = uploadData.s3_uri || "";
+              console.log(`[LeverResearch] Resume uploaded to Skyvern: ${skyvernResumeS3Uri}`);
+            } else {
+              console.error(`[LeverResearch] Skyvern upload error: ${uploadResp.status} ${await uploadResp.text()}`);
+            }
+          }
+        } catch (e) {
+          console.error(`[LeverResearch] Resume upload error:`, e);
+        }
+      }
+
       const header = redesigned?.header || {};
       const education = redesigned?.education || [];
       const candidateInfo = [
@@ -386,67 +421,48 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
         experienceSummary && `Work Experience:\n${experienceSummary}`,
       ].filter(Boolean).join("\n");
 
-      // Generate a signed URL for the resume PDF so Skyvern can download & upload it
-      let resumeDownloadUrl = "";
-      if (resume.file_path) {
-        const { data: signedData } = await supabase.storage
-          .from("resumes")
-          .createSignedUrl(resume.file_path, 3600); // 1 hour expiry
-        if (signedData?.signedUrl) {
-          resumeDownloadUrl = signedData.signedUrl;
-          console.log(`[LeverResearch] Resume signed URL generated for upload`);
-        }
-      }
-
-      const resumeUploadInstructions = resumeDownloadUrl
-        ? `7. IMPORTANT - RESUME UPLOAD: When you see a file upload field for resume/CV, download the file from this URL and upload it: ${resumeDownloadUrl}
-   - The file is a PDF. Navigate to the upload input, click it, and provide this file.`
-        : `7. If a resume upload field appears, skip it - no file is available.`;
-
-      const applicationPrompt = `You are applying to a job on behalf of this candidate. Use ONLY the following candidate information to fill out the application form. Do NOT invent or guess any information not provided below.
-
-CANDIDATE INFORMATION:
-${candidateInfo}
-
-INSTRUCTIONS:
-1. Fill out all required fields using the candidate data above.
-2. For fields not covered by the candidate data (e.g. "How did you hear about us?"), use reasonable defaults like "Online job search".
-3. Answer any EEO/demographic questions with "Prefer not to say" or "Decline to answer".
-4. Your goal is complete when the page confirms the application was submitted successfully.
-5. If you encounter a blocker (CAPTCHA, login wall, broken form), terminate and report the issue.
-6. Do NOT invent information. If a required field has no matching data, use "N/A".
-${resumeUploadInstructions}`;
-
+      // Build apply URLs (append /apply if not already present)
       const applyUrls = qualifiedJobs
         .filter((j) => j.recommendation === "apply")
-        .map((j) => j.url);
+        .map((j) => j.url.endsWith("/apply") ? j.url : `${j.url}/apply`);
+
+      const SKYVERN_WORKFLOW_ID = "wpid_351487857063054716";
 
       const skyvernResults: { url: string; runId?: string; error?: string }[] = [];
 
       for (const jobUrl of applyUrls) {
         try {
-          const skyvernResponse = await fetch(`${SKYVERN_API_BASE}/run/tasks`, {
+          const workflowParams: Record<string, any> = {
+            additional_information: candidateInfo,
+            job_urls: [jobUrl],
+          };
+          if (skyvernResumeS3Uri) {
+            workflowParams.resume = skyvernResumeS3Uri;
+          }
+
+          const skyvernResponse = await fetch(`${SKYVERN_API_BASE}/run/workflows`, {
             method: "POST",
             headers: {
               "x-api-key": SKYVERN_API_KEY,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              prompt: applicationPrompt,
-              url: jobUrl,
+              workflow_id: SKYVERN_WORKFLOW_ID,
+              parameters: workflowParams,
+              proxy_location: "RESIDENTIAL",
             }),
           });
 
           if (!skyvernResponse.ok) {
             const errText = await skyvernResponse.text();
-            console.error(`[LeverResearch] Skyvern error for ${jobUrl}: ${skyvernResponse.status} ${errText}`);
+            console.error(`[LeverResearch] Skyvern workflow error for ${jobUrl}: ${skyvernResponse.status} ${errText}`);
             skyvernResults.push({ url: jobUrl, error: `${skyvernResponse.status}` });
             continue;
           }
 
           const skyvernData = await skyvernResponse.json();
-          const runId = skyvernData.run_id || skyvernData.id;
-          console.log(`[LeverResearch] Skyvern task submitted for ${jobUrl}: ${runId}`);
+          const runId = skyvernData.workflow_run_id || skyvernData.run_id || skyvernData.id;
+          console.log(`[LeverResearch] Skyvern workflow submitted for ${jobUrl}: ${runId}`);
           skyvernResults.push({ url: jobUrl, runId });
 
           // Create application record
