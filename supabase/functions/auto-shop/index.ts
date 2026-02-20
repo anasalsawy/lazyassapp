@@ -66,6 +66,12 @@ const BROWSER_USE_BASE_URLS = [
 // Session status: active, stopped
 const BROWSER_USE_TASK_ACTIVE_STATUSES = ["started", "paused"];
 
+// Skyvern API configuration
+const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
+// Skyvern run statuses: created, queued, running, completed, failed, terminated, timed_out, canceled
+const SKYVERN_ACTIVE_STATUSES = ["created", "queued", "running"];
+const SKYVERN_TERMINAL_STATUSES = ["completed", "failed", "terminated", "timed_out", "canceled"];
+
 // Unified profile naming - shared between job-agent and auto-shop
 // This ensures authentication cookies (Gmail, etc.) are shared across features
 const getProfileName = (userId: string) => `user-${userId.substring(0, 8)}`;
@@ -146,11 +152,15 @@ serve(async (req) => {
 
   try {
     const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!BROWSER_USE_API_KEY) {
       throw new Error("BROWSER_USE_API_KEY is not configured");
+    }
+    if (!SKYVERN_API_KEY) {
+      throw new Error("SKYVERN_API_KEY is not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -199,13 +209,13 @@ serve(async (req) => {
       case "start_order": {
         // CONCURRENT ORDERS: Do NOT cleanup any sessions before starting new order
         // Each order gets its own independent session - multiple orders can run simultaneously
-        return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, supabaseUrl);
+        return await handleStartOrder(supabase, user, payload, BROWSER_USE_API_KEY, SKYVERN_API_KEY, supabaseUrl);
       }
       case "check_order_status": {
-        return await handleCheckOrderStatus(supabase, user.id, payload.orderId!, BROWSER_USE_API_KEY);
+        return await handleCheckOrderStatus(supabase, user.id, payload.orderId!, SKYVERN_API_KEY);
       }
       case "sync_all_orders": {
-        return await handleSyncAllOrders(supabase, user.id, BROWSER_USE_API_KEY);
+        return await handleSyncAllOrders(supabase, user.id, SKYVERN_API_KEY);
       }
       case "sync_order_emails": {
         // CONCURRENT: Do NOT cleanup sessions before email sync
@@ -863,7 +873,8 @@ async function handleStartOrder(
   supabase: any,
   user: { id: string; email?: string },
   payload: AutoShopPayload,
-  apiKey: string,
+  browserUseApiKey: string,
+  skyvernApiKey: string,
   supabaseUrl: string
 ) {
   const { orderId, productQuery, maxPrice, quantity, shippingAddress, paymentCards } = payload;
@@ -891,29 +902,20 @@ async function handleStartOrder(
   
   console.log(`[AutoShop] Running orders: ${runningOrders?.length || 0}/${MAX_CONCURRENT_ORDERS}`);
 
-  // Get browser profile
+  // Get browser profile for sites logged in info
   const { data: profile } = await supabase
     .from("browser_profiles")
     .select("*")
     .eq("user_id", user.id)
     .single();
 
-  const profileId = profile?.browser_use_profile_id;
   const sitesLoggedIn: string[] = Array.isArray(profile?.shop_sites_logged_in) 
     ? profile.shop_sites_logged_in 
     : [];
   const userEmail = user.email || "";
 
-  console.log(`[AutoShop] Starting order: "${productQuery}"`);
-  console.log(`[AutoShop] Using profile: ${profileId || "none"}, Email: ${userEmail}`);
-  console.log(`[AutoShop] Sites logged in: ${sitesLoggedIn.join(", ") || "none"}`);
-
-  // Every user must run tasks with their own persistent profile attached
-  if (!profileId) {
-    throw new Error(
-      "No browser profile attached for this user. Please go to Connections and create/attach a profile first."
-    );
-  }
+  console.log(`[AutoShop] Starting order via Skyvern: "${productQuery}"`);
+  console.log(`[AutoShop] Email: ${userEmail}, Sites logged in: ${sitesLoggedIn.join(", ") || "none"}`);
 
   // Update order status
   await supabase
@@ -926,12 +928,12 @@ async function handleStartOrder(
     user_id: user.id,
     agent_name: "auto_shop",
     log_level: "info",
-    message: `Starting product search: "${productQuery}"`,
-    metadata: { orderId, productQuery, maxPrice, quantity, profileId, userEmail },
+    message: `Starting product search via Skyvern: "${productQuery}"`,
+    metadata: { orderId, productQuery, maxPrice, quantity, userEmail },
   });
 
-  // Build the agent instruction
-  const agentInstruction = buildShoppingAgentInstruction(
+  // Build the Skyvern prompt
+  const agentPrompt = buildShoppingAgentInstruction(
     productQuery,
     maxPrice,
     quantity || 1,
@@ -944,136 +946,61 @@ async function handleStartOrder(
   );
 
   // ============================================
-  // TWO-STEP PATTERN (same as job-agent):
-  // 1. Create SESSION with profileId first
-  // 2. Create TASK with sessionId
+  // SKYVERN API: Single POST to /v1/run/tasks
+  // No need to create session first - Skyvern manages browser lifecycle
   // ============================================
   
-  console.log(`[AutoShop] Creating session with profileId: ${profileId}`);
-  
-  // Build session payload
-  const sessionPayload: Record<string, unknown> = {
-    profileId: profileId,
-    startUrl: "https://www.google.com/shopping",
-    keepAlive: false, // Auto-close when task completes
-    browserScreenWidth: 1280,
-    browserScreenHeight: 800,
-    proxyCountryCode: "us", // Always use US proxy
+  const skyvernPayload: Record<string, unknown> = {
+    prompt: agentPrompt,
+    url: "https://www.google.com/shopping",
+    proxy_location: "RESIDENTIAL",
   };
-  
-  // Add custom proxy if configured
-  if (profile?.proxy_server) {
-    const proxyConfig: Record<string, string> = {
-      server: profile.proxy_server,
+
+  // Add max price as navigation payload for Skyvern's context
+  if (maxPrice) {
+    skyvernPayload.navigation_payload = {
+      max_price: maxPrice,
+      product_query: productQuery,
+      quantity: quantity || 1,
     };
-    if (profile.proxy_username) {
-      proxyConfig.username = profile.proxy_username;
-    }
-    if (profile.proxy_password_enc) {
-      // Decrypt password (simple XOR for now, same as cards)
-      const key = "SHOP_PROXY_KEY_2024";
-      const decoded = atob(profile.proxy_password_enc);
-      let decrypted = "";
-      for (let i = 0; i < decoded.length; i++) {
-        decrypted += String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length));
-      }
-      proxyConfig.password = decrypted;
-    }
-    sessionPayload.proxy = proxyConfig;
-    console.log(`[AutoShop] Custom proxy configured: ${profile.proxy_server}`);
   }
+
+  console.log(`[AutoShop] Submitting task to Skyvern API`);
   
-  // Step 1: Create session with profile attached
-  const sessionResponse = await fetch("https://api.browser-use.com/api/v2/sessions", {
+  const skyvernResponse = await fetch(`${SKYVERN_API_BASE}/run/tasks`, {
     method: "POST",
     headers: {
-      "X-Browser-Use-API-Key": apiKey,
+      "x-api-key": skyvernApiKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(sessionPayload),
+    body: JSON.stringify(skyvernPayload),
   });
-  
-  if (!sessionResponse.ok) {
-    const sessionError = await sessionResponse.text();
-    console.error("[AutoShop] Session creation failed:", sessionResponse.status, sessionError);
+
+  if (!skyvernResponse.ok) {
+    const errorData = await skyvernResponse.text();
+    console.error("[AutoShop] Skyvern API error:", skyvernResponse.status, errorData);
     
     await supabase
       .from("auto_shop_orders")
       .update({ 
         status: "failed",
-        error_message: `Session creation failed: ${sessionResponse.status}` 
-      })
-      .eq("id", orderId);
-      
-    throw new Error(`Failed to create session: ${sessionError}`);
-  }
-  
-  const sessionData = await sessionResponse.json();
-  const sessionId = sessionData.id;
-  console.log(`[AutoShop] Session created: ${sessionId} with profileId: ${profileId}`);
-  
-  // Step 2: Create task within the session
-  const taskPayload = {
-    task: agentInstruction,
-    sessionId: sessionId,
-    maxSteps: 100,
-  };
-  
-  console.log(`[AutoShop] Creating task in session: ${sessionId}`);
-  
-  const browserUseResponse = await fetch("https://api.browser-use.com/api/v2/tasks", {
-    method: "POST",
-    headers: {
-      "X-Browser-Use-API-Key": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(taskPayload),
-  });
-
-  if (!browserUseResponse.ok) {
-    const errorData = await browserUseResponse.text();
-    console.error("[AutoShop] Browser Use API error:", errorData);
-    
-    // Check for insufficient credits error
-    if (errorData.includes("credits") || errorData.includes("balance") || browserUseResponse.status === 402) {
-      await supabase
-        .from("auto_shop_orders")
-        .update({ 
-          status: "failed",
-          error_message: "Browser Use API credits are insufficient" 
-        })
-        .eq("id", orderId);
-
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Browser Use API credits are insufficient. Please add credits to your Browser Use account.",
-          code: "INSUFFICIENT_CREDITS",
-        }),
-        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    
-    await supabase
-      .from("auto_shop_orders")
-      .update({ 
-        status: "failed",
-        error_message: `Browser Use API error: ${browserUseResponse.status}` 
+        error_message: `Skyvern API error: ${skyvernResponse.status}` 
       })
       .eq("id", orderId);
 
-    throw new Error(`Shopping agent error: ${browserUseResponse.status}`);
+    throw new Error(`Skyvern task creation failed: ${skyvernResponse.status} - ${errorData}`);
   }
 
-  const agentResult = await browserUseResponse.json();
-  const taskId = agentResult.id || agentResult.task_id;
-  console.log("[AutoShop] Browser Use task submitted:", taskId);
+  const skyvernResult = await skyvernResponse.json();
+  // Skyvern returns run_id
+  const runId = skyvernResult.run_id || skyvernResult.id;
+  console.log("[AutoShop] Skyvern task submitted:", runId);
 
-  // Update order with task ID
+  // Update order with Skyvern run ID (stored in browser_use_task_id field for compatibility)
   await supabase
     .from("auto_shop_orders")
     .update({ 
-      browser_use_task_id: taskId,
+      browser_use_task_id: runId,
       status: "searching",
     })
     .eq("id", orderId);
@@ -1083,16 +1010,16 @@ async function handleStartOrder(
     user_id: user.id,
     agent_name: "auto_shop",
     log_level: "info",
-    message: `Browser Use task submitted: ${taskId}`,
-    metadata: { orderId, taskId, profileId },
+    message: `Skyvern task submitted: ${runId}`,
+    metadata: { orderId, runId },
   });
 
   return new Response(
     JSON.stringify({
       success: true,
-      message: "Shopping agent is searching for deals",
+      message: "Shopping agent is searching for deals via Skyvern",
       orderId,
-      taskId,
+      taskId: runId,
       status: "searching",
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1358,13 +1285,13 @@ Report final status with DETAILED context:
 - "BLOCKED: [specific blocker]. Sites attempted: [list]. Suggestion: [e.g., 'cards may have fraud protection enabled' or 'product may be region-restricted']"`;
 }
 
-// Check order status from Browser Use API
+// Check order status from Skyvern API
 // deno-lint-ignore no-explicit-any
 async function handleCheckOrderStatus(
   supabase: any,
   userId: string,
   orderId: string,
-  apiKey: string
+  skyvernApiKey: string
 ) {
   // Get the order
   const { data: order, error } = await supabase
@@ -1385,13 +1312,14 @@ async function handleCheckOrderStatus(
     );
   }
 
-  // Check Browser Use task status
-  const taskRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${order.browser_use_task_id}`, {
-    headers: { "X-Browser-Use-API-Key": apiKey },
+  // Check Skyvern run status
+  const runId = order.browser_use_task_id;
+  const taskRes = await fetch(`${SKYVERN_API_BASE}/runs/${runId}`, {
+    headers: { "x-api-key": skyvernApiKey },
   });
 
   if (!taskRes.ok) {
-    console.error("[AutoShop] Failed to fetch task status:", await taskRes.text());
+    console.error("[AutoShop] Failed to fetch Skyvern run status:", await taskRes.text());
     return new Response(
       JSON.stringify({ success: true, order, taskStatus: "unknown" }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1399,10 +1327,10 @@ async function handleCheckOrderStatus(
   }
 
   const taskData = await taskRes.json();
-  console.log(`[AutoShop] Task ${order.browser_use_task_id} status:`, taskData.status);
+  console.log(`[AutoShop] Skyvern run ${runId} status:`, taskData.status);
 
   // Parse result and update order status
-  const updatedOrder = await updateOrderFromTask(supabase, order, taskData);
+  const updatedOrder = await updateOrderFromSkyvernRun(supabase, order, taskData);
 
   return new Response(
     JSON.stringify({ 
@@ -1415,12 +1343,12 @@ async function handleCheckOrderStatus(
   );
 }
 
-// Sync all pending orders for a user
+// Sync all pending orders for a user via Skyvern
 // deno-lint-ignore no-explicit-any
 async function handleSyncAllOrders(
   supabase: any,
   userId: string,
-  apiKey: string
+  skyvernApiKey: string
 ) {
   // Get all orders with browser_use_task_id that aren't completed/failed
   const { data: orders } = await supabase
@@ -1440,13 +1368,14 @@ async function handleSyncAllOrders(
   const updatedOrders = [];
   for (const order of orders) {
     try {
-      const taskRes = await fetch(`https://api.browser-use.com/api/v2/tasks/${order.browser_use_task_id}`, {
-        headers: { "X-Browser-Use-API-Key": apiKey },
+      const runId = order.browser_use_task_id;
+      const taskRes = await fetch(`${SKYVERN_API_BASE}/runs/${runId}`, {
+        headers: { "x-api-key": skyvernApiKey },
       });
 
       if (taskRes.ok) {
         const taskData = await taskRes.json();
-        const updated = await updateOrderFromTask(supabase, order, taskData);
+        const updated = await updateOrderFromSkyvernRun(supabase, order, taskData);
         updatedOrders.push(updated);
       }
     } catch (e) {
@@ -1819,12 +1748,12 @@ IMPORTANT:
   );
 }
 
-// Update order from Browser Use task data
+// Update order from Skyvern run data
+// Skyvern statuses: created, queued, running, completed, failed, terminated, timed_out, canceled
 // deno-lint-ignore no-explicit-any
-async function updateOrderFromTask(supabase: any, order: any, taskData: any) {
-  // Browser Use v2 API Task status: "started", "paused", "finished", "stopped"
-  const taskStatus = taskData.status;
-  const output = taskData.output || "";
+async function updateOrderFromSkyvernRun(supabase: any, order: any, runData: any) {
+  const runStatus = runData.status;
+  const output = runData.output || "";
 
   let newStatus = order.status;
   let errorMessage = order.error_message;
@@ -1832,37 +1761,37 @@ async function updateOrderFromTask(supabase: any, order: any, taskData: any) {
   let selectedDealSite = order.selected_deal_site;
   let selectedDealPrice = order.selected_deal_price;
 
-  if (taskStatus === "finished") {
+  if (runStatus === "completed") {
     // Parse the output to determine success/failure
-    const outputLower = output.toLowerCase();
+    const outputStr = typeof output === "object" ? JSON.stringify(output) : String(output);
+    const outputLower = outputStr.toLowerCase();
     
     if (outputLower.includes("success") && outputLower.includes("order placed")) {
       newStatus = "completed";
       // Try to extract confirmation number
-      const confMatch = output.match(/confirmation[:\s]*([A-Z0-9-]+)/i);
+      const confMatch = outputStr.match(/confirmation[:\s]*([A-Z0-9-]+)/i);
       if (confMatch) orderConfirmation = confMatch[1];
       // Try to extract site
-      const siteMatch = output.match(/at\s+(\w+)/i);
+      const siteMatch = outputStr.match(/at\s+(\w+)/i);
       if (siteMatch) selectedDealSite = siteMatch[1];
       // Try to extract price
-      const priceMatch = output.match(/\$([0-9,.]+)/);
+      const priceMatch = outputStr.match(/\$([0-9,.]+)/);
       if (priceMatch) selectedDealPrice = parseFloat(priceMatch[1].replace(",", ""));
     } else if (outputLower.includes("failed") || outputLower.includes("could not")) {
       newStatus = "failed";
-      errorMessage = output.substring(0, 500);
+      errorMessage = outputStr.substring(0, 500);
     } else if (outputLower.includes("blocked")) {
       newStatus = "failed";
-      errorMessage = output.substring(0, 500);
+      errorMessage = outputStr.substring(0, 500);
     } else {
-      // Task finished but unclear result - check if it found something
+      // Task completed but unclear result
       newStatus = "completed";
     }
-  } else if (taskStatus === "stopped") {
-    // In v2 API, "stopped" means manually stopped - treat as failed
+  } else if (runStatus === "failed" || runStatus === "terminated" || runStatus === "timed_out" || runStatus === "canceled") {
     newStatus = "failed";
-    errorMessage = taskData.error || "Task failed or was stopped";
-  } else if (taskStatus === "started" || taskStatus === "paused") {
-    // Keep as searching/ordering
+    errorMessage = runData.failure_reason || runData.error || `Skyvern task ${runStatus}`;
+  } else if (SKYVERN_ACTIVE_STATUSES.includes(runStatus)) {
+    // Still running
     if (order.status === "pending") newStatus = "searching";
   }
 

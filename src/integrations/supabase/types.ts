@@ -53,6 +53,45 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_execution_logs: {
+        Row: {
+          agent: string
+          created_at: string
+          gatekeeper_json: Json | null
+          id: string
+          input: string | null
+          model: string
+          output: string | null
+          resume_id: string
+          step: string
+          user_id: string
+        }
+        Insert: {
+          agent: string
+          created_at?: string
+          gatekeeper_json?: Json | null
+          id?: string
+          input?: string | null
+          model: string
+          output?: string | null
+          resume_id: string
+          step: string
+          user_id: string
+        }
+        Update: {
+          agent?: string
+          created_at?: string
+          gatekeeper_json?: Json | null
+          id?: string
+          input?: string | null
+          model?: string
+          output?: string | null
+          resume_id?: string
+          step?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       agent_logs: {
         Row: {
           agent_name: string
@@ -569,6 +608,72 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      conversations: {
+        Row: {
+          context_json: Json
+          created_at: string
+          id: string
+          last_message_at: string | null
+          phone_number: string
+          state: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          context_json?: Json
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          phone_number: string
+          state?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          context_json?: Json
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          phone_number?: string
+          state?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      credit_transactions: {
+        Row: {
+          amount: number
+          balance_after: number
+          created_at: string
+          description: string | null
+          id: string
+          stripe_session_id: string | null
+          type: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          balance_after?: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          stripe_session_id?: string | null
+          type?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          balance_after?: number
+          created_at?: string
+          description?: string | null
+          id?: string
+          stripe_session_id?: string | null
+          type?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       email_accounts: {
         Row: {
@@ -1249,6 +1354,45 @@ export type Database = {
         }
         Relationships: []
       }
+      pipeline_continuations: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          next_step: string
+          pipeline_state: Json
+          resume_id: string
+          status: string
+          step_name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          next_step: string
+          pipeline_state?: Json
+          resume_id: string
+          status?: string
+          step_name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          next_step?: string
+          pipeline_state?: Json
+          resume_id?: string
+          status?: string
+          step_name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -1504,6 +1648,36 @@ export type Database = {
         }
         Relationships: []
       }
+      user_credits: {
+        Row: {
+          balance: number
+          created_at: string
+          id: string
+          lifetime_purchased: number
+          lifetime_used: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          balance?: number
+          created_at?: string
+          id?: string
+          lifetime_purchased?: number
+          lifetime_used?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          balance?: number
+          created_at?: string
+          id?: string
+          lifetime_purchased?: number
+          lifetime_used?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -1527,6 +1701,50 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      whatsapp_messages: {
+        Row: {
+          body: string
+          conversation_id: string
+          created_at: string
+          direction: string
+          id: string
+          media_url: string | null
+          metadata_json: Json | null
+          twilio_sid: string | null
+          user_id: string
+        }
+        Insert: {
+          body: string
+          conversation_id: string
+          created_at?: string
+          direction: string
+          id?: string
+          media_url?: string | null
+          metadata_json?: Json | null
+          twilio_sid?: string | null
+          user_id: string
+        }
+        Update: {
+          body?: string
+          conversation_id?: string
+          created_at?: string
+          direction?: string
+          id?: string
+          media_url?: string | null
+          metadata_json?: Json | null
+          twilio_sid?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
