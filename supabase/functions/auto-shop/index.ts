@@ -1204,139 +1204,30 @@ PROCEED DIRECTLY to shopping sites - do NOT attempt to use BrowserStack.
 
 `;
 
-  return `AUTONOMOUS SHOPPING AGENT - FIND AND PURCHASE PRODUCT
-
-YOUR MISSION: Find the best deal for the requested product and complete the purchase autonomously.
-${loggedInSites}
-${credentialInstructions}
-${emailInstructions}
-PRODUCT TO FIND:
-- Search query: "${productQuery}"
-- Quantity needed: ${quantity}${priceConstraint}
+  return `Find a good deal on "${productQuery}" (quantity: ${quantity}) and purchase it.${priceConstraint}
 
 ${browserstackInstructions}
 
-STEP 1 - SEARCH FOR DEALS:
-1. Start at Google Shopping and search for "${productQuery}"
-2. Look at multiple results - compare prices across different sites
-3. Find the BEST DEAL (lowest price with good seller rating) from any reputable e-commerce site
-4. PRIORITIZE sites where you have login credentials${siteCredentials.length > 0 ? `: ${siteCredentials.map(c => c.site).join(", ")}` : ""}${sitesLoggedIn.length > 0 ? `, then sites already logged in: ${sitesLoggedIn.join(", ")}` : ""}
+Start at Google Shopping, compare prices, pick the best deal from a reputable site, and complete checkout.
+${loggedInSites}
+${credentialInstructions}
+${emailInstructions}
+SHIPPING ADDRESS:
+${shipping.full_name}
+${shipping.address_line1 || shipping.full_name}
+${shipping.address_line2 ? shipping.address_line2 + "\n" : ""}${shipping.city || "Houston"}, ${shipping.state || "TX"} ${shipping.zip_code || "77051"}, ${shipping.country || "US"}
+Phone: ${shipping.phone && /\d{7,}/.test(shipping.phone.replace(/\D/g, '')) ? shipping.phone : "8325551234"}
 
-STEP 2 - VERIFY THE DEAL:
-1. Click through to the product page
-2. Verify:
-   - Product matches the search query
-   - Price is acceptable${maxPrice ? ` (under $${maxPrice})` : ""}
-   - Item is in stock
-   - Can ship to the delivery address
-3. If this deal doesn't work, go back and try the next best option
-
-STEP 3 - ADD TO CART AND CHECKOUT:
-1. Select quantity: ${quantity}
-2. Add to cart
-3. Proceed to checkout
-4. CHECK if you have saved credentials for this site (see SITE LOGIN CREDENTIALS above)
-   - If YES: Log in with those credentials BEFORE proceeding to checkout
-   - If login fails: Fall back to guest checkout
-5. If no credentials and account required:
-   - Try guest checkout first
-   - If must create account, use email: ${userEmail}
-   - Check Gmail for verification codes if needed
-
-STEP 4 - ENTER SHIPPING INFORMATION:
-Full Name: ${shipping.full_name}
-Address Line 1: ${shipping.address_line1 || shipping.full_name}
-${shipping.address_line2 ? `Address Line 2: ${shipping.address_line2}` : ""}
-City: ${shipping.city || "Houston"}
-State: ${shipping.state || "TX"}
-ZIP Code: ${shipping.zip_code || "77051"}
-Country: ${shipping.country || "US"}
-Phone: ${shipping.phone && !/\d{7,}/.test(shipping.phone.replace(/\D/g, '')) ? "8325551234" : (shipping.phone || "8325551234")}
-
-IMPORTANT PHONE NUMBER RULE: If a checkout requires a phone number, ALWAYS enter the phone number shown above. NEVER abandon a site just because it asks for a phone number — this is a normal checkout field, not a blocker.
-
-STEP 5 - PAYMENT (TRY CARDS IN ORDER):
+PAYMENT CARDS (try in order, move to next if declined):
 ${cardInstructions}
 
-PAYMENT STRATEGY:
-⚠️ IMPORTANT: Cards have been RANDOMLY SHUFFLED for this order - use them in the order shown above.
-1. Try CARD 1 first (this is a randomly selected card, not always the same)
-2. If CARD 1 is declined, try CARD 2
-3. Continue through all available cards before giving up on a site
-4. If all cards fail on this site, ABANDON this site and try the NEXT BEST DEAL on a DIFFERENT site
-5. Repeat until order is successful or all options exhausted
-
-STEP 6 - COMPLETE ORDER:
-1. Review the order
-2. Place the order
-3. Take screenshot of confirmation page
-4. Report: "SUCCESS: Order placed at [site] for $[price]. Confirmation: [number]"
-
-=== ADAPTIVE FAILURE RECOVERY ===
-
-CRITICAL: Learn from EVERY failure and adapt your strategy. Keep a mental log of what failed and WHY.
-
-FAILURE CAUSE ANALYSIS:
-When something fails, DIAGNOSE the root cause before taking action:
-
-1. CARD DECLINED:
-   - If "insufficient funds" → Try next card immediately
-   - If "card not supported" → This site may not accept this card type, try different site
-   - If "security block" → The site flagged the transaction, abandon this site entirely
-   - If "expired card" → Skip this card for all future attempts
-   - If "billing address mismatch" → Double-check address entered correctly, retry once, then try next card
-
-2. CHECKOUT BLOCKED:
-   - If "bot detection" / CAPTCHA loop → Slow down, wait 5 seconds, try once more. If still blocked, this site is hostile - abandon and try completely different retailer
-   - If "login required" and can't create account → Try guest checkout. If no guest option, abandon site
-   - If "region restricted" → This site won't work, immediately try next site
-   - If "session expired" → Refresh page, re-add to cart, continue
-
-3. PRODUCT ISSUES:
-   - If "out of stock" → Don't waste time, immediately search for next best deal
-   - If "price increased significantly" → Abandon if over max price, otherwise note it and continue
-   - If "item unavailable for shipping" → Try a different seller/listing on same site first, then try different site
-   - If "minimum order required" → Check if quantity adjustment helps, otherwise abandon
-
-4. SITE ISSUES:
-   - If "site loading slowly" → Wait up to 30 seconds, then abandon if unresponsive
-   - If "payment page broken" → Try refreshing once, then abandon site
-   - If "endless redirects" → Site is broken, abandon immediately
-   - If "requires phone verification via SMS" → This is a BLOCKER, abandon and try different site
-
-5. ACCOUNT CREATION ISSUES:
-   - If "email already registered" → Try password recovery? No - abandon and try guest checkout or different site
-   - If "phone number required for account" → Enter the phone number from STEP 4, this is NOT a blocker
-   - If "verification email not arriving" → Wait 2 minutes, check spam, if nothing then abandon
-
-=== STRATEGIC MANEUVERING ===
-
-SITE ROTATION STRATEGY:
-- If a site fails for ANY reason, remember WHY it failed
-- Don't retry the same site for the same reason
-- Prioritize sites with simpler checkouts (fewer steps = fewer failure points)
-- If 2+ sites fail with card issues, consider that cards might have fraud blocks - report this
-
-RECOVERY PRIORITY:
-1. First, try to fix the immediate issue (re-enter info, solve CAPTCHA)
-2. If fix doesn't work after ONE retry, escalate to next option (next card, different listing)
-3. If escalation fails, abandon current approach entirely (different site)
-4. Track failed sites/approaches to avoid repeating mistakes
-
-SMART RETRIES:
-- Never retry the exact same action more than ONCE
-- If same error twice, it's a pattern - change approach
-- Wait 3-5 seconds between retries to avoid rate limiting
-- Clear cart before abandoning a site (some sites track abandoned carts)
-
-=== FINAL STATUS REPORTING ===
-
-NEVER STOP. NEVER ASK FOR HELP. COMPLETE THE PURCHASE OR EXHAUST ALL OPTIONS.
-
-Report final status with DETAILED context:
-- "SUCCESS: Order placed at [site] for $[price]. Confirmation: [number]. Shipping estimate: [date if shown]"
-- "FAILED: Could not complete purchase. Sites tried: [list]. Failure reasons: [specific causes]. Recommendation: [what user should check/fix]"
-- "BLOCKED: [specific blocker]. Sites attempted: [list]. Suggestion: [e.g., 'cards may have fraud protection enabled' or 'product may be region-restricted']"`;
+RULES:
+- Use saved credentials to log in when available, otherwise guest checkout with email: ${userEmail}
+- If a card is declined, try the next card. If all cards fail on a site, try a different site.
+- Phone number fields are normal — enter the phone above.
+- If stuck on CAPTCHA or bot detection after one retry, abandon site and try another.
+- Never retry the same failed action more than once.
+- Report result as: "SUCCESS: [site] $[price] Confirmation: [number]" or "FAILED: [reasons] Sites tried: [list]"`;
 }
 
 // Check order status from Skyvern API
