@@ -980,7 +980,7 @@ async function handleStartOrder(
     prompt: agentPrompt,
     url: "https://www.google.com/shopping",
     proxy_location: "RESIDENTIAL",
-    max_steps_override: 60,
+    max_steps_override: 100,
   };
 
   // Add max price as navigation payload for Skyvern's context
@@ -1633,7 +1633,7 @@ CRITICAL RULES FOR THIS RETRY:
     prompt: agentPrompt,
     url: "https://www.google.com/shopping",
     proxy_location: "RESIDENTIAL",
-    max_steps_override: 80 + (retryCount * 20), // More steps for each retry
+    max_steps_override: 100 + (retryCount * 20), // More steps for each retry
   };
 
   if (order.max_price) {
