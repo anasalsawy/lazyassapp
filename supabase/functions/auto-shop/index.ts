@@ -976,11 +976,11 @@ async function handleStartOrder(
   // No need to create session first - Skyvern manages browser lifecycle
   // ============================================
   
+  const maxStepsCount = 100;
   const skyvernPayload: Record<string, unknown> = {
     prompt: agentPrompt,
     url: "https://www.google.com/shopping",
     proxy_location: "RESIDENTIAL",
-    max_steps_override: 100,
   };
 
   // Add max price as navigation payload for Skyvern's context
@@ -999,6 +999,7 @@ async function handleStartOrder(
     headers: {
       "x-api-key": skyvernApiKey,
       "Content-Type": "application/json",
+      "x-max-steps-override": String(maxStepsCount),
     },
     body: JSON.stringify(skyvernPayload),
   });
@@ -1217,7 +1218,17 @@ Phone: ${shipping.phone && /\d{7,}/.test(shipping.phone.replace(/\D/g, '')) ? sh
 PAYMENT CARDS (try in order, move to next if declined):
 ${cardInstructions}
 
-If a card is declined try the next one. If all fail on a site, try a different site. Guest checkout with ${userEmail} if no saved credentials. Report result as: "SUCCESS: [site] $[price] Confirmation: [number]" or "FAILED: [reasons]"`;
+If a card is declined try the next one. If all fail on a site, try a different site. Guest checkout with ${userEmail} if no saved credentials.
+
+ANTI-BLOCKING RULES:
+- If you see "Access Denied", "403 Forbidden", a CAPTCHA wall, or a blank error page, IMMEDIATELY leave that site and try a different retailer
+- AVOID Dillard's, Nordstrom, and other sites known to aggressively block automated browsers
+- PREFER: Amazon, Walmart, Target, Best Buy, eBay — these are more automation-friendly
+- If Google Shopping results lead to a blocked site, go back and pick the next result
+- Do NOT waste steps retrying a blocked site — move on after the first block
+- If a site asks you to verify you're human and you cannot pass, skip it immediately
+
+Report result as: "SUCCESS: [site] $[price] Confirmation: [number]" or "FAILED: [reasons]"`;
 }
 
 // Check order status from Skyvern API
@@ -1512,11 +1523,11 @@ CRITICAL RULES FOR THIS RETRY:
   );
 
   // Submit to Skyvern with increased steps for retry
+  const retryMaxSteps = 100 + (retryCount * 20);
   const skyvernPayload: Record<string, unknown> = {
     prompt: agentPrompt,
     url: "https://www.google.com/shopping",
     proxy_location: "RESIDENTIAL",
-    max_steps_override: 100 + (retryCount * 20), // More steps for each retry
   };
 
   if (order.max_price) {
@@ -1532,6 +1543,7 @@ CRITICAL RULES FOR THIS RETRY:
     headers: {
       "x-api-key": skyvernApiKey,
       "Content-Type": "application/json",
+      "x-max-steps-override": String(retryMaxSteps),
     },
     body: JSON.stringify(skyvernPayload),
   });
