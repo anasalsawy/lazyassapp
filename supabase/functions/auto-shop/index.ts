@@ -1273,6 +1273,8 @@ async function handleCheckOrderStatus(
       order: updatedOrder,
       taskStatus: taskData.status,
       taskOutput: taskData.output,
+      recordingUrl: taskData.recording_url || null,
+      stepsInfo: taskData.steps_info || null,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
@@ -2040,6 +2042,26 @@ async function updateOrderFromSkyvernRun(supabase: any, order: any, runData: any
   let selectedDealSite = order.selected_deal_site;
   let selectedDealPrice = order.selected_deal_price;
 
+  // Extract rich metadata from Skyvern response
+  const liveMetadata: Record<string, unknown> = {};
+  if (runData.recording_url) liveMetadata.recording_url = runData.recording_url;
+  if (runData.steps_info) {
+    liveMetadata.total_steps = runData.steps_info.total;
+    liveMetadata.completed_steps = runData.steps_info.completed;
+    liveMetadata.current_step_description = runData.steps_info.current?.description;
+  }
+  // Fallback: check for steps array or steps_count
+  if (runData.steps && Array.isArray(runData.steps)) {
+    liveMetadata.total_steps = runData.steps.length;
+    const lastStep = runData.steps[runData.steps.length - 1];
+    if (lastStep) {
+      liveMetadata.current_step_description = lastStep.output?.action_results?.[0]?.data || lastStep.step_id || `Step ${runData.steps.length}`;
+    }
+  }
+  if (runData.screenshot_urls && Array.isArray(runData.screenshot_urls) && runData.screenshot_urls.length > 0) {
+    liveMetadata.latest_screenshot = runData.screenshot_urls[runData.screenshot_urls.length - 1];
+  }
+
   if (runStatus === "completed") {
     // Parse the output to determine success/failure
     const outputStr = typeof output === "object" ? JSON.stringify(output) : String(output);
@@ -2074,18 +2096,25 @@ async function updateOrderFromSkyvernRun(supabase: any, order: any, runData: any
     if (order.status === "pending") newStatus = "searching";
   }
 
-  // Only update if status changed
-  if (newStatus !== order.status || orderConfirmation || selectedDealSite) {
+  // Update if status changed OR we have live metadata to save
+  const hasLiveMetadata = Object.keys(liveMetadata).length > 0;
+  const statusChanged = newStatus !== order.status || orderConfirmation || selectedDealSite;
+
+  if (statusChanged || hasLiveMetadata) {
     const updateData: Record<string, unknown> = {
-      status: newStatus,
       updated_at: new Date().toISOString(),
     };
+    if (statusChanged) updateData.status = newStatus;
     if (errorMessage) updateData.error_message = errorMessage;
     if (orderConfirmation) updateData.order_confirmation = orderConfirmation;
     if (selectedDealSite) updateData.selected_deal_site = selectedDealSite;
     if (selectedDealPrice) updateData.selected_deal_price = selectedDealPrice;
     if (newStatus === "completed" || newStatus === "failed") {
       updateData.completed_at = new Date().toISOString();
+    }
+    // Store live agent metadata in notes as JSON
+    if (hasLiveMetadata) {
+      updateData.notes = JSON.stringify(liveMetadata);
     }
 
     await supabase
