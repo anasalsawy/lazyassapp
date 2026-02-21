@@ -1205,10 +1205,6 @@ PROCEED DIRECTLY to shopping sites - do NOT attempt to use BrowserStack.
 `;
 
   return `Find a good deal on "${productQuery}" (quantity: ${quantity}) and purchase it.${priceConstraint}
-
-${browserstackInstructions}
-
-Start at Google Shopping, compare prices, pick the best deal from a reputable site, and complete checkout.
 ${loggedInSites}
 ${credentialInstructions}
 ${emailInstructions}
@@ -1221,13 +1217,7 @@ Phone: ${shipping.phone && /\d{7,}/.test(shipping.phone.replace(/\D/g, '')) ? sh
 PAYMENT CARDS (try in order, move to next if declined):
 ${cardInstructions}
 
-RULES:
-- Use saved credentials to log in when available, otherwise guest checkout with email: ${userEmail}
-- If a card is declined, try the next card. If all cards fail on a site, try a different site.
-- Phone number fields are normal — enter the phone above.
-- If stuck on CAPTCHA or bot detection after one retry, abandon site and try another.
-- Never retry the same failed action more than once.
-- Report result as: "SUCCESS: [site] $[price] Confirmation: [number]" or "FAILED: [reasons] Sites tried: [list]"`;
+If a card is declined try the next one. If all fail on a site, try a different site. Guest checkout with ${userEmail} if no saved credentials. Report result as: "SUCCESS: [site] $[price] Confirmation: [number]" or "FAILED: [reasons]"`;
 }
 
 // Check order status from Skyvern API
