@@ -110,13 +110,18 @@ serve(async (req) => {
     const maxBatches = 10; // Support up to 250 jobs
 
     // Build the matching prompt
+    const locationsStr = preferences.locations?.length > 0 
+      ? preferences.locations.join(', ') 
+      : '';
+    const hasLocationPreference = locationsStr.length > 0;
+
     const systemPrompt = `You are an expert job matching AI. Your task is to find the BEST job matches for a candidate based on their COMPLETE RESUME and preferences.
 
 CRITICAL: You MUST analyze the candidate's FULL resume text below to understand their actual skills, experience, and career trajectory. DO NOT ignore any part of the resume.
 
 === CANDIDATE'S JOB PREFERENCES ===
 - Desired Job Titles: ${preferences.jobTitles?.join(', ') || 'Based on resume experience'}
-- Preferred Locations: ${preferences.locations?.join(', ') || 'Any location'}
+- Preferred Locations: ${locationsStr || 'Any location'}
 - Remote Preference: ${preferences.remotePreference || 'any'}
 - Salary Range: ${preferences.salaryMin ? `$${preferences.salaryMin.toLocaleString()}` : 'Open'} - ${preferences.salaryMax ? `$${preferences.salaryMax.toLocaleString()}` : 'Open'}
 - Target Industries: ${preferences.industries?.join(', ') || 'Based on resume experience'}
@@ -135,6 +140,7 @@ ${candidateProfile || 'No resume text provided - use preferences only'}
 3. Generate job listings ${startIndex} through ${endIndex} (batch ${batchNumber}) - exactly ${jobsPerBatch} highly targeted jobs
 4. Each job MUST be relevant to what's actually in their resume, not generic jobs
 5. Calculate precise match scores based on resume-job alignment
+6. Generate REAL-looking job listings from REAL companies that actually hire for these roles
 
 === MATCHING CRITERIA ===
 - 90-100%: Perfect match - skills, experience, and preferences all align with resume
@@ -143,12 +149,29 @@ ${candidateProfile || 'No resume text provided - use preferences only'}
 - 60-69%: Fair match - some resume alignment but gaps exist
 - Below 60%: Poor match - don't include these
 
+=== LOCATION RULES (CRITICAL) ===
+${hasLocationPreference 
+  ? `The candidate STRONGLY prefers jobs in these locations: ${locationsStr}.
+- At LEAST 80% of jobs MUST be in or near these locations (same city, metro area, or state).
+- Remote jobs that allow working from these locations are also acceptable.
+- If remote preference is "remote", you may include fully remote positions but still prefer companies based in the preferred locations.
+- Do NOT include random jobs from states/cities the candidate did not list.` 
+  : `No location preference specified. Include a mix of remote and on-site jobs in major tech/business hubs.`}
+
+${preferences.remotePreference === 'remote' 
+  ? '- Strongly prefer REMOTE positions. At least 60% should be remote or hybrid-remote.' 
+  : preferences.remotePreference === 'onsite' 
+  ? '- Only include ON-SITE positions in the preferred locations.' 
+  : '- Include a healthy mix of remote, hybrid, and on-site positions.'}
+
 IMPORTANT: 
 - Generate EXACTLY ${jobsPerBatch} diverse job matches
-- Each job should be from a DIFFERENT company
+- Each job should be from a DIFFERENT company that ACTUALLY EXISTS and hires for these roles
 - Jobs should span the match score range (90%+ down to 60%)
 - Include mix of job levels appropriate for their experience
 - Only include jobs with 60%+ match scores
+- Include a SPECIFIC, REAL apply URL (e.g. company careers page, lever, greenhouse, workday)
+- The "matchReason" should be 2-3 sentences explaining SPECIFIC alignment with the resume
 
 === OUTPUT FORMAT ===
 Respond ONLY with valid JSON (no markdown, no explanation):

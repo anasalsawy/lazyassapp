@@ -335,22 +335,94 @@ const AutoShop = () => {
     }
   };
 
+  const ORDER_STEPS = [
+    { key: "pending", label: "Queued", icon: <Loader2 className="h-3.5 w-3.5" /> },
+    { key: "searching", label: "Searching Sites", icon: <Search className="h-3.5 w-3.5" /> },
+    { key: "found_deals", label: "Comparing Prices", icon: <Package className="h-3.5 w-3.5" /> },
+    { key: "ordering", label: "Checkout & Payment", icon: <ShoppingCart className="h-3.5 w-3.5" /> },
+    { key: "completed", label: "Order Confirmed", icon: <CheckCircle className="h-3.5 w-3.5" /> },
+  ];
+
+  const getStepIndex = (status: string) => {
+    if (status === "failed" || status === "cancelled") return -1;
+    return ORDER_STEPS.findIndex((s) => s.key === status);
+  };
+
   const getStatusBadge = (status: string) => {
-    const statusConfig: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; icon: React.ReactNode }> = {
-      pending: { variant: "secondary", icon: <Loader2 className="h-3 w-3 animate-spin" /> },
-      searching: { variant: "default", icon: <Search className="h-3 w-3" /> },
-      found_deals: { variant: "default", icon: <Package className="h-3 w-3" /> },
-      ordering: { variant: "default", icon: <ShoppingCart className="h-3 w-3" /> },
-      completed: { variant: "outline", icon: <CheckCircle className="h-3 w-3 text-green-500" /> },
-      failed: { variant: "destructive", icon: <XCircle className="h-3 w-3" /> },
-      cancelled: { variant: "secondary", icon: <XCircle className="h-3 w-3" /> },
+    const statusConfig: Record<string, { variant: "default" | "secondary" | "destructive" | "outline"; icon: React.ReactNode; label: string }> = {
+      pending: { variant: "secondary", icon: <Loader2 className="h-3 w-3 animate-spin" />, label: "Queued" },
+      searching: { variant: "default", icon: <Search className="h-3 w-3 animate-pulse" />, label: "Searching Sites" },
+      found_deals: { variant: "default", icon: <Package className="h-3 w-3" />, label: "Comparing Prices" },
+      ordering: { variant: "default", icon: <ShoppingCart className="h-3 w-3 animate-pulse" />, label: "Checking Out" },
+      completed: { variant: "outline", icon: <CheckCircle className="h-3 w-3 text-success" />, label: "Completed" },
+      failed: { variant: "destructive", icon: <XCircle className="h-3 w-3" />, label: "Failed" },
+      cancelled: { variant: "secondary", icon: <XCircle className="h-3 w-3" />, label: "Cancelled" },
     };
     const config = statusConfig[status] || statusConfig.pending;
     return (
       <Badge variant={config.variant} className="flex items-center gap-1">
         {config.icon}
-        {status.replace("_", " ").toUpperCase()}
+        {config.label}
       </Badge>
+    );
+  };
+
+  const renderOrderTimeline = (order: typeof orders[0]) => {
+    const currentIdx = getStepIndex(order.status);
+    const isFailed = order.status === "failed";
+    const isCancelled = order.status === "cancelled";
+
+    if (isFailed || isCancelled) {
+      return (
+        <div className="mt-3 flex items-center gap-2">
+          {ORDER_STEPS.map((step, idx) => {
+            const isBeforeFailure = idx < (order.sites_tried?.length ? 2 : 1);
+            return (
+              <div key={step.key} className="flex items-center gap-1">
+                <div className={`flex items-center justify-center h-6 w-6 rounded-full text-xs ${
+                  isBeforeFailure 
+                    ? "bg-success/20 text-success" 
+                    : idx === (order.sites_tried?.length ? 2 : 1)
+                    ? "bg-destructive/20 text-destructive"
+                    : "bg-muted text-muted-foreground"
+                }`}>
+                  {isBeforeFailure ? "✓" : idx === (order.sites_tried?.length ? 2 : 1) ? "✗" : (idx + 1)}
+                </div>
+                <span className={`text-xs hidden sm:inline ${
+                  isBeforeFailure ? "text-success" : idx === (order.sites_tried?.length ? 2 : 1) ? "text-destructive" : "text-muted-foreground"
+                }`}>{step.label}</span>
+                {idx < ORDER_STEPS.length - 1 && <div className={`w-4 h-px ${isBeforeFailure ? "bg-success/40" : "bg-border"}`} />}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-3 flex items-center gap-1">
+        {ORDER_STEPS.map((step, idx) => {
+          const isDone = idx < currentIdx;
+          const isActive = idx === currentIdx;
+          return (
+            <div key={step.key} className="flex items-center gap-1">
+              <div className={`flex items-center justify-center h-6 w-6 rounded-full text-xs transition-all ${
+                isDone
+                  ? "bg-success/20 text-success"
+                  : isActive
+                  ? "bg-primary/20 text-primary ring-2 ring-primary/30"
+                  : "bg-muted text-muted-foreground"
+              }`}>
+                {isDone ? "✓" : isActive ? step.icon : (idx + 1)}
+              </div>
+              <span className={`text-xs hidden sm:inline ${
+                isDone ? "text-success" : isActive ? "text-primary font-medium" : "text-muted-foreground"
+              }`}>{step.label}</span>
+              {idx < ORDER_STEPS.length - 1 && <div className={`w-4 h-px ${isDone ? "bg-success/40" : "bg-border"}`} />}
+            </div>
+          );
+        })}
+      </div>
     );
   };
 
@@ -1178,6 +1250,17 @@ const AutoShop = () => {
                               {order.completed_at && ` • Completed: ${new Date(order.completed_at).toLocaleString()}`}
                               {(order as any).last_retry_at && ` • Last retry: ${new Date((order as any).last_retry_at).toLocaleString()}`}
                             </p>
+                            {/* Step Timeline */}
+                            {renderOrderTimeline(order)}
+                            {/* Sites tried */}
+                            {order.sites_tried && order.sites_tried.length > 0 && (
+                              <div className="mt-2 flex items-center gap-1 flex-wrap">
+                                <span className="text-xs text-muted-foreground">Sites checked:</span>
+                                {order.sites_tried.map((site) => (
+                                  <Badge key={site} variant="outline" className="text-xs py-0">{site}</Badge>
+                                ))}
+                              </div>
+                            )}
                           </div>
                           {(order.status === "pending" || order.status === "searching") && (
                             <Button variant="outline" size="sm" onClick={() => cancelOrder(order.id)}>

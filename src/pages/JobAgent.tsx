@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { useJobAgent } from "@/hooks/useJobAgent";
 import { useJobs } from "@/hooks/useJobs";
 import { useResumes } from "@/hooks/useResumes";
@@ -8,6 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Loader2,
   CheckCircle2,
@@ -27,6 +29,9 @@ import {
   Heart,
   ChevronDown,
   ChevronUp,
+  Filter,
+  SlidersHorizontal,
+  ArrowUpDown,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -58,6 +63,95 @@ export default function JobAgent() {
   const [isApplying, setIsApplying] = useState(false);
   const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+
+  // ── Filters ──
+  const [searchQuery, setSearchQuery] = useState("");
+  const [locationFilter, setLocationFilter] = useState("all");
+  const [minScoreFilter, setMinScoreFilter] = useState("0");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<"score" | "salary" | "company">("score");
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Extract unique locations and job types from results
+  const uniqueLocations = useMemo(() => {
+    const locs = new Set<string>();
+    jobs.forEach((j) => {
+      if (j.location) {
+        // Extract state or "Remote"
+        const loc = j.location.trim();
+        if (loc.toLowerCase().includes("remote")) {
+          locs.add("Remote");
+        } else {
+          // Try to get city, state
+          const parts = loc.split(",").map((s) => s.trim());
+          if (parts.length >= 2) {
+            locs.add(parts[parts.length - 1]); // state
+          }
+          locs.add(loc); // full location
+        }
+      }
+    });
+    return Array.from(locs).sort();
+  }, [jobs]);
+
+  const uniqueTypes = useMemo(() => {
+    const types = new Set<string>();
+    jobs.forEach((j) => {
+      if (j.job_type) types.add(j.job_type);
+    });
+    return Array.from(types).sort();
+  }, [jobs]);
+
+  // Filtered + sorted jobs
+  const filteredJobs = useMemo(() => {
+    let result = [...jobs];
+
+    // Text search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (j) =>
+          j.title.toLowerCase().includes(q) ||
+          j.company.toLowerCase().includes(q) ||
+          (j.location || "").toLowerCase().includes(q) ||
+          (j.description || "").toLowerCase().includes(q)
+      );
+    }
+
+    // Location filter
+    if (locationFilter !== "all") {
+      result = result.filter((j) =>
+        (j.location || "").toLowerCase().includes(locationFilter.toLowerCase())
+      );
+    }
+
+    // Min score filter
+    const minScore = parseInt(minScoreFilter) || 0;
+    if (minScore > 0) {
+      result = result.filter((j) => (j.match_score || 0) >= minScore);
+    }
+
+    // Job type filter
+    if (typeFilter !== "all") {
+      result = result.filter((j) => j.job_type === typeFilter);
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      switch (sortBy) {
+        case "score":
+          return (b.match_score || 0) - (a.match_score || 0);
+        case "salary":
+          return (b.salary_max || b.salary_min || 0) - (a.salary_max || a.salary_min || 0);
+        case "company":
+          return a.company.localeCompare(b.company);
+        default:
+          return 0;
+      }
+    });
+
+    return result;
+  }, [jobs, searchQuery, locationFilter, minScoreFilter, typeFilter, sortBy]);
 
   // ── Step 1: Find Jobs ──────────────────────────────────────────────────────
   const handleFindJobs = async () => {
@@ -329,7 +423,7 @@ export default function JobAgent() {
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">2</span>
                     Select Jobs
                     {jobs.length > 0 && (
-                      <Badge variant="secondary" className="ml-1">{jobs.length} found</Badge>
+                      <Badge variant="secondary" className="ml-1">{filteredJobs.length}/{jobs.length} shown</Badge>
                     )}
                   </CardTitle>
                   <CardDescription className="mt-1">
@@ -340,7 +434,7 @@ export default function JobAgent() {
                   {selectedJobIds.size > 0 && (
                     <span className="text-sm text-muted-foreground">{selectedJobIds.size} selected</span>
                   )}
-                  <Button variant="outline" size="sm" onClick={selectAll}>
+                  <Button variant="outline" size="sm" onClick={() => setSelectedJobIds(new Set(filteredJobs.map((j) => j.id)))}>
                     Select All
                   </Button>
                   {selectedJobIds.size > 0 && (
@@ -348,8 +442,87 @@ export default function JobAgent() {
                       Clear
                     </Button>
                   )}
+                  <Button variant="outline" size="sm" onClick={() => setShowFilters(!showFilters)}>
+                    <SlidersHorizontal className="h-4 w-4 mr-1" />
+                    Filter
+                  </Button>
                 </div>
               </div>
+
+              {/* ── Filter Bar ── */}
+              {showFilters && (
+                <div className="mt-4 p-3 rounded-lg bg-muted/50 border border-border space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex-1 min-w-[180px]">
+                      <Input
+                        placeholder="Search title, company, location..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <Select value={locationFilter} onValueChange={setLocationFilter}>
+                      <SelectTrigger className="w-[160px] h-8 text-sm">
+                        <MapPin className="h-3 w-3 mr-1" />
+                        <SelectValue placeholder="Location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Locations</SelectItem>
+                        <SelectItem value="remote">Remote</SelectItem>
+                        {uniqueLocations.filter(l => l !== "Remote").map((loc) => (
+                          <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={minScoreFilter} onValueChange={setMinScoreFilter}>
+                      <SelectTrigger className="w-[130px] h-8 text-sm">
+                        <SelectValue placeholder="Min Score" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="0">Any Score</SelectItem>
+                        <SelectItem value="60">60%+</SelectItem>
+                        <SelectItem value="70">70%+</SelectItem>
+                        <SelectItem value="80">80%+</SelectItem>
+                        <SelectItem value="90">90%+</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {uniqueTypes.length > 1 && (
+                      <Select value={typeFilter} onValueChange={setTypeFilter}>
+                        <SelectTrigger className="w-[130px] h-8 text-sm">
+                          <SelectValue placeholder="Type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Types</SelectItem>
+                          {uniqueTypes.map((t) => (
+                            <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    <Select value={sortBy} onValueChange={(v) => setSortBy(v as any)}>
+                      <SelectTrigger className="w-[130px] h-8 text-sm">
+                        <ArrowUpDown className="h-3 w-3 mr-1" />
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="score">Best Match</SelectItem>
+                        <SelectItem value="salary">Highest Pay</SelectItem>
+                        <SelectItem value="company">Company A-Z</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {(searchQuery || locationFilter !== "all" || minScoreFilter !== "0" || typeFilter !== "all") && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Active filters:</span>
+                      {searchQuery && <Badge variant="secondary" className="text-xs">"{searchQuery}" <button onClick={() => setSearchQuery("")} className="ml-1">×</button></Badge>}
+                      {locationFilter !== "all" && <Badge variant="secondary" className="text-xs">{locationFilter} <button onClick={() => setLocationFilter("all")} className="ml-1">×</button></Badge>}
+                      {minScoreFilter !== "0" && <Badge variant="secondary" className="text-xs">{minScoreFilter}%+ <button onClick={() => setMinScoreFilter("0")} className="ml-1">×</button></Badge>}
+                      {typeFilter !== "all" && <Badge variant="secondary" className="text-xs">{typeFilter} <button onClick={() => setTypeFilter("all")} className="ml-1">×</button></Badge>}
+                      <button onClick={() => { setSearchQuery(""); setLocationFilter("all"); setMinScoreFilter("0"); setTypeFilter("all"); }} className="text-xs text-primary hover:underline">Clear all</button>
+                    </div>
+                  )}
+                </div>
+              )}
             </CardHeader>
 
             <CardContent className="pt-0">
@@ -359,9 +532,14 @@ export default function JobAgent() {
                     <div key={i} className="h-20 bg-secondary rounded-lg animate-pulse" />
                   ))}
                 </div>
+              ) : filteredJobs.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Filter className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No jobs match your filters. Try adjusting them.</p>
+                </div>
               ) : (
                 <div className="space-y-2">
-                  {jobs.map((job) => {
+                  {filteredJobs.map((job) => {
                     const isSelected = selectedJobIds.has(job.id);
                     const isApplied = appliedIds.has(job.id);
                     const isExpanded = expandedJobId === job.id;
