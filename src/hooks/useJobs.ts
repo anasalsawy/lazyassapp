@@ -48,6 +48,8 @@ export const useJobs = () => {
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [searchProgress, setSearchProgress] = useState({ current: 0, total: 0 });
+  const [deepSearchStatus, setDeepSearchStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
+  const [deepSearchResult, setDeepSearchResult] = useState<any>(null);
   const { toast } = useToast();
 
   useEffect(() => {
