@@ -225,8 +225,10 @@ serve(async (req) => {
       },
       body: JSON.stringify({
         workflow_id: SKYVERN_WORKFLOW_ID,
-        data: navigationPayload,
+        parameters: navigationPayload,
         proxy_location: "RESIDENTIAL",
+        run_with: "agent",
+        ai_fallback: true,
       }),
     });
 
