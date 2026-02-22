@@ -216,7 +216,7 @@ serve(async (req) => {
 
     console.log(`[OptimizeResume] Submitting to Skyvern workflow ${SKYVERN_WORKFLOW_ID}`);
 
-    const skyvernRes = await fetch(`${SKYVERN_API_BASE}/run/workflows/${SKYVERN_WORKFLOW_ID}`, {
+    const skyvernRes = await fetch(`${SKYVERN_API_BASE}/run/workflows`, {
       method: "POST",
       headers: {
         "x-api-key": SKYVERN_API_KEY,
@@ -224,6 +224,7 @@ serve(async (req) => {
         "x-max-steps-override": "150",
       },
       body: JSON.stringify({
+        workflow_id: SKYVERN_WORKFLOW_ID,
         data: navigationPayload,
         proxy_location: "RESIDENTIAL",
       }),
@@ -235,7 +236,7 @@ serve(async (req) => {
     }
 
     const skyvernData = await skyvernRes.json();
-    const skyvernRunId = skyvernData.workflow_run_id || skyvernData.run_id || skyvernData.id;
+    const skyvernRunId = skyvernData.run_id || skyvernData.workflow_run_id || skyvernData.id;
 
     if (!skyvernRunId) {
       throw new Error("No run ID returned from Skyvern");
