@@ -5,10 +5,8 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FileText,
   Download,
@@ -18,12 +16,12 @@ import {
   Trash2,
   Star,
   CheckCircle2,
-  AlertCircle,
   ChevronDown,
   ChevronUp,
   Eye,
   X,
   Copy,
+  ExternalLink,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -41,21 +39,17 @@ interface Resume {
 }
 
 interface OptimizationResult {
-  finalScore: number;
-  qualityGatePassed: boolean;
-  rounds: number;
-  optimizedResume: any;
-  htmlPreview: string;
-  atsText: string;
-  researchChecklist: any;
-  lastCriticFeedback: any;
+  optimizedText: string;
+  recording_url?: string | null;
 }
 
 interface OptimizingState {
   resumeId: string;
-  stage: "researcher" | "writer" | "critic" | "designer" | "done";
-  round: number;
-  score: number;
+  stage: string;
+  skyvern_status?: string;
+  total_steps?: number;
+  completed_steps?: number;
+  recording_url?: string | null;
 }
 
 export default function Resume() {
@@ -69,7 +63,6 @@ export default function Resume() {
   const [optimizingState, setOptimizingState] = useState<OptimizingState | null>(null);
   const [optimizationResult, setOptimizationResult] = useState<{ [resumeId: string]: OptimizationResult }>({});
   const [expandedResult, setExpandedResult] = useState<string | null>(null);
-  const [previewResumeId, setPreviewResumeId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -90,20 +83,13 @@ export default function Resume() {
       if (error) throw error;
       setResumes(data || []);
 
-      // Re-load any stored optimization results
+      // Load stored optimization results
       const results: { [id: string]: OptimizationResult } = {};
       for (const r of data || []) {
         const pc = r.parsed_content as any;
-        if (pc?.optimized && pc?.finalScore !== undefined) {
+        if (pc?.optimizedText) {
           results[r.id] = {
-            finalScore: pc.finalScore,
-            qualityGatePassed: pc.finalScore >= 90,
-            rounds: pc.optimizationRounds || 0,
-            optimizedResume: pc.optimized,
-            htmlPreview: pc.optimizedHtml || "",
-            atsText: pc.optimizedAtsText || "",
-            researchChecklist: pc.researchChecklist,
-            lastCriticFeedback: null,
+            optimizedText: pc.optimizedText,
           };
         }
       }
@@ -134,7 +120,7 @@ export default function Resume() {
       });
       if (dbError) throw dbError;
 
-      // Immediately extract text so pipeline can use it
+      // Extract text so optimization can use it
       const { data: newResume } = await supabase
         .from("resumes")
         .select("id")
@@ -147,7 +133,7 @@ export default function Resume() {
         await supabase.functions.invoke("analyze-resume", { body: { resumeId: newResume.id } });
       }
 
-      toast({ title: "Resume uploaded!", description: "Click Optimize to run the full AI pipeline." });
+      toast({ title: "Resume uploaded!", description: "Click Optimize to run AI optimization via ChatGPT Deep Research." });
       fetchResumes();
     } catch (error: any) {
       toast({ title: "Upload failed", description: error.message, variant: "destructive" });
@@ -157,7 +143,7 @@ export default function Resume() {
   };
 
   const handleOptimize = async (resumeId: string) => {
-    setOptimizingState({ resumeId, stage: "researcher", round: 0, score: 0 });
+    setOptimizingState({ resumeId, stage: "optimizing" });
     setOptimizationResult((prev) => {
       const next = { ...prev };
       delete next[resumeId];
@@ -165,7 +151,6 @@ export default function Resume() {
     });
 
     try {
-      // Kick off the pipeline (returns immediately)
       const { data, error } = await supabase.functions.invoke("optimize-resume", {
         body: { resumeId, action: "start" },
       });
@@ -175,12 +160,12 @@ export default function Resume() {
 
       // Poll for completion
       let pollCount = 0;
-      const maxPolls = 120; // 2 minutes max polling
+      const maxPolls = 300; // 15 min max (Skyvern workflows can take a while)
       const pollInterval = setInterval(async () => {
         pollCount++;
         if (pollCount > maxPolls) {
           clearInterval(pollInterval);
-          toast({ title: "Optimization timed out", description: "Please try again.", variant: "destructive" });
+          toast({ title: "Optimization timed out", description: "The workflow took too long. Check Agent Monitoring.", variant: "destructive" });
           setOptimizingState(null);
           return;
         }
@@ -192,45 +177,31 @@ export default function Resume() {
 
           if (!pollData) return;
 
-          // Update stage display from result
           if (pollData.status === "running" && pollData.result) {
             const r = pollData.result;
-            setOptimizingState((prev) =>
-              prev?.resumeId === resumeId
-                ? { ...prev, stage: r.stage || "researcher", round: r.round || 0, score: r.score || 0 }
-                : prev
-            );
+            setOptimizingState({
+              resumeId,
+              stage: r.stage || "optimizing",
+              skyvern_status: r.skyvern_status,
+              total_steps: r.total_steps,
+              completed_steps: r.completed_steps,
+              recording_url: r.recording_url,
+            });
           }
 
           if (pollData.status === "completed" && pollData.result) {
             clearInterval(pollInterval);
             const r = pollData.result;
-            const resultObj: OptimizationResult = {
-              finalScore: r.finalScore || r.score || 0,
-              qualityGatePassed: (r.finalScore || r.score || 0) >= 90,
-              rounds: r.rounds || r.round || 0,
-              optimizedResume: null,
-              htmlPreview: r.htmlPreview || "",
-              atsText: r.atsText || "",
-              researchChecklist: r.researchChecklist,
-              lastCriticFeedback: r.lastCriticFeedback,
-            };
-            setOptimizationResult((prev) => ({ ...prev, [resumeId]: resultObj }));
-            setOptimizingState({ resumeId, stage: "done", round: resultObj.rounds, score: resultObj.finalScore });
+            setOptimizationResult((prev) => ({
+              ...prev,
+              [resumeId]: {
+                optimizedText: r.optimizedText || "",
+                recording_url: r.recording_url,
+              },
+            }));
+            setOptimizingState(null);
             setExpandedResult(resumeId);
-
-            if (resultObj.qualityGatePassed) {
-              toast({
-                title: `✅ Quality gate passed! Score: ${resultObj.finalScore}`,
-                description: `${resultObj.rounds} round(s) of Writer ↔ Critic optimization.`,
-              });
-            } else {
-              toast({
-                title: `⚠️ Optimization complete. Score: ${resultObj.finalScore}`,
-                description: `Pipeline ran ${resultObj.rounds} rounds. Check the feedback below.`,
-                variant: "destructive",
-              });
-            }
+            toast({ title: "✅ Resume optimized!", description: "ChatGPT Deep Research has finished optimizing your resume." });
             fetchResumes();
           }
 
@@ -242,8 +213,7 @@ export default function Resume() {
         } catch {
           // Ignore transient poll errors
         }
-      }, 3000); // Poll every 3 seconds
-
+      }, 3000);
     } catch (error: any) {
       toast({ title: "Optimization failed", description: error.message, variant: "destructive" });
       setOptimizingState(null);
@@ -287,18 +257,7 @@ export default function Resume() {
     }
   };
 
-  const isOptimizing = (id: string) =>
-    optimizingState?.resumeId === id && optimizingState.stage !== "done";
-
-  const stageLabel = (stage: OptimizingState["stage"]) => {
-    switch (stage) {
-      case "researcher": return "🔬 Researcher building checklist…";
-      case "writer":     return "✍️ Writer optimizing content…";
-      case "critic":     return "🎯 Critic auditing & scoring…";
-      case "designer":   return "🎨 Designer formatting output…";
-      case "done":       return "✅ Done";
-    }
-  };
+  const isOptimizing = (id: string) => optimizingState?.resumeId === id;
 
   if (authLoading || isLoading) {
     return (
@@ -316,7 +275,7 @@ export default function Resume() {
           <div>
             <h1 className="text-3xl font-bold">My Resumes</h1>
             <p className="text-muted-foreground">
-              Upload, then run the full AI pipeline: Researcher → Writer ↔ Critic (90+ gate) → Designer
+              Upload your resume, then optimize it using ChatGPT Deep Research via our AI agent
             </p>
           </div>
           <div>
@@ -341,8 +300,8 @@ export default function Resume() {
         <Card className="mb-6 border-primary/30 bg-primary/5">
           <CardContent className="py-4">
             <div className="flex flex-wrap gap-2 items-center text-sm">
-              <span className="font-semibold text-primary">Optimization Pipeline:</span>
-              {["🔬 Researcher", "✍️ Writer", "🎯 Critic", "🔄 Loop until 90+", "🎨 Designer"].map((step, i) => (
+              <span className="font-semibold text-primary">Optimization:</span>
+              {["📄 Upload Resume", "🤖 Agent Signs into ChatGPT", "🔬 Deep Research Mode", "✅ Optimized Resume"].map((step, i) => (
                 <span key={i} className="flex items-center gap-1">
                   {i > 0 && <span className="text-muted-foreground">→</span>}
                   <span className="px-2 py-0.5 rounded bg-primary/10 text-primary font-medium">{step}</span>
@@ -369,7 +328,7 @@ export default function Resume() {
           <div className="space-y-4">
             {resumes.map((resume) => {
               const result = optimizationResult[resume.id];
-              const optimizing = optimizingState?.resumeId === resume.id && optimizingState.stage !== "done";
+              const optimizing = isOptimizing(resume.id);
               const currentState = optimizingState?.resumeId === resume.id ? optimizingState : null;
 
               return (
@@ -391,12 +350,10 @@ export default function Resume() {
                               </Badge>
                             )}
                             {result && (
-                              <Badge
-                                variant={result.qualityGatePassed ? "secondary" : "outline"}
-                                className={result.qualityGatePassed ? "text-success bg-success/10" : "text-warning bg-warning/10"}
-                              >
-                                {result.qualityGatePassed ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <AlertCircle className="w-3 h-3 mr-1" />}
-                                Score: {result.finalScore} · {result.rounds} round{result.rounds !== 1 ? "s" : ""}
+                              <Badge variant="secondary" className="text-green-600 bg-green-500/10">
+                              <CheckCircle2 className="w-3 h-3 mr-1" />
+                                Optimized
+
                               </Badge>
                             )}
                           </div>
@@ -464,27 +421,32 @@ export default function Resume() {
                     {/* Optimization progress */}
                     {optimizing && currentState && (
                       <div className="mt-4 p-4 rounded-lg bg-muted/50 border">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                          <span className="text-sm font-medium">{stageLabel(currentState.stage)}</span>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="text-sm font-medium">
+                              🤖 Agent is optimizing your resume via ChatGPT Deep Research…
+                            </span>
+                          </div>
+                          {currentState.recording_url && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => window.open(currentState.recording_url!, "_blank")}
+                            >
+                              <Eye className="w-3 h-3" />
+                              Watch Live
+                            </Button>
+                          )}
                         </div>
-                        <div className="flex gap-2 mt-2">
-                          {(["researcher", "writer", "critic"] as const).map((s) => (
-                            <div
-                              key={s}
-                              className={`h-1.5 flex-1 rounded-full transition-all ${
-                                currentState.stage === s
-                                  ? "bg-primary animate-pulse"
-                                  : ["researcher", "writer", "critic"].indexOf(currentState.stage) >
-                                    ["researcher", "writer", "critic"].indexOf(s)
-                                  ? "bg-primary"
-                                  : "bg-muted"
-                              }`}
-                            />
-                          ))}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Writer ↔ Critic loop runs until score ≥ 90 or 20 rounds max
+                        {currentState.total_steps && currentState.completed_steps !== undefined && (
+                          <p className="text-xs text-muted-foreground mt-2">
+                            Step {currentState.completed_steps} / {currentState.total_steps}
+                          </p>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-1">
+                          This may take a few minutes — the agent navigates ChatGPT and uses Deep Research mode
                         </p>
                       </div>
                     )}
@@ -492,219 +454,67 @@ export default function Resume() {
                     {/* Optimization results */}
                     {result && expandedResult === resume.id && (
                       <div className="mt-4 space-y-4">
-                        {/* Score */}
-                        <div className="p-4 rounded-lg border bg-card">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-semibold text-sm">Final ATS Score</span>
-                            <span className={`text-2xl font-bold ${result.finalScore >= 90 ? "text-success" : result.finalScore >= 70 ? "text-warning" : "text-destructive"}`}>
-                              {result.finalScore}
-                            </span>
-                          </div>
-                          <Progress value={result.finalScore} className="h-2" />
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {result.qualityGatePassed ? "✅ Quality gate (90+) passed" : "⚠️ Below quality gate — consider re-optimizing"}
-                            {" · "}{result.rounds} round{result.rounds !== 1 ? "s" : ""} of Writer ↔ Critic
-                          </p>
-                        </div>
-
-                        {/* Checklist */}
-                        {result.researchChecklist && (
-                          <div className="p-4 rounded-lg border bg-card">
-                            <p className="font-semibold text-sm mb-2">🔬 Researcher Output</p>
-                            <p className="text-xs text-muted-foreground mb-1">Target role: <span className="text-foreground font-medium">{result.researchChecklist.targetRole}</span></p>
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {(result.researchChecklist.topKeywords || []).slice(0, 12).map((k: string) => (
-                                <Badge key={k} variant="outline" className="text-xs">{k}</Badge>
-                              ))}
+                        <div className="rounded-lg border bg-card overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-3 border-b">
+                            <div className="flex items-center gap-2">
+                              <Sparkles className="w-4 h-4 text-primary" />
+                              <span className="font-semibold text-sm">Optimized Resume</span>
+                            </div>
+                            <div className="flex gap-2">
+                              {result.recording_url && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => window.open(result.recording_url!, "_blank")}
+                                >
+                                  <ExternalLink className="w-3 h-3 mr-1" />
+                                  View Session
+                                </Button>
+                              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(result.optimizedText);
+                                  toast({ title: "Copied to clipboard!" });
+                                }}
+                              >
+                                <Copy className="w-3 h-3 mr-1" />
+                                Copy
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => {
+                                  const blob = new Blob([result.optimizedText], { type: "text/plain" });
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement("a");
+                                  a.href = url;
+                                  a.download = `${resume.title}_optimized.txt`;
+                                  a.click();
+                                  URL.revokeObjectURL(url);
+                                }}
+                              >
+                                <Download className="w-3 h-3 mr-1" />
+                                Download
+                              </Button>
                             </div>
                           </div>
-                        )}
-
-                        {/* Critic feedback */}
-                        {result.lastCriticFeedback && (
-                          <div className="p-4 rounded-lg border bg-card">
-                            <p className="font-semibold text-sm mb-2">🎯 Critic Final Feedback</p>
-                            {result.lastCriticFeedback.strengths?.length > 0 && (
-                              <div className="mb-2">
-                                <p className="text-xs font-medium text-success mb-1">Strengths</p>
-                                <ul className="text-xs space-y-0.5">
-                                  {result.lastCriticFeedback.strengths.map((s: string, i: number) => (
-                                    <li key={i} className="text-muted-foreground">• {s}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                            {result.lastCriticFeedback.critical_failures?.length > 0 && (
-                              <div>
-                                <p className="text-xs font-medium text-destructive mb-1">Critical failures</p>
-                                <ul className="text-xs space-y-0.5">
-                                  {result.lastCriticFeedback.critical_failures.map((f: string, i: number) => (
-                                    <li key={i} className="text-muted-foreground">• {f}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
+                          <div className="relative">
+                            <pre className="text-sm text-foreground whitespace-pre-wrap p-4 font-mono max-h-[600px] overflow-auto bg-muted/30">
+                              {result.optimizedText}
+                            </pre>
                           </div>
-                        )}
-
-                        {/* Resume viewer tabs */}
-                        {(result.atsText || result.htmlPreview) && (
-                          <div className="rounded-lg border bg-card overflow-hidden">
-                            <Tabs defaultValue={result.htmlPreview ? "preview" : "ats"}>
-                              <div className="flex items-center justify-between px-4 pt-3 pb-0 border-b">
-                                <TabsList className="h-8">
-                                  {result.htmlPreview && (
-                                    <TabsTrigger value="preview" className="text-xs gap-1">
-                                      <Eye className="w-3 h-3" /> Formatted Resume
-                                    </TabsTrigger>
-                                  )}
-                                  {result.atsText && (
-                                    <TabsTrigger value="ats" className="text-xs gap-1">
-                                      <FileText className="w-3 h-3" /> ATS Plain Text
-                                    </TabsTrigger>
-                                  )}
-                                </TabsList>
-                                <div className="flex gap-2 pb-1">
-                                  {result.htmlPreview && (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="h-7 text-xs"
-                                      onClick={() => setPreviewResumeId(resume.id)}
-                                    >
-                                      <Eye className="w-3 h-3 mr-1" />
-                                      Full Screen
-                                    </Button>
-                                  )}
-                                  {result.atsText && (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="h-7 text-xs"
-                                      onClick={() => {
-                                        const blob = new Blob([result.atsText], { type: "text/plain" });
-                                        const url = URL.createObjectURL(blob);
-                                        const a = document.createElement("a");
-                                        a.href = url;
-                                        a.download = `${resume.title}_optimized.txt`;
-                                        a.click();
-                                        URL.revokeObjectURL(url);
-                                      }}
-                                    >
-                                      <Download className="w-3 h-3 mr-1" />
-                                      Download ATS
-                                    </Button>
-                                  )}
-                                  {result.htmlPreview && (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="h-7 text-xs"
-                                      onClick={() => {
-                                        const blob = new Blob([result.htmlPreview], { type: "text/html" });
-                                        const url = URL.createObjectURL(blob);
-                                        const a = document.createElement("a");
-                                        a.href = url;
-                                        a.download = `${resume.title}_optimized.html`;
-                                        a.click();
-                                        URL.revokeObjectURL(url);
-                                      }}
-                                    >
-                                      <Download className="w-3 h-3 mr-1" />
-                                      Download HTML
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-
-                              {result.htmlPreview && (
-                                <TabsContent value="preview" className="m-0">
-                                  <div className="h-[500px] overflow-auto bg-white">
-                                    <iframe
-                                      srcDoc={result.htmlPreview}
-                                      className="w-full h-full border-0"
-                                      title="Optimized Resume Preview"
-                                      sandbox="allow-same-origin"
-                                    />
-                                  </div>
-                                </TabsContent>
-                              )}
-
-                              {result.atsText && (
-                                <TabsContent value="ats" className="m-0">
-                                  <div className="relative">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="absolute top-2 right-2 h-7 text-xs z-10"
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(result.atsText);
-                                        toast({ title: "Copied to clipboard!" });
-                                      }}
-                                    >
-                                      <Copy className="w-3 h-3 mr-1" />
-                                      Copy
-                                    </Button>
-                                    <pre className="text-xs text-foreground whitespace-pre-wrap p-4 font-mono h-[500px] overflow-auto bg-muted/30">
-                                      {result.atsText}
-                                    </pre>
-                                  </div>
-                                </TabsContent>
-                              )}
-                            </Tabs>
-                          </div>
-                        )}
+                        </div>
                       </div>
                     )}
                   </CardContent>
                 </Card>
               );
             })}
-          </div>
-        )}
-
-        {/* Full Screen HTML Preview Modal */}
-        {previewResumeId && optimizationResult[previewResumeId]?.htmlPreview && (
-          <div className="fixed inset-0 z-50 bg-black/80 flex flex-col">
-            <div className="flex items-center justify-between bg-background px-4 py-3 border-b shrink-0">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-primary" />
-                <span className="font-semibold text-sm">Optimized Resume — Full Preview</span>
-                <Badge variant="secondary" className="text-success bg-success/10">
-                  Score: {optimizationResult[previewResumeId].finalScore}
-                </Badge>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const res = optimizationResult[previewResumeId];
-                    const blob = new Blob([res.htmlPreview], { type: "text/html" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = "optimized_resume.html";
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                >
-                  <Download className="w-4 h-4 mr-1" />
-                  Download HTML
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setPreviewResumeId(null)}>
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="flex-1 bg-muted overflow-hidden">
-              <iframe
-                srcDoc={optimizationResult[previewResumeId].htmlPreview}
-                className="w-full h-full border-0"
-                title="Full Resume Preview"
-                sandbox="allow-same-origin"
-              />
-            </div>
           </div>
         )}
       </div>
