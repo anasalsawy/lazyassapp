@@ -394,22 +394,43 @@ export default function Resume() {
                           {result ? "Re-optimize" : "Optimize"}
                         </Button>
                         {result && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setExpandedResult(expandedResult === resume.id ? null : resume.id)}
-                          >
-                            {expandedResult === resume.id ? <ChevronUp className="w-4 h-4 mr-1" /> : <ChevronDown className="w-4 h-4 mr-1" />}
-                            Results
-                          </Button>
+                          <>
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="bg-green-600 hover:bg-green-700 text-white"
+                              onClick={() => {
+                                const blob = new Blob([result.optimizedText], { type: "text/plain" });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `${resume.title}_optimized.txt`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }}
+                            >
+                              <Download className="w-4 h-4 mr-1" />
+                              Optimized
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setExpandedResult(expandedResult === resume.id ? null : resume.id)}
+                            >
+                              {expandedResult === resume.id ? <ChevronUp className="w-4 h-4 mr-1" /> : <ChevronDown className="w-4 h-4 mr-1" />}
+                              Preview
+                            </Button>
+                          </>
                         )}
                         {resume.file_path && (
                           <Button
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
                             onClick={() => handleDownload(resume.file_path!, resume.original_filename || "resume.pdf")}
+                            title="Download original PDF"
                           >
-                            <Download className="w-4 h-4" />
+                            <Download className="w-4 h-4 mr-1" />
+                            <span className="text-xs text-muted-foreground">Original</span>
                           </Button>
                         )}
                         <Button variant="ghost" size="sm" onClick={() => handleDelete(resume.id, resume.file_path)}>
