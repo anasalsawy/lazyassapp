@@ -197,14 +197,22 @@ serve(async (req) => {
     const { data: profile } = await supabase.from("profiles").select("*").eq("user_id", user.id).single();
     const userName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") || "the candidate";
 
-    // Submit to Skyvern workflow
-    const navigationPayload: Record<string, string> = {
-      resume_text: rawText.substring(0, 8000),
-      candidate_name: userName,
-    };
+    // Load job preferences for context
+    const { data: jobPrefs } = await supabase.from("job_preferences").select("job_titles, industries, locations").eq("user_id", user.id).single();
+    const jobDescription = body.jobDescription || 
+      [
+        jobPrefs?.job_titles?.length ? `Target roles: ${jobPrefs.job_titles.join(", ")}` : "",
+        jobPrefs?.industries?.length ? `Industries: ${jobPrefs.industries.join(", ")}` : "",
+        jobPrefs?.locations?.length ? `Locations: ${jobPrefs.locations.join(", ")}` : "",
+      ].filter(Boolean).join(". ") || "General professional optimization";
 
-    if (profile?.email) navigationPayload.candidate_email = profile.email;
-    if (profile?.linkedin_url) navigationPayload.candidate_linkedin = profile.linkedin_url;
+    // Submit to Skyvern workflow with required parameters
+    const navigationPayload: Record<string, string> = {
+      chatgpt_credentials: "credchatgpt",
+      resume: rawText.substring(0, 8000),
+      job_description: jobDescription,
+      resume_owner_name: userName,
+    };
 
     console.log(`[OptimizeResume] Submitting to Skyvern workflow ${SKYVERN_WORKFLOW_ID}`);
 
