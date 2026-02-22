@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -50,6 +50,7 @@ export const useJobs = () => {
   const [searchProgress, setSearchProgress] = useState({ current: 0, total: 0 });
   const [deepSearchStatus, setDeepSearchStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
   const [deepSearchResult, setDeepSearchResult] = useState<any>(null);
+  const deepSearchPollRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -272,6 +273,102 @@ export const useJobs = () => {
     }
   };
 
+  // ── Deep Search (Skyvern workflow) ──────────────────────────────────────
+  const stopDeepSearchPolling = useCallback(() => {
+    if (deepSearchPollRef.current) {
+      clearInterval(deepSearchPollRef.current);
+      deepSearchPollRef.current = null;
+    }
+  }, []);
+
+  const pollDeepSearch = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("search-jobs-deep", {
+        body: { action: "poll" },
+      });
+      if (error) throw error;
+
+      if (data.status === "completed") {
+        setDeepSearchStatus("completed");
+        setDeepSearchResult(data.result);
+        stopDeepSearchPolling();
+        await fetchJobs();
+        toast({
+          title: "Deep Research complete!",
+          description: `Found ${data.result?.jobsFound || 0} jobs, saved ${data.result?.jobsSaved || 0}.`,
+        });
+      } else if (data.status === "failed") {
+        setDeepSearchStatus("failed");
+        setDeepSearchResult(null);
+        stopDeepSearchPolling();
+        toast({
+          title: "Deep Research failed",
+          description: data.error || "Unknown error",
+          variant: "destructive",
+        });
+      } else if (data.status === "running") {
+        setDeepSearchResult(data.result);
+      }
+    } catch (err: any) {
+      console.error("Deep search poll error:", err);
+    }
+  }, [stopDeepSearchPolling, fetchJobs, toast]);
+
+  const startDeepSearch = useCallback(async (jobDescription?: string) => {
+    if (!user) return;
+    setDeepSearchStatus("running");
+    setDeepSearchResult({ stage: "starting" });
+
+    try {
+      const { data, error } = await supabase.functions.invoke("search-jobs-deep", {
+        body: { action: "start", jobDescription },
+      });
+      if (error) throw error;
+      if (data.error) throw new Error(data.error);
+
+      toast({
+        title: "Deep Research started",
+        description: `Using ${data.resumeSource === "optimized" ? "optimized" : "raw"} resume. Polling for results...`,
+      });
+
+      // Start polling every 10s
+      stopDeepSearchPolling();
+      deepSearchPollRef.current = setInterval(pollDeepSearch, 10000);
+      // Also poll immediately after a short delay
+      setTimeout(pollDeepSearch, 3000);
+    } catch (err: any) {
+      console.error("Deep search start error:", err);
+      setDeepSearchStatus("failed");
+      setDeepSearchResult(null);
+      toast({
+        title: "Deep Research failed to start",
+        description: err.message || "Unknown error",
+        variant: "destructive",
+      });
+    }
+  }, [user, toast, stopDeepSearchPolling, pollDeepSearch]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => stopDeepSearchPolling();
+  }, [stopDeepSearchPolling]);
+
+  // On mount, check if there's a running deep search to resume polling
+  useEffect(() => {
+    if (user && deepSearchStatus === "idle") {
+      supabase.functions.invoke("search-jobs-deep", { body: { action: "poll" } })
+        .then(({ data }) => {
+          if (data?.status === "running") {
+            setDeepSearchStatus("running");
+            setDeepSearchResult(data.result);
+            stopDeepSearchPolling();
+            deepSearchPollRef.current = setInterval(pollDeepSearch, 10000);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [user]);
+
   return { 
     jobs, 
     loading, 
@@ -284,5 +381,9 @@ export const useJobs = () => {
     refetch: fetchJobs,
     savedJobs: jobs.filter(j => j.is_saved),
     topMatches: jobs.slice(0, 10),
+    // Deep search
+    deepSearchStatus,
+    deepSearchResult,
+    startDeepSearch,
   };
 };
