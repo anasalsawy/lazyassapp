@@ -32,6 +32,7 @@ import {
   Filter,
   SlidersHorizontal,
   ArrowUpDown,
+  Brain,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -55,7 +56,7 @@ export default function JobAgent() {
     refetch,
   } = useJobAgent();
 
-  const { jobs, loading: jobsLoading, searching, searchProgress, searchJobs, toggleSaved, clearAllJobs, deleteJob } = useJobs();
+  const { jobs, loading: jobsLoading, searching, searchProgress, searchJobs, toggleSaved, clearAllJobs, deleteJob, deepSearchStatus, deepSearchResult, startDeepSearch } = useJobs();
   const { primaryResume } = useResumes();
   const { preferences } = useJobPreferences();
 
@@ -408,8 +409,53 @@ export default function JobAgent() {
                     </>
                   )}
                 </Button>
+                <Button
+                  onClick={() => startDeepSearch()}
+                  disabled={deepSearchStatus === "running" || !primaryResume}
+                  size="lg"
+                  variant="secondary"
+                  className="min-w-[160px]"
+                >
+                  {deepSearchStatus === "running" ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Researching...
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="h-4 w-4 mr-2" />
+                      Deep Research
+                    </>
+                  )}
+                </Button>
               </div>
             </div>
+
+            {/* Deep Research Status */}
+            {deepSearchStatus === "running" && deepSearchResult && (
+              <div className="mt-3 p-3 rounded-lg bg-muted/50 border border-border">
+                <div className="flex items-center gap-2 text-sm">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <span className="font-medium">Deep Research in progress</span>
+                  {deepSearchResult.skyvern_status && (
+                    <Badge variant="outline" className="text-xs capitalize">{deepSearchResult.skyvern_status}</Badge>
+                  )}
+                </div>
+                {deepSearchResult.recording_url && (
+                  <a href={deepSearchResult.recording_url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline mt-1 inline-flex items-center gap-1">
+                    <ExternalLink className="h-3 w-3" /> Watch live
+                  </a>
+                )}
+              </div>
+            )}
+            {deepSearchStatus === "completed" && deepSearchResult && (
+              <div className="mt-3 p-3 rounded-lg bg-success/10 border border-success/30">
+                <div className="flex items-center gap-2 text-sm text-success">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span className="font-medium">Deep Research complete — found {deepSearchResult.jobsFound || 0} jobs, saved {deepSearchResult.jobsSaved || 0}</span>
+                </div>
+              </div>
+            )}
           </CardHeader>
         </Card>
 
