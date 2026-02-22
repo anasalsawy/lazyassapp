@@ -208,7 +208,7 @@ serve(async (req) => {
 
     // Submit to Skyvern workflow with required parameters
     const navigationPayload: Record<string, string> = {
-      chatgpt_credentials: "credchatgpt",
+      chatgpt_credentials: "cred_498232209221167088",
       resume: rawText.substring(0, 8000),
       job_description: jobDescription,
       resume_owner_name: userName,
