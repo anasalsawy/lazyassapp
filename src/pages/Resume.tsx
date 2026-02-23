@@ -72,6 +72,107 @@ export default function Resume() {
     }
   }, [user, authLoading]);
 
+  // Resume polling for any in-progress optimization tasks on page load
+  useEffect(() => {
+    if (!user || authLoading) return;
+
+    const checkRunningTasks = async () => {
+      try {
+        const { data: tasks } = await supabase
+          .from("agent_tasks")
+          .select("id, payload, result")
+          .eq("user_id", user.id)
+          .eq("task_type", "optimize_resume")
+          .eq("status", "running")
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (!tasks || tasks.length === 0) return;
+
+        const task = tasks[0];
+        const payload = task.payload as any;
+        const resumeId = payload?.resumeId;
+        if (!resumeId) return;
+
+        // Already polling this one
+        if (optimizingState?.resumeId === resumeId) return;
+
+        const r = task.result as any;
+        setOptimizingState({
+          resumeId,
+          stage: r?.stage || "optimizing",
+          skyvern_status: r?.skyvern_status,
+          total_steps: r?.total_steps,
+          completed_steps: r?.completed_steps,
+          recording_url: r?.recording_url,
+        });
+
+        // Start polling
+        let pollCount = 0;
+        const maxPolls = 300;
+        const pollInterval = setInterval(async () => {
+          pollCount++;
+          if (pollCount > maxPolls) {
+            clearInterval(pollInterval);
+            toast({ title: "Optimization timed out", variant: "destructive" });
+            setOptimizingState(null);
+            return;
+          }
+
+          try {
+            const { data: pollData } = await supabase.functions.invoke("optimize-resume", {
+              body: { resumeId, action: "poll" },
+            });
+
+            if (!pollData) return;
+
+            if (pollData.status === "running" && pollData.result) {
+              const pr = pollData.result;
+              setOptimizingState({
+                resumeId,
+                stage: pr.stage || "optimizing",
+                skyvern_status: pr.skyvern_status,
+                total_steps: pr.total_steps,
+                completed_steps: pr.completed_steps,
+                recording_url: pr.recording_url,
+              });
+            }
+
+            if (pollData.status === "completed" && pollData.result) {
+              clearInterval(pollInterval);
+              const pr = pollData.result;
+              setOptimizationResult((prev) => ({
+                ...prev,
+                [resumeId]: {
+                  optimizedText: pr.optimizedText || "",
+                  recording_url: pr.recording_url,
+                },
+              }));
+              setOptimizingState(null);
+              setExpandedResult(resumeId);
+              toast({ title: "✅ Resume optimized!", description: "ChatGPT Deep Research has finished optimizing your resume." });
+              fetchResumes();
+            }
+
+            if (pollData.status === "failed") {
+              clearInterval(pollInterval);
+              toast({ title: "Optimization failed", description: pollData.error || "Unknown error", variant: "destructive" });
+              setOptimizingState(null);
+            }
+          } catch {
+            // Ignore transient poll errors
+          }
+        }, 3000);
+
+        return () => clearInterval(pollInterval);
+      } catch (e) {
+        console.error("Error checking running tasks:", e);
+      }
+    };
+
+    checkRunningTasks();
+  }, [user, authLoading]);
+
   const fetchResumes = async () => {
     try {
       const { data, error } = await supabase
