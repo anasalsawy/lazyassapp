@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -22,6 +23,7 @@ import {
   X,
   Copy,
   ExternalLink,
+  Clock,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -63,6 +65,20 @@ export default function Resume() {
   const [optimizingState, setOptimizingState] = useState<OptimizingState | null>(null);
   const [optimizationResult, setOptimizationResult] = useState<{ [resumeId: string]: OptimizationResult }>({});
   const [expandedResult, setExpandedResult] = useState<string | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Timer for elapsed time during optimization
+  useEffect(() => {
+    if (optimizingState) {
+      setElapsedSeconds(0);
+      timerRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [optimizingState?.resumeId]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -494,35 +510,6 @@ export default function Resume() {
                           )}
                           {result ? "Re-optimize" : "Optimize"}
                         </Button>
-                        {result && (
-                          <>
-                            <Button
-                              variant="default"
-                              size="sm"
-                              className="bg-green-600 hover:bg-green-700 text-white"
-                              onClick={() => {
-                                const blob = new Blob([result.optimizedText], { type: "text/plain" });
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement("a");
-                                a.href = url;
-                                a.download = `${resume.title}_optimized.txt`;
-                                a.click();
-                                URL.revokeObjectURL(url);
-                              }}
-                            >
-                              <Download className="w-4 h-4 mr-1" />
-                              Optimized
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setExpandedResult(expandedResult === resume.id ? null : resume.id)}
-                            >
-                              {expandedResult === resume.id ? <ChevronUp className="w-4 h-4 mr-1" /> : <ChevronDown className="w-4 h-4 mr-1" />}
-                              Preview
-                            </Button>
-                          </>
-                        )}
                         {resume.file_path && (
                           <Button
                             variant="ghost"
@@ -542,74 +529,109 @@ export default function Resume() {
 
                     {/* Optimization progress */}
                     {optimizing && currentState && (
-                      <div className="mt-4 p-4 rounded-lg bg-muted/50 border">
+                      <div className="mt-4 p-5 rounded-xl bg-primary/5 border border-primary/20 space-y-4">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="text-sm font-medium">
-                              🤖 Agent is optimizing your resume via ChatGPT Deep Research…
-                            </span>
+                          <div className="flex items-center gap-3">
+                            <div className="relative">
+                              <div className="w-10 h-10 rounded-full border-2 border-primary/30 flex items-center justify-center">
+                                <Sparkles className="w-5 h-5 text-primary animate-pulse" />
+                              </div>
+                              <div className="absolute -top-1 -right-1 w-3 h-3 bg-primary rounded-full animate-ping" />
+                            </div>
+                            <div>
+                              <p className="font-semibold text-sm">AI Agent is optimizing your resume</p>
+                              <p className="text-xs text-muted-foreground">ChatGPT Deep Research mode active</p>
+                            </div>
                           </div>
-                          {currentState.recording_url && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="gap-1"
-                              onClick={() => window.open(currentState.recording_url!, "_blank")}
-                            >
-                              <Eye className="w-3 h-3" />
-                              Watch Live
-                            </Button>
-                          )}
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1.5 bg-muted rounded-lg px-3 py-1.5">
+                              <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                              <span className="text-sm font-mono font-medium tabular-nums">
+                                {Math.floor(elapsedSeconds / 60).toString().padStart(2, "0")}:{(elapsedSeconds % 60).toString().padStart(2, "0")}
+                              </span>
+                            </div>
+                            {currentState.recording_url && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="gap-1.5"
+                                onClick={() => window.open(currentState.recording_url!, "_blank")}
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                Watch Live
+                              </Button>
+                            )}
+                          </div>
                         </div>
-                        {currentState.total_steps && currentState.completed_steps !== undefined && (
-                          <p className="text-xs text-muted-foreground mt-2">
-                            Step {currentState.completed_steps} / {currentState.total_steps}
-                          </p>
-                        )}
-                        <p className="text-xs text-muted-foreground mt-1">
-                          This may take a few minutes — the agent navigates ChatGPT and uses Deep Research mode
-                        </p>
+
+                        {/* Animated progress bar */}
+                        <div className="space-y-1.5">
+                          <Progress 
+                            value={currentState.total_steps && currentState.completed_steps !== undefined 
+                              ? Math.round((currentState.completed_steps / currentState.total_steps) * 100) 
+                              : undefined} 
+                            className="h-2" 
+                          />
+                          <div className="flex justify-between text-xs text-muted-foreground">
+                            {currentState.total_steps && currentState.completed_steps !== undefined ? (
+                              <span>Step {currentState.completed_steps} of {currentState.total_steps}</span>
+                            ) : (
+                              <span className="animate-pulse">Processing…</span>
+                            )}
+                            <span>~5–15 min typical</span>
+                          </div>
+                        </div>
+
+                        {/* Stage indicators */}
+                        <div className="flex gap-2">
+                          {[
+                            { key: "login", label: "Login", emoji: "🔑" },
+                            { key: "research", label: "Deep Research", emoji: "🔬" },
+                            { key: "extract", label: "Extract", emoji: "📄" },
+                          ].map((s, i) => {
+                            const stageOrder = ["login", "research", "extract"];
+                            const currentIdx = currentState.stage === "optimizing" ? 1 : stageOrder.indexOf(currentState.stage);
+                            const isActive = i === currentIdx;
+                            const isDone = i < currentIdx;
+                            return (
+                              <div
+                                key={s.key}
+                                className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                                  isDone
+                                    ? "bg-green-500/10 text-green-600"
+                                    : isActive
+                                    ? "bg-primary/10 text-primary ring-1 ring-primary/30"
+                                    : "bg-muted text-muted-foreground"
+                                }`}
+                              >
+                                {isDone ? <CheckCircle2 className="w-3 h-3" /> : <span>{s.emoji}</span>}
+                                {s.label}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
 
                     {/* Optimization results */}
-                    {result && expandedResult === resume.id && (
+                    {result && (
                       <div className="mt-4 space-y-4">
-                        <div className="rounded-lg border bg-card overflow-hidden">
-                          <div className="flex items-center justify-between px-4 py-3 border-b">
-                            <div className="flex items-center gap-2">
-                              <Sparkles className="w-4 h-4 text-primary" />
-                              <span className="font-semibold text-sm">Optimized Resume</span>
+                        {/* Success banner with download CTA */}
+                        <div className="rounded-xl bg-green-500/10 border border-green-500/30 p-4">
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+                                <CheckCircle2 className="w-5 h-5 text-green-600" />
+                              </div>
+                              <div>
+                                <p className="font-semibold text-green-700 dark:text-green-400">Resume optimized successfully!</p>
+                                <p className="text-xs text-muted-foreground">AI-enhanced for ATS compatibility & recruiter appeal</p>
+                              </div>
                             </div>
-                            <div className="flex gap-2">
-                              {result.recording_url && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-7 text-xs"
-                                  onClick={() => window.open(result.recording_url!, "_blank")}
-                                >
-                                  <ExternalLink className="w-3 h-3 mr-1" />
-                                  View Session
-                                </Button>
-                              )}
+                            <div className="flex items-center gap-2">
                               <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-xs"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(result.optimizedText);
-                                  toast({ title: "Copied to clipboard!" });
-                                }}
-                              >
-                                <Copy className="w-3 h-3 mr-1" />
-                                Copy
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-xs"
+                                size="lg"
+                                className="bg-green-600 hover:bg-green-700 text-white gap-2 font-semibold shadow-lg shadow-green-600/20"
                                 onClick={() => {
                                   const blob = new Blob([result.optimizedText], { type: "text/plain" });
                                   const url = URL.createObjectURL(blob);
@@ -620,17 +642,60 @@ export default function Resume() {
                                   URL.revokeObjectURL(url);
                                 }}
                               >
-                                <Download className="w-3 h-3 mr-1" />
-                                Download
+                                <Download className="w-5 h-5" />
+                                Download Optimized Resume
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(result.optimizedText);
+                                  toast({ title: "Copied to clipboard!" });
+                                }}
+                              >
+                                <Copy className="w-4 h-4" />
                               </Button>
                             </div>
                           </div>
-                          <div className="relative">
+                        </div>
+
+                        {/* Expandable preview */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full justify-center gap-2 text-muted-foreground"
+                          onClick={() => setExpandedResult(expandedResult === resume.id ? null : resume.id)}
+                        >
+                          {expandedResult === resume.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          {expandedResult === resume.id ? "Hide Preview" : "Preview Optimized Content"}
+                        </Button>
+
+                        {expandedResult === resume.id && (
+                          <div className="rounded-lg border bg-card overflow-hidden">
+                            <div className="flex items-center justify-between px-4 py-3 border-b">
+                              <div className="flex items-center gap-2">
+                                <Sparkles className="w-4 h-4 text-primary" />
+                                <span className="font-semibold text-sm">Optimized Resume</span>
+                              </div>
+                              <div className="flex gap-2">
+                                {result.recording_url && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={() => window.open(result.recording_url!, "_blank")}
+                                  >
+                                    <ExternalLink className="w-3 h-3 mr-1" />
+                                    View Session
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
                             <pre className="text-sm text-foreground whitespace-pre-wrap p-4 font-mono max-h-[600px] overflow-auto bg-muted/30">
                               {result.optimizedText}
                             </pre>
                           </div>
-                        </div>
+                        )}
                       </div>
                     )}
                   </CardContent>
