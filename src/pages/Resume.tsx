@@ -67,15 +67,25 @@ export default function Resume() {
   const [expandedResult, setExpandedResult] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const taskStartTimeRef = useRef<number | null>(null);
 
-  // Timer for elapsed time during optimization
+  // Timer for elapsed time during optimization — uses real start time
   useEffect(() => {
     if (optimizingState) {
-      setElapsedSeconds(0);
-      timerRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+      if (taskStartTimeRef.current) {
+        setElapsedSeconds(Math.floor((Date.now() - taskStartTimeRef.current) / 1000));
+      }
+      timerRef.current = setInterval(() => {
+        if (taskStartTimeRef.current) {
+          setElapsedSeconds(Math.floor((Date.now() - taskStartTimeRef.current) / 1000));
+        } else {
+          setElapsedSeconds((s) => s + 1);
+        }
+      }, 1000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = null;
+      taskStartTimeRef.current = null;
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [optimizingState?.resumeId]);
@@ -96,7 +106,7 @@ export default function Resume() {
       try {
         const { data: tasks } = await supabase
           .from("agent_tasks")
-          .select("id, payload, result")
+          .select("id, payload, result, created_at")
           .eq("user_id", user.id)
           .eq("task_type", "optimize_resume")
           .eq("status", "running")
@@ -114,6 +124,8 @@ export default function Resume() {
         if (optimizingState?.resumeId === resumeId) return;
 
         const r = task.result as any;
+        // Set real start time from task creation
+        taskStartTimeRef.current = new Date((task as any).created_at).getTime();
         setOptimizingState({
           resumeId,
           stage: r?.stage || "optimizing",
@@ -260,6 +272,7 @@ export default function Resume() {
   };
 
   const handleOptimize = async (resumeId: string) => {
+    taskStartTimeRef.current = Date.now();
     setOptimizingState({ resumeId, stage: "optimizing" });
     setOptimizationResult((prev) => {
       const next = { ...prev };
@@ -561,6 +574,25 @@ export default function Resume() {
                                 Watch Live
                               </Button>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={async () => {
+                                // Cancel the running task
+                                await supabase
+                                  .from("agent_tasks")
+                                  .update({ status: "cancelled", completed_at: new Date().toISOString() })
+                                  .eq("user_id", user!.id)
+                                  .eq("task_type", "optimize_resume")
+                                  .eq("status", "running");
+                                setOptimizingState(null);
+                                toast({ title: "Optimization cancelled" });
+                              }}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              Cancel
+                            </Button>
                           </div>
                         </div>
 
@@ -578,7 +610,7 @@ export default function Resume() {
                             ) : (
                               <span className="animate-pulse">Processing…</span>
                             )}
-                            <span>~5–15 min typical</span>
+                            <span>{elapsedSeconds > 1800 ? "Taking longer than usual…" : "~10–30 min typical (Deep Research)"}</span>
                           </div>
                         </div>
 
