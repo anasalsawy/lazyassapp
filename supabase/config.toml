@@ -56,3 +56,6 @@ verify_jwt = false
 
 [functions.agent-chat]
 verify_jwt = false
+
+[functions.operator-chat]
+verify_jwt = false
