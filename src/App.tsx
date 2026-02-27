@@ -127,6 +127,16 @@ const App = () => (
             }
           />
           
+          {/* Operator Agent */}
+          <Route
+            path="/operator"
+            element={
+              <ProtectedRoute>
+                <Operator />
+              </ProtectedRoute>
+            }
+          />
+          
           {/* Catch-all */}
           <Route path="*" element={<NotFound />} />
         </Routes>
