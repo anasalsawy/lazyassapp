@@ -116,6 +116,16 @@ const App = () => (
             }
           />
           
+          {/* AI Agent */}
+          <Route
+            path="/agent"
+            element={
+              <ProtectedRoute>
+                <Agent />
+              </ProtectedRoute>
+            }
+          />
+          
           {/* Catch-all */}
           <Route path="*" element={<NotFound />} />
         </Routes>
