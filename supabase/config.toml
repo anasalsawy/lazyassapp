@@ -53,3 +53,6 @@ verify_jwt = false
 
 [functions.optimize-resume]
 verify_jwt = false
+
+[functions.agent-chat]
+verify_jwt = false

@@ -20,6 +20,7 @@ import Settings from "./pages/Settings";
 import JobAgent from "./pages/JobAgent";
 import AutoShop from "./pages/AutoShop";
 import AgentMonitoring from "./pages/AgentMonitoring";
+import Agent from "./pages/Agent";
 
 const queryClient = new QueryClient();
 
@@ -111,6 +112,16 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <AgentMonitoring />
+              </ProtectedRoute>
+            }
+          />
+          
+          {/* AI Agent */}
+          <Route
+            path="/agent"
+            element={
+              <ProtectedRoute>
+                <Agent />
               </ProtectedRoute>
             }
           />

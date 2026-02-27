@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/agent", label: "Manus", icon: Sparkles },
   { path: "/jobs", label: "Job Agent", icon: Briefcase },
   { path: "/resume", label: "Resume", icon: FileText },
   { path: "/connections", label: "Connections", icon: Link2 },
