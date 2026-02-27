@@ -21,6 +21,7 @@ import JobAgent from "./pages/JobAgent";
 import AutoShop from "./pages/AutoShop";
 import AgentMonitoring from "./pages/AgentMonitoring";
 import Agent from "./pages/Agent";
+import Operator from "./pages/Operator";
 
 const queryClient = new QueryClient();
 
