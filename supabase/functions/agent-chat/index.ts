@@ -7,17 +7,230 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// ── Tool Definitions ────────────────────────────────────────────────────────
+// ── Tool Definitions — every tool from the Manus source + platform-native ───
 const AGENT_TOOLS = [
+  // ═══ MANUS CORE TOOLS (from source tools.txt) ════════════════════════════
+  // ── Communication ────────────────────────────────────────────────────────
   {
     type: "function",
     function: {
-      name: "run_job_search",
-      description: "Search for jobs matching the user's preferences. Triggers the deep research job discovery pipeline.",
+      name: "message_notify_user",
+      description: "Send a message to user without requiring a response. Use for acknowledging receipt of messages, providing progress updates, reporting task completion, or explaining changes in approach.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Optional search query to refine job search beyond saved preferences" },
+          text: { type: "string", description: "Message text to display to user" },
+          attachments: {
+            anyOf: [{ type: "string" }, { items: { type: "string" }, type: "array" }],
+            description: "(Optional) List of attachments to show to user, can be file paths or URLs",
+          },
+        },
+        required: ["text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "message_ask_user",
+      description: "Ask user a question and wait for response. Use for requesting clarification, asking for confirmation, or gathering additional information.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: { type: "string", description: "Question text to present to user" },
+          attachments: {
+            anyOf: [{ type: "string" }, { items: { type: "string" }, type: "array" }],
+            description: "(Optional) List of question-related files or reference materials",
+          },
+          suggest_user_takeover: {
+            type: "string",
+            enum: ["none", "browser"],
+            description: "(Optional) Suggested operation for user takeover",
+          },
+        },
+        required: ["text"],
+      },
+    },
+  },
+
+  // ── File Operations ──────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "file_read",
+      description: "Read file content from platform storage. Use for checking stored resumes, documents, or data files.",
+      parameters: {
+        type: "object",
+        properties: {
+          file: { type: "string", description: "Path of the file to read (e.g. resumes/filename.pdf or a database table:id reference)" },
+          start_line: { type: "integer", description: "(Optional) Starting line to read from, 0-based" },
+          end_line: { type: "integer", description: "(Optional) Ending line number (exclusive)" },
+        },
+        required: ["file"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "file_write",
+      description: "Write or save content to platform storage. Use for saving notes, memos, generated documents, or data exports.",
+      parameters: {
+        type: "object",
+        properties: {
+          file: { type: "string", description: "Path/name for the file to write" },
+          content: { type: "string", description: "Text content to write" },
+          append: { type: "boolean", description: "(Optional) Whether to append instead of overwrite" },
+        },
+        required: ["file", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "file_str_replace",
+      description: "Replace specified string in stored data. Use for updating specific content in notes or documents.",
+      parameters: {
+        type: "object",
+        properties: {
+          file: { type: "string", description: "Path of the file to perform replacement on" },
+          old_str: { type: "string", description: "Original string to be replaced" },
+          new_str: { type: "string", description: "New string to replace with" },
+        },
+        required: ["file", "old_str", "new_str"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "file_find_in_content",
+      description: "Search for matching text within stored files and data.",
+      parameters: {
+        type: "object",
+        properties: {
+          file: { type: "string", description: "Path of the file to search within" },
+          regex: { type: "string", description: "Regular expression pattern to match" },
+        },
+        required: ["file", "regex"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "file_find_by_name",
+      description: "Find files by name pattern in platform storage.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Directory path to search (e.g. 'resumes')" },
+          glob: { type: "string", description: "Filename pattern using glob syntax wildcards" },
+        },
+        required: ["path", "glob"],
+      },
+    },
+  },
+
+  // ── Shell Operations ─────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "shell_exec",
+      description: "Execute commands in a shell session. Use for running scripts or managing files.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Unique identifier of the target shell session" },
+          exec_dir: { type: "string", description: "Working directory for command execution" },
+          command: { type: "string", description: "Shell command to execute" },
+        },
+        required: ["id", "exec_dir", "command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "shell_view",
+      description: "View the content of a specified shell session.",
+      parameters: { type: "object", properties: { id: { type: "string", description: "Shell session ID" } }, required: ["id"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "shell_wait",
+      description: "Wait for a running process in a shell session to return.",
+      parameters: { type: "object", properties: { id: { type: "string" }, seconds: { type: "integer" } }, required: ["id"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "shell_write_to_process",
+      description: "Write input to a running process in a shell session.",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "string" }, input: { type: "string" }, press_enter: { type: "boolean" } },
+        required: ["id", "input", "press_enter"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "shell_kill_process",
+      description: "Terminate a running process in a shell session.",
+      parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    },
+  },
+
+  // ── Browser Operations ───────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "browser_view",
+      description: "View content of the current browser page. Returns the current page state and active session info.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_navigate",
+      description: "Navigate browser to specified URL. Opens a page and returns its content.",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "Complete URL to visit. Must include protocol prefix." } },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_restart",
+      description: "Restart browser and navigate to specified URL. Use when browser state needs to be reset.",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "URL to visit after restart." } },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_click",
+      description: "Click on elements in the current browser page.",
+      parameters: {
+        type: "object",
+        properties: {
+          index: { type: "integer", description: "(Optional) Index number of the element to click" },
+          coordinate_x: { type: "number", description: "(Optional) X coordinate" },
+          coordinate_y: { type: "number", description: "(Optional) Y coordinate" },
         },
       },
     },
@@ -25,14 +238,170 @@ const AGENT_TOOLS = [
   {
     type: "function",
     function: {
-      name: "optimize_resume",
-      description: "Start resume optimization using ChatGPT Deep Research. Takes the user's primary resume and optimizes it for ATS and impact.",
+      name: "browser_input",
+      description: "Overwrite text in editable elements on the current browser page.",
       parameters: {
         type: "object",
         properties: {
-          job_description: { type: "string", description: "Optional specific job description to tailor the resume for" },
+          index: { type: "integer" }, coordinate_x: { type: "number" }, coordinate_y: { type: "number" },
+          text: { type: "string", description: "Complete text content to overwrite" },
+          press_enter: { type: "boolean", description: "Whether to press Enter after input" },
         },
+        required: ["text", "press_enter"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_move_mouse",
+      description: "Move cursor to specified position on the current browser page.",
+      parameters: {
+        type: "object",
+        properties: { coordinate_x: { type: "number" }, coordinate_y: { type: "number" } },
+        required: ["coordinate_x", "coordinate_y"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_press_key",
+      description: "Simulate key press in the current browser page.",
+      parameters: {
+        type: "object",
+        properties: { key: { type: "string", description: "Key name (e.g., Enter, Tab), supports combos (e.g., Control+Enter)." } },
+        required: ["key"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_select_option",
+      description: "Select specified option from dropdown list element.",
+      parameters: {
+        type: "object",
+        properties: { index: { type: "integer" }, option: { type: "integer" } },
+        required: ["index", "option"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_scroll_up",
+      description: "Scroll up the current browser page.",
+      parameters: { type: "object", properties: { to_top: { type: "boolean" } } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_scroll_down",
+      description: "Scroll down the current browser page.",
+      parameters: { type: "object", properties: { to_bottom: { type: "boolean" } } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_console_exec",
+      description: "Execute JavaScript code in browser console.",
+      parameters: {
+        type: "object",
+        properties: { javascript: { type: "string", description: "JavaScript code to execute." } },
+        required: ["javascript"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_console_view",
+      description: "View browser console output.",
+      parameters: { type: "object", properties: { max_lines: { type: "integer" } } },
+    },
+  },
+
+  // ── Web Search ───────────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "info_search_web",
+      description: "Search the web using search engine. Use for obtaining latest information, finding references, researching companies, salary data, products, prices, or anything else.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query, 3-5 keywords." },
+          date_range: {
+            type: "string",
+            enum: ["all", "past_hour", "past_day", "past_week", "past_month", "past_year"],
+            description: "(Optional) Time range filter.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+
+  // ── Deployment ───────────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "deploy_expose_port",
+      description: "Expose specified local port for temporary public access.",
+      parameters: { type: "object", properties: { port: { type: "integer" } }, required: ["port"] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "deploy_apply_deployment",
+      description: "Deploy website or application to public production environment.",
+      parameters: {
+        type: "object",
+        properties: { type: { type: "string", enum: ["static", "nextjs"] }, local_dir: { type: "string" } },
+        required: ["type", "local_dir"],
+      },
+    },
+  },
+
+  // ── Manus Page ───────────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "make_manus_page",
+      description: "Make a Manus Page from a local MDX file.",
+      parameters: { type: "object", properties: { mdx_file_path: { type: "string" } }, required: ["mdx_file_path"] },
+    },
+  },
+
+  // ── Idle ──────────────────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "idle",
+      description: "A special tool to indicate you have completed all tasks and are about to enter idle state.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+
+  // ═══ PLATFORM-NATIVE TOOLS ═══════════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "run_job_search",
+      description: "Search for jobs matching the user's preferences. Triggers the deep research job discovery pipeline.",
+      parameters: { type: "object", properties: { query: { type: "string", description: "Optional search query" } } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "optimize_resume",
+      description: "Start resume optimization using ChatGPT Deep Research.",
+      parameters: { type: "object", properties: { job_description: { type: "string", description: "Optional job description to tailor for" } } },
     },
   },
   {
@@ -48,12 +417,7 @@ const AGENT_TOOLS = [
     function: {
       name: "get_job_matches",
       description: "Get the user's current job matches and their scores.",
-      parameters: {
-        type: "object",
-        properties: {
-          limit: { type: "number", description: "Number of jobs to return (default 10)" },
-        },
-      },
+      parameters: { type: "object", properties: { limit: { type: "number", description: "Number of jobs to return (default 10)" } } },
     },
   },
   {
@@ -64,8 +428,8 @@ const AGENT_TOOLS = [
       parameters: {
         type: "object",
         properties: {
-          status: { type: "string", description: "Filter by status (applied, interview, offer, rejected, etc.)" },
-          limit: { type: "number", description: "Number of applications to return (default 10)" },
+          status: { type: "string", description: "Filter by status" },
+          limit: { type: "number", description: "Number to return (default 10)" },
         },
       },
     },
@@ -74,13 +438,13 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "auto_shop_order",
-      description: "Place an automated shopping order. The agent will find the best deal and purchase it using saved payment and shipping info.",
+      description: "Place an automated shopping order. Finds the best deal and purchases using saved payment/shipping info.",
       parameters: {
         type: "object",
         properties: {
           product: { type: "string", description: "What product to buy" },
           max_price: { type: "number", description: "Maximum price in dollars" },
-          quantity: { type: "number", description: "Quantity to order (default 1)" },
+          quantity: { type: "number", description: "Quantity (default 1)" },
         },
         required: ["product"],
       },
@@ -90,7 +454,7 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "get_profile_info",
-      description: "Get the user's profile, resume info, job preferences, account status, shipping addresses, and payment cards on file.",
+      description: "Get the user's profile, resume info, job preferences, credits, shipping addresses, and payment cards.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -99,53 +463,20 @@ const AGENT_TOOLS = [
     function: {
       name: "check_email_inbox",
       description: "Check for recent job-related emails (recruiter responses, interview invites, etc.).",
-      parameters: {
-        type: "object",
-        properties: {
-          limit: { type: "number", description: "Number of emails to return (default 10)" },
-        },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "search_web",
-      description: "Search the web for any information using Firecrawl. Research companies, salary data, interview tips, products, prices, travel deals, or anything else.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search query" },
-        },
-        required: ["query"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "browse_website",
-      description: "Open and read the full content of any website URL. Extract text, data, forms, prices, or any other information from a live webpage.",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "Full URL to browse (e.g. https://example.com)" },
-        },
-        required: ["url"],
-      },
+      parameters: { type: "object", properties: { limit: { type: "number", description: "Number of emails (default 10)" } } },
     },
   },
   {
     type: "function",
     function: {
       name: "browser_task",
-      description: "Execute a complex multi-step browser automation task. The agent will spin up a real browser session, navigate pages, click buttons, fill forms, and complete multi-step workflows autonomously. Use for tasks like: applying to jobs on specific sites, creating accounts, filling out applications, purchasing products, booking travel, or any multi-step web interaction.",
+      description: "Execute a complex multi-step browser automation task. Spins up a real browser session to navigate pages, click buttons, fill forms, and complete multi-step workflows autonomously. Use for applying to jobs, creating accounts, purchasing products, booking travel, or any multi-step web interaction that granular browser tools cannot handle.",
       parameters: {
         type: "object",
         properties: {
-          task: { type: "string", description: "Detailed natural-language instructions for what the browser agent should accomplish" },
+          task: { type: "string", description: "Detailed natural-language instructions for the browser agent" },
           start_url: { type: "string", description: "Starting URL for the task" },
-          max_steps: { type: "number", description: "Maximum steps the agent can take (default 50)" },
+          max_steps: { type: "number", description: "Maximum steps (default 50)" },
         },
         required: ["task"],
       },
@@ -155,14 +486,14 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "phone_call",
-      description: "Initiate an outbound phone call via integrated telephony. The system will dial, speak a scripted message or conduct a guided conversation, and return the call result.",
+      description: "Initiate an outbound phone call via Twilio. Dials, speaks a scripted message, and returns the call result.",
       parameters: {
         type: "object",
         properties: {
-          phone_number: { type: "string", description: "Phone number to call in E.164 format (e.g. +14155551234)" },
+          phone_number: { type: "string", description: "Phone number in E.164 format" },
           objective: { type: "string", description: "What the call should accomplish" },
-          tone: { type: "string", description: "Desired tone: professional, friendly, urgent, casual (default: professional)" },
-          script: { type: "string", description: "Optional specific script or talking points for the call" },
+          tone: { type: "string", description: "Tone: professional, friendly, urgent, casual" },
+          script: { type: "string", description: "Optional script or talking points" },
         },
         required: ["phone_number", "objective"],
       },
@@ -177,7 +508,7 @@ const AGENT_TOOLS = [
         type: "object",
         properties: {
           phone_number: { type: "string", description: "Phone number in E.164 format" },
-          message: { type: "string", description: "Message text to send" },
+          message: { type: "string", description: "Message text" },
           channel: { type: "string", description: "'sms' or 'whatsapp' (default: sms)" },
         },
         required: ["phone_number", "message"],
@@ -188,13 +519,13 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "submit_application",
-      description: "Submit a job application for a specific job. Uses Skyvern to autonomously navigate the application form, fill it out with user's resume and profile data, and submit.",
+      description: "Submit a job application for a specific job. Uses automation to navigate the form, fill it out, and submit.",
       parameters: {
         type: "object",
         properties: {
-          job_id: { type: "string", description: "ID of the job from the matches list" },
+          job_id: { type: "string", description: "ID of the job from matches" },
           job_url: { type: "string", description: "Direct URL to the job application page" },
-          cover_letter: { type: "string", description: "Optional custom cover letter text" },
+          cover_letter: { type: "string", description: "Optional custom cover letter" },
         },
         required: ["job_url"],
       },
@@ -215,29 +546,52 @@ Current date: ${new Date().toISOString().split("T")[0]}
 
 ## Core Behavior
 1. Execute first, explain after. If a tool can accomplish the task, call it.
-2. Chain multiple tool calls when a task requires it (e.g., search for jobs → get matches → submit application).
-3. Never say "I can't do that" if you have a relevant tool. Instead, use the tool and report what happened.
+2. Chain multiple tool calls when a task requires it.
+3. Never say "I can't do that" if you have a relevant tool. Use it and report what happened.
 4. If something fails, try an alternative approach before giving up.
 5. Provide concise, actionable responses with real data from tool results.
 6. Use markdown formatting for clarity — tables, lists, and bold text.
 
+## Tool Architecture Awareness
+You have two tiers of tools:
+
+### Tier 1 — Fully Operational (use freely):
+- **message_notify_user / message_ask_user** — communicate with the user
+- **info_search_web** — web search via Firecrawl
+- **browser_navigate** — read any webpage content
+- **browser_view** — check active browser session status
+- **browser_restart** — stop active sessions and navigate fresh
+- **browser_task** — full autonomous browser automation (Browser Use Cloud) — use for ANY multi-step web interaction
+- **file_read / file_write / file_find_by_name** — read/write platform storage & database
+- **run_job_search / optimize_resume / get_job_matches / get_applications / submit_application** — job pipeline
+- **auto_shop_order** — automated shopping
+- **phone_call / send_sms** — telephony
+- **check_email_inbox / check_agent_status / get_profile_info** — data access
+- **idle** — mark task complete
+
+### Tier 2 — Not Available in This Environment:
+- **shell_exec / shell_view / shell_wait / shell_write_to_process / shell_kill_process** — No local shell. Use browser_task for web automation instead.
+- **browser_click / browser_input / browser_move_mouse / browser_press_key / browser_select_option / browser_scroll_up / browser_scroll_down / browser_console_exec / browser_console_view** — Granular browser control requires persistent CDP WebSocket. Use browser_task instead.
+- **deploy_expose_port / deploy_apply_deployment** — No local server to deploy from.
+- **make_manus_page** — MDX page rendering not available.
+- **file_str_replace / file_find_in_content** — Use file_read + file_write for modifications.
+
+When a Tier 2 tool is called, you'll get an error explaining the limitation and suggesting the Tier 1 alternative.
+
 ## What You Can Do
-- **Job Search & Applications**: Search for jobs, view matches, optimize resumes, submit applications, check application status
+- **Job Search & Applications**: Search for jobs, view matches, optimize resumes, submit applications, check status
 - **Web Research**: Search the web, read any website, extract information
-- **Browser Automation**: Spin up real browser sessions to complete complex multi-step web tasks (apply to jobs, purchase items, fill forms, etc.)
+- **Browser Automation**: Spin up real browser sessions for complex multi-step web tasks
 - **Shopping**: Place automated shopping orders using saved payment and shipping info
 - **Communication**: Make phone calls, send SMS/WhatsApp messages, check email inbox
 - **Profile Access**: View user profile, resumes, preferences, credits, saved addresses and cards
-
-## Platform Context
-This is a career automation and digital operations suite. Users have profiles, resumes, job preferences, saved payment cards, and shipping addresses. Connected integrations include Browser Use Cloud (web automation), Skyvern (job applications), Twilio (calls/SMS), Firecrawl (web search/scraping), and OpenAI.
+- **File Management**: Read and write notes, documents, and data to platform storage
 
 ## Response Style
 - Start with what you're DOING, not what you COULD do
 - After tool execution, summarize results concisely
-- Use tables for structured data (job lists, applications, etc.)
-- Keep responses focused and actionable
-- If a multi-step plan is needed, outline it briefly then execute step by step`;
+- Use tables for structured data
+- Keep responses focused and actionable`;
 
 // ── Tool Execution ──────────────────────────────────────────────────────────
 async function executeTool(
@@ -248,13 +602,175 @@ async function executeTool(
 ): Promise<string> {
   try {
     switch (toolName) {
+      // ── Communication ──────────────────────────────────────────────────
+      case "message_notify_user":
+        return JSON.stringify({ delivered: true, text: args.text });
+
+      case "message_ask_user":
+        return JSON.stringify({ question_posed: true, text: args.text, note: "The user will see this in chat. Wait for their next message." });
+
+      // ── File Operations ────────────────────────────────────────────────
+      case "file_read": {
+        const filePath = args.file as string;
+        if (filePath.startsWith("resumes/") || filePath.endsWith(".pdf")) {
+          const { data, error } = await supabase.storage.from("resumes").download(filePath);
+          if (error) return JSON.stringify({ error: `File not found: ${error.message}` });
+          const text = await data.text();
+          return JSON.stringify({ file: filePath, content: text.substring(0, 5000), size: text.length });
+        }
+        if (filePath.includes(":")) {
+          const [table, id] = filePath.split(":");
+          const { data, error } = await supabase.from(table).select("*").eq("id", id).single();
+          if (error) return JSON.stringify({ error: error.message });
+          return JSON.stringify({ record: data });
+        }
+        if (filePath.includes("log")) {
+          const { data } = await supabase.from("agent_logs").select("*")
+            .eq("user_id", userId).order("created_at", { ascending: false }).limit(20);
+          return JSON.stringify({ logs: data || [] });
+        }
+        return JSON.stringify({ error: `Cannot read '${filePath}'. Supported: 'resumes/filename', 'table_name:id', or 'logs'.` });
+      }
+
+      case "file_write": {
+        const fileName = args.file as string;
+        const content = args.content as string;
+        const { data, error } = await supabase.from("agent_logs").insert({
+          user_id: userId, agent_name: "manus", log_level: "info",
+          message: `File: ${fileName}`,
+          metadata: { content, filename: fileName, type: "file_write" },
+        }).select().single();
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ success: true, id: data.id, message: `Saved '${fileName}' to platform storage.` });
+      }
+
+      case "file_find_by_name": {
+        const searchPath = (args.path as string) || "resumes";
+        const { data, error } = await supabase.storage.from("resumes").list(searchPath === "resumes" ? "" : searchPath);
+        if (error) return JSON.stringify({ error: error.message });
+        const glob = (args.glob as string) || "*";
+        const pattern = new RegExp(glob.replace(/\*/g, ".*").replace(/\?/g, "."), "i");
+        const matches = (data || []).filter((f: any) => pattern.test(f.name));
+        return JSON.stringify({ files: matches.map((f: any) => ({ name: f.name, size: f.metadata?.size })) });
+      }
+
+      case "file_str_replace":
+      case "file_find_in_content":
+        return JSON.stringify({ error: `${toolName} is not available. Use file_read to get content, modify it, and file_write to save.` });
+
+      // ── Shell Operations (NOT AVAILABLE) ───────────────────────────────
+      case "shell_exec":
+      case "shell_view":
+      case "shell_wait":
+      case "shell_write_to_process":
+      case "shell_kill_process":
+        return JSON.stringify({
+          error: "Shell operations are not available. Manus runs in a serverless edge function, not a VM. Use browser_task for web automation or platform-native tools for data access.",
+        });
+
+      // ── Browser: view / navigate / restart (FUNCTIONAL) ───────────────
+      case "browser_view": {
+        const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+        if (!BU_API_KEY) return JSON.stringify({ error: "Browser automation not configured." });
+        const res = await fetch("https://api.browser-use.com/api/v2/sessions?filterBy=active&pageSize=1", {
+          headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+        });
+        if (!res.ok) return JSON.stringify({ error: "Failed to check browser sessions." });
+        const sessions = await res.json();
+        if (!sessions.items?.length) return JSON.stringify({ status: "no_active_session", message: "No browser session running." });
+        const session = sessions.items[0];
+        const taskRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${session.id}`, {
+          headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+        });
+        const detail = taskRes.ok ? await taskRes.json() : {};
+        return JSON.stringify({ sessionId: session.id, status: session.status, liveUrl: session.liveUrl || detail.liveUrl, tasks: detail.tasks || [] });
+      }
+
+      case "browser_navigate": {
+        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+        if (!FIRECRAWL_API_KEY) return JSON.stringify({ error: "Web browsing not configured — Firecrawl needed." });
+        let url = (args.url as string).trim();
+        if (!url.startsWith("http")) url = `https://${url}`;
+        const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${FIRECRAWL_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
+        });
+        if (!res.ok) return JSON.stringify({ error: `Failed to navigate to ${url}` });
+        const data = await res.json();
+        const markdown = data.data?.markdown || data.markdown || "";
+        const meta = data.data?.metadata || data.metadata || {};
+        return JSON.stringify({ title: meta.title, url: meta.sourceURL || url, content: markdown.substring(0, 4000) });
+      }
+
+      case "browser_restart": {
+        const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+        if (BU_API_KEY) {
+          const res = await fetch("https://api.browser-use.com/api/v2/sessions?filterBy=active&pageSize=5", {
+            headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+          });
+          if (res.ok) {
+            const sessions = await res.json();
+            for (const s of sessions.items || []) {
+              await fetch(`https://api.browser-use.com/api/v2/sessions/${s.id}`, {
+                method: "PATCH",
+                headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "stop" }),
+              });
+            }
+          }
+        }
+        return executeTool("browser_navigate", args, supabase, userId);
+      }
+
+      // ── Granular Browser Controls (NOT AVAILABLE — use browser_task) ───
+      case "browser_click":
+      case "browser_input":
+      case "browser_move_mouse":
+      case "browser_press_key":
+      case "browser_select_option":
+      case "browser_scroll_up":
+      case "browser_scroll_down":
+      case "browser_console_exec":
+      case "browser_console_view":
+        return JSON.stringify({
+          error: `Granular browser control (${toolName}) is not available in this serverless environment. Use browser_task instead — describe the full interaction in natural language and the browser agent handles all clicking, typing, and scrolling autonomously.`,
+        });
+
+      // ── Web Search ─────────────────────────────────────────────────────
+      case "info_search_web":
+      case "search_web": {
+        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+        if (!FIRECRAWL_API_KEY) return JSON.stringify({ error: "Web search not configured — Firecrawl needed." });
+        const res = await fetch("https://api.firecrawl.dev/v1/search", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${FIRECRAWL_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: args.query, limit: 8 }),
+        });
+        if (!res.ok) return JSON.stringify({ error: "Search failed" });
+        const data = await res.json();
+        const results = (data.data || []).map((r: any) => ({
+          title: r.title, url: r.url, description: r.description || r.markdown?.substring(0, 300),
+        }));
+        return JSON.stringify({ results });
+      }
+
+      // ── Deployment (NOT AVAILABLE) ─────────────────────────────────────
+      case "deploy_expose_port":
+      case "deploy_apply_deployment":
+        return JSON.stringify({ error: "Deployment tools are not available. Manus runs in a serverless environment." });
+
+      case "make_manus_page":
+        return JSON.stringify({ error: "make_manus_page is not available. MDX rendering requires a local build system." });
+
+      // ── Idle ───────────────────────────────────────────────────────────
+      case "idle":
+        return JSON.stringify({ status: "idle", message: "All tasks completed." });
+
+      // ═══ PLATFORM-NATIVE TOOLS ════════════════════════════════════════
       case "run_job_search": {
-        const { data: resume } = await supabase
-          .from("resumes")
-          .select("id, parsed_content")
-          .eq("user_id", userId)
-          .eq("is_primary", true)
-          .single();
+        const { data: resume } = await supabase.from("resumes").select("id, parsed_content")
+          .eq("user_id", userId).eq("is_primary", true).single();
         if (!resume) return JSON.stringify({ error: "No primary resume found. Upload a resume first." });
         const { data, error } = await supabase.functions.invoke("search-jobs-deep", {
           body: { resumeId: resume.id, customQuery: args.query || undefined },
@@ -264,12 +780,8 @@ async function executeTool(
       }
 
       case "optimize_resume": {
-        const { data: resume } = await supabase
-          .from("resumes")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("is_primary", true)
-          .single();
+        const { data: resume } = await supabase.from("resumes").select("id")
+          .eq("user_id", userId).eq("is_primary", true).single();
         if (!resume) return JSON.stringify({ error: "No primary resume found." });
         const { data, error } = await supabase.functions.invoke("optimize-resume", {
           body: { resumeId: resume.id, jobDescription: args.job_description || undefined },
@@ -293,9 +805,7 @@ async function executeTool(
         const limit = (args.limit as number) || 10;
         const { data: jobs } = await supabase.from("jobs")
           .select("id, title, company, location, match_score, url, created_at")
-          .eq("user_id", userId)
-          .order("match_score", { ascending: false, nullsFirst: false })
-          .limit(limit);
+          .eq("user_id", userId).order("match_score", { ascending: false, nullsFirst: false }).limit(limit);
         return JSON.stringify({ jobs: jobs || [], count: jobs?.length || 0 });
       }
 
@@ -312,12 +822,10 @@ async function executeTool(
         const { data: address } = await supabase.from("shipping_addresses")
           .select("id").eq("user_id", userId).eq("is_default", true).single();
         const { data, error } = await supabase.from("auto_shop_orders").insert({
-          user_id: userId,
-          product_query: args.product as string,
+          user_id: userId, product_query: args.product as string,
           max_price: (args.max_price as number) || null,
           quantity: (args.quantity as number) || 1,
-          shipping_address_id: address?.id || null,
-          status: "pending",
+          shipping_address_id: address?.id || null, status: "pending",
         }).select().single();
         if (error) return JSON.stringify({ error: error.message });
         await supabase.functions.invoke("auto-shop", {
@@ -337,12 +845,8 @@ async function executeTool(
           supabase.from("payment_cards").select("id, card_name, cardholder_name, is_default").eq("user_id", userId),
         ]);
         return JSON.stringify({
-          profile: profile.data,
-          preferences: prefs.data,
-          resumes: resume.data,
-          credits: credits.data?.balance || 0,
-          shippingAddresses: addresses.data || [],
-          paymentCards: cards.data || [],
+          profile: profile.data, preferences: prefs.data, resumes: resume.data,
+          credits: credits.data?.balance || 0, shippingAddresses: addresses.data || [], paymentCards: cards.data || [],
         });
       }
 
@@ -354,55 +858,19 @@ async function executeTool(
         return JSON.stringify({ emails: emails || [], count: emails?.length || 0 });
       }
 
-      case "search_web": {
-        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-        if (!FIRECRAWL_API_KEY) return JSON.stringify({ error: "Web search not configured — Firecrawl connector needed." });
-        const res = await fetch("https://api.firecrawl.dev/v1/search", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${FIRECRAWL_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ query: args.query, limit: 5 }),
-        });
-        if (!res.ok) return JSON.stringify({ error: "Search failed" });
-        const data = await res.json();
-        const results = (data.data || []).map((r: any) => ({
-          title: r.title, url: r.url,
-          description: r.description || r.markdown?.substring(0, 300),
-        }));
-        return JSON.stringify({ results });
-      }
-
-      case "browse_website": {
-        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-        if (!FIRECRAWL_API_KEY) return JSON.stringify({ error: "Web browsing not configured — Firecrawl connector needed." });
-        let url = (args.url as string).trim();
-        if (!url.startsWith("http")) url = `https://${url}`;
-        const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${FIRECRAWL_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
-        });
-        if (!res.ok) return JSON.stringify({ error: `Failed to browse ${url}` });
-        const data = await res.json();
-        const markdown = data.data?.markdown || data.markdown || "";
-        const meta = data.data?.metadata || data.metadata || {};
-        return JSON.stringify({ title: meta.title, url: meta.sourceURL || url, content: markdown.substring(0, 4000) });
-      }
+      case "browse_website":
+        return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
         const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
         if (!BU_API_KEY) return JSON.stringify({ error: "Browser automation not configured — BROWSER_USE_API_KEY needed." });
 
-        // Get user's browser profile for auth persistence
         const { data: browserProfile } = await supabase.from("browser_profiles")
           .select("browser_use_profile_id").eq("user_id", userId).single();
 
-        const taskBody: any = {
-          task: args.task as string,
-          maxSteps: (args.max_steps as number) || 50,
-        };
+        const taskBody: any = { task: args.task as string, maxSteps: (args.max_steps as number) || 50 };
         if (args.start_url) taskBody.startUrl = args.start_url as string;
         if (browserProfile?.browser_use_profile_id) {
-          // Create session with profile first
           const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
             method: "POST",
             headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
@@ -419,25 +887,20 @@ async function executeTool(
           headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
           body: JSON.stringify(taskBody),
         });
-
         if (!res.ok) {
           const errText = await res.text();
           return JSON.stringify({ error: `Browser task failed (${res.status}): ${errText}` });
         }
         const taskData = await res.json();
 
-        // Get live URL
-        const sessionRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${taskData.sessionId}`, {
+        const sessionRes2 = await fetch(`https://api.browser-use.com/api/v2/sessions/${taskData.sessionId}`, {
           headers: { "X-Browser-Use-API-Key": BU_API_KEY },
         });
-        const sessionData = sessionRes.ok ? await sessionRes.json() : {};
+        const sessionData = sessionRes2.ok ? await sessionRes2.json() : {};
 
         return JSON.stringify({
-          success: true,
-          taskId: taskData.id,
-          sessionId: taskData.sessionId,
-          liveUrl: sessionData.liveUrl || null,
-          message: "Browser task launched. The agent is working on it now.",
+          success: true, taskId: taskData.id, sessionId: taskData.sessionId,
+          liveUrl: sessionData.liveUrl || null, message: "Browser task launched. The agent is working on it now.",
         });
       }
 
@@ -448,7 +911,6 @@ async function executeTool(
         if (!TWILIO_SID || !TWILIO_TOKEN) return JSON.stringify({ error: "Telephony not configured — Twilio credentials needed." });
 
         const twiml = `<Response><Say voice="Polly.Matthew">${(args.script || args.objective as string).replace(/[<>&'"]/g, "")}</Say></Response>`;
-
         const callParams = new URLSearchParams();
         callParams.append("To", args.phone_number as string);
         callParams.append("From", TWILIO_NUMBER);
@@ -462,31 +924,23 @@ async function executeTool(
           },
           body: callParams.toString(),
         });
-
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           return JSON.stringify({ error: `Call failed (${res.status}): ${errData.message || "Unknown error"}` });
         }
         const callData = await res.json();
-        return JSON.stringify({
-          success: true,
-          callSid: callData.sid,
-          status: callData.status,
-          to: callData.to,
-          message: `Call initiated to ${args.phone_number}. Objective: ${args.objective}`,
-        });
+        return JSON.stringify({ success: true, callSid: callData.sid, status: callData.status, to: callData.to, message: `Call initiated to ${args.phone_number}` });
       }
 
       case "send_sms": {
         const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
         const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
         const TWILIO_NUMBER = Deno.env.get("TWILIO_WHATSAPP_NUMBER") || "";
-        if (!TWILIO_SID || !TWILIO_TOKEN) return JSON.stringify({ error: "Messaging not configured — Twilio credentials needed." });
+        if (!TWILIO_SID || !TWILIO_TOKEN) return JSON.stringify({ error: "Messaging not configured — Twilio needed." });
 
         const channel = (args.channel as string) || "sms";
         const from = channel === "whatsapp" ? TWILIO_NUMBER : TWILIO_NUMBER.replace("whatsapp:", "");
         const to = channel === "whatsapp" ? `whatsapp:${args.phone_number}` : args.phone_number as string;
-
         const msgParams = new URLSearchParams();
         msgParams.append("To", to);
         msgParams.append("From", from);
@@ -500,7 +954,6 @@ async function executeTool(
           },
           body: msgParams.toString(),
         });
-
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           return JSON.stringify({ error: `Message failed: ${errData.message || res.status}` });
@@ -513,38 +966,25 @@ async function executeTool(
         const SKYVERN_KEY = Deno.env.get("SKYVERN_API_KEY");
         if (!SKYVERN_KEY) return JSON.stringify({ error: "Job application engine not configured — Skyvern API key needed." });
 
-        // Get user data for the application
         const [profileRes, resumeRes] = await Promise.all([
           supabase.from("profiles").select("*").eq("user_id", userId).single(),
           supabase.from("resumes").select("*").eq("user_id", userId).eq("is_primary", true).single(),
         ]);
 
-        const profile = profileRes.data;
-        const resume = resumeRes.data;
-
-        // Create application record
         let jobId = args.job_id as string;
         if (!jobId) {
           const { data: newJob } = await supabase.from("jobs").insert({
-            user_id: userId,
-            title: "Direct Application",
+            user_id: userId, title: "Direct Application",
             company: new URL(args.job_url as string).hostname,
-            source: "agent",
-            url: args.job_url as string,
+            source: "agent", url: args.job_url as string,
           }).select().single();
           jobId = newJob?.id || "";
         }
 
         const { data, error } = await supabase.functions.invoke("submit-application", {
-          body: {
-            jobId,
-            jobUrl: args.job_url,
-            coverLetter: args.cover_letter || undefined,
-            userId,
-          },
+          body: { jobId, jobUrl: args.job_url, coverLetter: args.cover_letter || undefined, userId },
           headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}` },
         });
-
         return JSON.stringify(data || { error: error?.message || "Application submission failed" });
       }
 
@@ -586,7 +1026,7 @@ serve(async (req) => {
 
     if (stream) {
       let currentMessages = [...fullMessages];
-      let maxLoops = 8; // Allow more loops for complex multi-tool tasks
+      let maxLoops = 12;
 
       while (maxLoops-- > 0) {
         const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -612,6 +1052,7 @@ serve(async (req) => {
           currentMessages.push(choice.message);
           for (const tc of choice.message.tool_calls) {
             const toolArgs = JSON.parse(tc.function.arguments || "{}");
+            console.log(`[Manus] Tool: ${tc.function.name}`, JSON.stringify(toolArgs).substring(0, 200));
             const result = await executeTool(tc.function.name, toolArgs, supabase, user.id);
             currentMessages.push({ role: "tool", tool_call_id: tc.id, content: result });
           }
@@ -631,7 +1072,7 @@ serve(async (req) => {
         });
       }
 
-      return new Response(JSON.stringify({ error: "Agent loop exceeded" }), {
+      return new Response(JSON.stringify({ error: "Agent loop exceeded max iterations" }), {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -640,12 +1081,7 @@ serve(async (req) => {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        messages: fullMessages,
-        tools: AGENT_TOOLS,
-        tool_choice: "auto",
-      }),
+      body: JSON.stringify({ model: "gpt-4o", messages: fullMessages, tools: AGENT_TOOLS, tool_choice: "auto" }),
     });
     const data = await res.json();
     return new Response(JSON.stringify(data), {
