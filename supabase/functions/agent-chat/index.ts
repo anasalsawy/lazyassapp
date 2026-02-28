@@ -662,9 +662,33 @@ async function executeTool(
         return JSON.stringify({ files: matches.map((f: any) => ({ name: f.name, size: f.metadata?.size })) });
       }
 
-      case "file_str_replace":
-      case "file_find_in_content":
-        return JSON.stringify({ error: `${toolName} is not available. Use file_read to get content, modify it, and file_write to save.` });
+      case "file_str_replace": {
+        // Read from agent_logs, find matching content, replace, and write back
+        const targetFile = args.file as string;
+        const oldStr = args.old_str as string;
+        const newStr = args.new_str as string;
+        const { data: logs } = await supabase.from("agent_logs").select("id, metadata")
+          .eq("user_id", userId).eq("agent_name", "manus")
+          .order("created_at", { ascending: false }).limit(50);
+        const match = (logs || []).find((l: any) => l.metadata?.filename === targetFile && l.metadata?.content?.includes(oldStr));
+        if (!match) return JSON.stringify({ error: `File '${targetFile}' not found or string not matched.` });
+        const updated = (match.metadata as any).content.replace(oldStr, newStr);
+        await supabase.from("agent_logs").update({ metadata: { ...(match.metadata as any), content: updated } }).eq("id", match.id);
+        return JSON.stringify({ success: true, file: targetFile, message: "String replaced." });
+      }
+
+      case "file_find_in_content": {
+        const searchFile = args.file as string;
+        const regex = new RegExp(args.regex as string, "gi");
+        const { data: logs } = await supabase.from("agent_logs").select("metadata")
+          .eq("user_id", userId).eq("agent_name", "manus")
+          .order("created_at", { ascending: false }).limit(50);
+        const fileLog = (logs || []).find((l: any) => l.metadata?.filename === searchFile);
+        if (!fileLog) return JSON.stringify({ error: `File '${searchFile}' not found.` });
+        const content = (fileLog.metadata as any).content || "";
+        const matches = content.match(regex) || [];
+        return JSON.stringify({ file: searchFile, matches, count: matches.length });
+      }
 
       // ── Shell Operations (NOT AVAILABLE) ───────────────────────────────
       case "shell_exec":
