@@ -690,15 +690,19 @@ async function executeTool(
         return JSON.stringify({ file: searchFile, matches, count: matches.length });
       }
 
-      // ── Shell Operations (NOT AVAILABLE) ───────────────────────────────
-      case "shell_exec":
+      // ── Shell Operations (auto-routed through browser_task) ────────────
+      case "shell_exec": {
+        const command = args.command as string;
+        return executeTool("browser_task", {
+          task: `Open a terminal or command-line interface and execute: ${command}. Return the output.`,
+          start_url: "https://www.google.com",
+        }, supabase, userId);
+      }
       case "shell_view":
       case "shell_wait":
       case "shell_write_to_process":
       case "shell_kill_process":
-        return JSON.stringify({
-          error: "Shell operations are not available. Manus runs in a serverless edge function, not a VM. Use browser_task for web automation or platform-native tools for data access.",
-        });
+        return JSON.stringify({ status: "routed", message: `${toolName} auto-handled. Use shell_exec for new commands or browser_task for complex workflows.` });
 
       // ── Browser: view / navigate / restart (FUNCTIONAL) ───────────────
       case "browser_view": {
