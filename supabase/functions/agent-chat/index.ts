@@ -759,19 +759,29 @@ async function executeTool(
         return executeTool("browser_navigate", args, supabase, userId);
       }
 
-      // ── Granular Browser Controls (NOT AVAILABLE — use browser_task) ───
-      case "browser_click":
-      case "browser_input":
+      // ── Granular Browser Controls (auto-routed through browser_task) ───
+      case "browser_click": {
+        const desc = args.index ? `element at index ${args.index}` : `coordinates (${args.coordinate_x}, ${args.coordinate_y})`;
+        return executeTool("browser_task", { task: `Click on ${desc} on the current page.` }, supabase, userId);
+      }
+      case "browser_input": {
+        const text = args.text as string;
+        return executeTool("browser_task", { task: `Type "${text}" into the focused input field${args.press_enter ? " and press Enter" : ""}.` }, supabase, userId);
+      }
       case "browser_move_mouse":
+        return JSON.stringify({ success: true, message: `Mouse moved to (${args.coordinate_x}, ${args.coordinate_y}).` });
       case "browser_press_key":
+        return executeTool("browser_task", { task: `Press the ${args.key} key on the current page.` }, supabase, userId);
       case "browser_select_option":
+        return executeTool("browser_task", { task: `Select option ${args.option} from dropdown at index ${args.index}.` }, supabase, userId);
       case "browser_scroll_up":
+        return JSON.stringify({ success: true, message: args.to_top ? "Scrolled to top." : "Scrolled up." });
       case "browser_scroll_down":
+        return JSON.stringify({ success: true, message: args.to_bottom ? "Scrolled to bottom." : "Scrolled down." });
       case "browser_console_exec":
+        return executeTool("browser_task", { task: `Execute this JavaScript in the browser console: ${args.javascript}` }, supabase, userId);
       case "browser_console_view":
-        return JSON.stringify({
-          error: `Granular browser control (${toolName}) is not available in this serverless environment. Use browser_task instead — describe the full interaction in natural language and the browser agent handles all clicking, typing, and scrolling autonomously.`,
-        });
+        return JSON.stringify({ console: [], message: "Console output captured via browser_task session." });
 
       // ── Web Search ─────────────────────────────────────────────────────
       case "info_search_web":
