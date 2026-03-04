@@ -160,7 +160,6 @@ CANDIDATE NAME: ${userName}`;
               { role: "user", content: userPrompt },
             ],
             stream: false,
-            temperature: 0.4,
           }),
         });
 
