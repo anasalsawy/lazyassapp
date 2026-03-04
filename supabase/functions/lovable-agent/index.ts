@@ -298,6 +298,23 @@ Report progress between each stage.
 - ALWAYS update agent_tasks and agent_runs tables when starting/completing workflows
 - For existing edge functions (optimize-resume, search-jobs-deep, submit-application), you can ALSO use invoke_edge_function as a shortcut — they internally call Skyvern too
 
+### Pipeline 7: Professional AI Phone Calls
+**IMPORTANT**: For ALL phone calls, use the \`invoke_edge_function\` tool with function_name: "voice-agent" and body containing:
+- phone_number: E.164 format phone number
+- objective: what the call should accomplish
+- tone: professional/friendly/authoritative/casual (default: professional)
+- script: detailed talking points and strategy
+- caller_name: who to say you're calling on behalf of
+
+The voice-agent conducts REAL multi-turn conversations using AI speech recognition and natural language generation. Each turn:
+1. AI speaks using neural voice synthesis
+2. Twilio captures the other person's speech
+3. AI generates a contextual response
+4. Conversation loops until objective is met or call naturally ends
+
+Do NOT use direct Twilio TwiML \`<Say>\` calls. ALWAYS use the voice-agent edge function for any phone interaction.
+The voice-agent records calls and stores full conversation transcripts in agent_tasks.
+
 ## Examples
 
 ### Good Example (Efficient Tool Usage)

@@ -695,39 +695,33 @@ async function executeTool(
       }
 
       case "phone_call": {
-        const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
-        const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
-        const TWILIO_NUMBER = Deno.env.get("TWILIO_WHATSAPP_NUMBER")?.replace("whatsapp:", "") || "";
-        if (!TWILIO_SID || !TWILIO_TOKEN) return JSON.stringify({ error: "Telephony not configured — Twilio credentials needed." });
+        // Use the conversational voice-agent for professional-grade AI calls
+        const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+        const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        
+        const callBody = {
+          phone_number: args.phone_number as string,
+          objective: args.objective as string,
+          tone: (args.tone as string) || "professional",
+          script: args.script as string || "",
+          caller_name: "my client",
+        };
 
-        const twiml = `<Response><Say voice="Polly.Matthew">${(args.script || args.objective as string).replace(/[<>&'"]/g, "")}</Say></Response>`;
-
-        const callParams = new URLSearchParams();
-        callParams.append("To", args.phone_number as string);
-        callParams.append("From", TWILIO_NUMBER);
-        callParams.append("Twiml", twiml);
-
-        const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/voice-agent?action=initiate`, {
           method: "POST",
           headers: {
-            Authorization: "Basic " + btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`),
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${SERVICE_KEY}`,
+            apikey: Deno.env.get("SUPABASE_ANON_KEY") || SERVICE_KEY!,
           },
-          body: callParams.toString(),
+          body: JSON.stringify(callBody),
         });
 
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          return JSON.stringify({ error: `Call failed (${res.status}): ${errData.message || "Unknown error"}` });
-        }
         const callData = await res.json();
-        return JSON.stringify({
-          success: true,
-          callSid: callData.sid,
-          status: callData.status,
-          to: callData.to,
-          message: `Call initiated to ${args.phone_number}. Objective: ${args.objective}`,
-        });
+        if (!res.ok) {
+          return JSON.stringify({ error: callData.error || `Call failed (${res.status})` });
+        }
+        return JSON.stringify(callData);
       }
 
       case "send_sms": {
@@ -813,9 +807,15 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+  const AI_KEY = LOVABLE_API_KEY || OPENAI_API_KEY;
+  const AI_URL = LOVABLE_API_KEY 
+    ? "https://ai.gateway.lovable.dev/v1/chat/completions" 
+    : "https://api.openai.com/v1/chat/completions";
+  const AI_MODEL = LOVABLE_API_KEY ? "google/gemini-3-flash-preview" : "gpt-4o";
 
-  if (!OPENAI_API_KEY) {
+  if (!AI_KEY) {
     return new Response(JSON.stringify({ error: "AI not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -840,11 +840,11 @@ serve(async (req) => {
       let maxLoops = 8;
 
       while (maxLoops-- > 0) {
-        const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        const openaiRes = await fetch(AI_URL, {
           method: "POST",
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${AI_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "gpt-4o",
+            model: AI_MODEL,
             messages: currentMessages,
             tools: AGENT_TOOLS,
             tool_choice: "auto",
@@ -870,10 +870,10 @@ serve(async (req) => {
         }
 
         // Stream final response
-        const streamRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        const streamRes = await fetch(AI_URL, {
           method: "POST",
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o", messages: currentMessages, stream: true }),
+          headers: { Authorization: `Bearer ${AI_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: AI_MODEL, messages: currentMessages, stream: true }),
         });
 
         if (!streamRes.ok) throw new Error("Stream failed");
@@ -888,11 +888,11 @@ serve(async (req) => {
     }
 
     // Non-streaming fallback
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(AI_URL, {
       method: "POST",
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${AI_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: AI_MODEL,
         messages: fullMessages,
         tools: AGENT_TOOLS,
         tool_choice: "auto",
