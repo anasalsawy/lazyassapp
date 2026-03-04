@@ -22,6 +22,7 @@ import AutoShop from "./pages/AutoShop";
 import AgentMonitoring from "./pages/AgentMonitoring";
 import Agent from "./pages/Agent";
 import Operator from "./pages/Operator";
+import LovableAgent from "./pages/LovableAgent";
 
 const queryClient = new QueryClient();
 
@@ -133,6 +134,16 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <Operator />
+              </ProtectedRoute>
+            }
+          />
+          
+          {/* Lovable Agent */}
+          <Route
+            path="/lovable-agent"
+            element={
+              <ProtectedRoute>
+                <LovableAgent />
               </ProtectedRoute>
             }
           />
