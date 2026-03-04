@@ -32,6 +32,7 @@ const NAV_ITEMS = [
   { path: "/connections", label: "Connections", icon: Link2 },
   { path: "/shop", label: "Auto-Shop", icon: ShoppingCart },
   { path: "/monitoring", label: "Monitoring", icon: Activity },
+  { path: "/lovable-agent", label: "AI Agent", icon: Bot },
 ];
 
 interface AppLayoutProps {
