@@ -813,9 +813,15 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+  const AI_KEY = LOVABLE_API_KEY || OPENAI_API_KEY;
+  const AI_URL = LOVABLE_API_KEY 
+    ? "https://ai.gateway.lovable.dev/v1/chat/completions" 
+    : "https://api.openai.com/v1/chat/completions";
+  const AI_MODEL = LOVABLE_API_KEY ? "google/gemini-3-flash-preview" : "gpt-4o";
 
-  if (!OPENAI_API_KEY) {
+  if (!AI_KEY) {
     return new Response(JSON.stringify({ error: "AI not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -840,11 +846,11 @@ serve(async (req) => {
       let maxLoops = 8;
 
       while (maxLoops-- > 0) {
-        const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        const openaiRes = await fetch(AI_URL, {
           method: "POST",
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${AI_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "gpt-4o",
+            model: AI_MODEL,
             messages: currentMessages,
             tools: AGENT_TOOLS,
             tool_choice: "auto",
@@ -870,10 +876,10 @@ serve(async (req) => {
         }
 
         // Stream final response
-        const streamRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        const streamRes = await fetch(AI_URL, {
           method: "POST",
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o", messages: currentMessages, stream: true }),
+          headers: { Authorization: `Bearer ${AI_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: AI_MODEL, messages: currentMessages, stream: true }),
         });
 
         if (!streamRes.ok) throw new Error("Stream failed");
@@ -888,11 +894,11 @@ serve(async (req) => {
     }
 
     // Non-streaming fallback
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(AI_URL, {
       method: "POST",
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${AI_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: AI_MODEL,
         messages: fullMessages,
         tools: AGENT_TOOLS,
         tool_choice: "auto",
