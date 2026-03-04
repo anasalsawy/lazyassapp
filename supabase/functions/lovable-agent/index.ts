@@ -699,12 +699,27 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
       if (!url) return JSON.stringify({ error: "URL is required" });
 
       try {
+        const contentType = headers?.["Content-Type"] || headers?.["content-type"] || "application/json";
+        const mergedHeaders: Record<string, string> = { "Content-Type": contentType, ...headers };
         const fetchOpts: RequestInit = {
           method,
-          headers: { "Content-Type": "application/json", ...headers },
+          headers: mergedHeaders,
         };
         if (body && ["POST", "PUT", "PATCH"].includes(method)) {
-          fetchOpts.body = JSON.stringify(body);
+          if (contentType.includes("x-www-form-urlencoded")) {
+            // Encode body as form data for APIs like Twilio
+            if (typeof body === "string") {
+              fetchOpts.body = body;
+            } else {
+              const params = new URLSearchParams();
+              for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+                params.append(k, String(v));
+              }
+              fetchOpts.body = params.toString();
+            }
+          } else {
+            fetchOpts.body = JSON.stringify(body);
+          }
         }
 
         console.log(`[http_request] ${method} ${url}`);
