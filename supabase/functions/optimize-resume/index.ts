@@ -116,38 +116,66 @@ serve(async (req) => {
       run_type: "resume_optimization",
       status: "running",
       started_at: new Date().toISOString(),
-      summary_json: { resume_id: resumeId, method: "lovable_ai_deep_research" },
+      summary_json: { resume_id: resumeId, method: "lovable_ai_direct" },
     });
 
+    // Return immediately, run AI in background
     const taskId = task.id;
 
-    // Background processing
+    // Use EdgeRuntime.waitUntil for background processing
     const bgPromise = (async () => {
       try {
-        await supabase.from("agent_tasks").update({
-          result: { stage: "researching" },
-        }).eq("id", taskId);
-
-        // STEP 1: Deep Research — analyze the resume like ChatGPT Deep Research would
-        const researchPrompt = buildResearchPrompt(rawText, userName, jobContext);
-        console.log(`[OptimizeResume] Step 1: Deep Research analysis (${rawText.length} chars)`);
-
-        const researchResult = await callAI(LOVABLE_API_KEY, researchPrompt.system, researchPrompt.user);
-
+        // Update stage
         await supabase.from("agent_tasks").update({
           result: { stage: "optimizing" },
         }).eq("id", taskId);
 
-        // STEP 2: Rewrite — use the research to produce a polished, ATS-optimized resume
-        console.log(`[OptimizeResume] Step 2: Resume rewrite based on research`);
-        const rewritePrompt = buildRewritePrompt(rawText, researchResult, userName, jobContext);
-        const optimizedText = await callAI(LOVABLE_API_KEY, rewritePrompt.system, rewritePrompt.user);
+        const systemPrompt = `You are an expert resume optimization specialist. Your task is to take a resume and produce a significantly improved, ATS-optimized version.
 
-        if (!optimizedText || optimizedText.length < 200) {
-          throw new Error(`AI returned insufficient output (${optimizedText?.length || 0} chars)`);
+RULES:
+- ONLY use information already present in the resume. Do NOT fabricate experience, skills, companies, or dates.
+- Improve wording, structure, bullet points, and keyword density for ATS systems.
+- Use strong action verbs and quantify achievements where the data exists.
+- Ensure clean formatting with clear section headers.
+- Tailor the resume toward the target job context provided.
+- Output the full optimized resume text, ready to use. No commentary, no explanations — just the resume.
+
+TARGET JOB CONTEXT: ${jobContext}
+CANDIDATE NAME: ${userName}`;
+
+        const userPrompt = `Here is the resume to optimize:\n\n${rawText.substring(0, 12000)}`;
+
+        console.log(`[OptimizeResume] Calling Lovable AI for resume optimization (${rawText.length} chars)`);
+
+        const aiRes = await fetch(AI_GATEWAY, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "openai/gpt-5",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            stream: false,
+          }),
+        });
+
+        if (!aiRes.ok) {
+          const errText = await aiRes.text();
+          throw new Error(`AI Gateway error (${aiRes.status}): ${errText}`);
         }
 
-        console.log(`[OptimizeResume] Optimization complete (${optimizedText.length} chars)`);
+        const aiData = await aiRes.json();
+        const optimizedText = aiData.choices?.[0]?.message?.content;
+
+        if (!optimizedText || optimizedText.length < 100) {
+          throw new Error("AI returned insufficient output");
+        }
+
+        console.log(`[OptimizeResume] AI optimization complete (${optimizedText.length} chars)`);
 
         // Save optimized content to resume
         const { data: currentResume } = await supabase
@@ -162,9 +190,8 @@ serve(async (req) => {
           parsed_content: {
             ...existingContent,
             optimizedText,
-            researchAnalysis: researchResult,
             optimizedAt: new Date().toISOString(),
-            optimizationMethod: "lovable_ai_deep_research",
+            optimizationMethod: "lovable_ai_gpt5",
           },
         }).eq("id", resumeId);
 
@@ -175,7 +202,6 @@ serve(async (req) => {
           result: {
             stage: "done",
             optimizedText,
-            researchAnalysis: researchResult,
             charCount: optimizedText.length,
           },
         }).eq("id", taskId);
@@ -187,9 +213,8 @@ serve(async (req) => {
             ended_at: new Date().toISOString(),
             summary_json: {
               resume_id: resumeId,
-              method: "lovable_ai_deep_research",
+              method: "lovable_ai_gpt5",
               output_chars: optimizedText.length,
-              steps: ["research", "rewrite"],
             },
           })
           .eq("user_id", user.id)
@@ -224,6 +249,7 @@ serve(async (req) => {
     if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
       EdgeRuntime.waitUntil(bgPromise);
     } else {
+      // Fallback: await inline (won't time out for short AI calls)
       await bgPromise;
     }
 
@@ -240,89 +266,3 @@ serve(async (req) => {
     });
   }
 });
-
-// ─── AI Call Helper ───
-async function callAI(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
-  const res = await fetch(AI_GATEWAY, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-pro",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      stream: false,
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`AI Gateway error (${res.status}): ${errText}`);
-  }
-
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content || "";
-}
-
-// ─── Step 1: Deep Research Prompt ───
-function buildResearchPrompt(rawText: string, userName: string, jobContext: string) {
-  return {
-    system: `You are a senior career strategist performing deep research on a resume. Your job is to produce a comprehensive analysis that will guide a resume rewriter.
-
-Analyze the following dimensions IN DETAIL:
-
-1. **STRENGTHS**: What are the candidate's strongest selling points? Identify quantifiable achievements, leadership signals, technical depth, and career progression.
-
-2. **WEAKNESSES**: What's missing or poorly communicated? Identify vague bullet points, missing metrics, gaps in storytelling, weak action verbs, buried achievements.
-
-3. **ATS OPTIMIZATION**: Which industry-standard keywords are missing for the target role? What formatting issues would cause ATS rejection? Identify keyword gaps.
-
-4. **STRUCTURAL ISSUES**: Is the resume well-organized? Are sections in the right order for this career stage? Is the summary/objective effective?
-
-5. **COMPETITIVE POSITIONING**: How does this candidate compare to typical applicants for "${jobContext}"? What would make them stand out?
-
-6. **SPECIFIC REWRITES NEEDED**: For each bullet point or section that needs improvement, provide the exact improvement with reasoning.
-
-Be extremely thorough. This analysis drives the final output quality.`,
-    user: `CANDIDATE: ${userName}
-TARGET: ${jobContext}
-
-RESUME TEXT:
-${rawText.substring(0, 15000)}`,
-  };
-}
-
-// ─── Step 2: Rewrite Prompt ───
-function buildRewritePrompt(rawText: string, research: string, userName: string, jobContext: string) {
-  return {
-    system: `You are an elite resume writer with 20 years of experience placing candidates at top companies. You have received a deep research analysis of a resume. Now produce the FINAL optimized resume.
-
-CRITICAL RULES:
-- Use ONLY information from the original resume. NEVER fabricate experiences, companies, dates, degrees, or skills.
-- Every bullet point must start with a powerful action verb (Led, Engineered, Optimized, Spearheaded, Architected, Delivered, etc.)
-- Quantify achievements wherever the data exists (%, $, #, time saved, team size)
-- Include ATS-critical keywords naturally throughout
-- Use clean, scannable formatting with clear section headers
-- Professional Summary should be 3-4 lines, tailored to the target role
-- Order sections strategically: Summary → Experience → Skills → Education → Certifications/Projects
-- Each role should have 3-5 impactful bullet points
-- Remove filler words, passive voice, and generic descriptions
-
-OUTPUT FORMAT:
-Return ONLY the complete, polished resume text. No commentary, no explanations, no markdown formatting instructions. Just the resume content ready to paste into a document.`,
-    user: `CANDIDATE: ${userName}
-TARGET ROLE: ${jobContext}
-
-DEEP RESEARCH ANALYSIS:
-${research.substring(0, 8000)}
-
-ORIGINAL RESUME:
-${rawText.substring(0, 15000)}
-
-Now write the final optimized resume.`,
-  };
-}
