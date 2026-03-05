@@ -23,6 +23,7 @@ import AgentMonitoring from "./pages/AgentMonitoring";
 import Agent from "./pages/Agent";
 import Operator from "./pages/Operator";
 import LovableAgent from "./pages/LovableAgent";
+import CallCenter from "./pages/CallCenter";
 
 const queryClient = new QueryClient();
 
@@ -144,6 +145,16 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <LovableAgent />
+              </ProtectedRoute>
+            }
+          />
+          
+          {/* Call Center */}
+          <Route
+            path="/call-center"
+            element={
+              <ProtectedRoute>
+                <CallCenter />
               </ProtectedRoute>
             }
           />
