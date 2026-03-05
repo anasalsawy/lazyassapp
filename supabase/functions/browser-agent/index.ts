@@ -381,6 +381,7 @@ async function runMultiAgentBrowser(
   lovableApiKey: string,
   firecrawlKey?: string,
   profileId?: string,
+  preCreatedSessionId?: string | null,
 ): Promise<any> {
   const maxSteps = 50;
   let stepCount = 0;
@@ -388,7 +389,7 @@ async function runMultiAgentBrowser(
   const urlStack: string[] = [];
   const visitedSignatures = new Set<string>();
   const failureBudget: Record<string, number> = {};
-  let sessionId: string | null = null;
+  let sessionId: string | null = preCreatedSessionId || null;
   let liveUrl: string | null = null;
 
   // Conversation histories for each agent
@@ -407,12 +408,16 @@ async function runMultiAgentBrowser(
   };
 
   try {
-    // Create browser session
-    await log("info", "Creating browser session...", { profileId });
-    const session = await createBrowserSession(buApiKey, profileId);
-    sessionId = session.sessionId;
-    liveUrl = session.liveUrl || null;
-    await log("info", `Session created: ${sessionId}`, { liveUrl });
+    // Create browser session if not pre-created
+    if (!sessionId) {
+      await log("info", "Creating browser session...", { profileId });
+      const session = await createBrowserSession(buApiKey, profileId);
+      sessionId = session.sessionId;
+      liveUrl = session.liveUrl || null;
+      await log("info", `Session created: ${sessionId}`, { liveUrl });
+    } else {
+      await log("info", `Using pre-created session: ${sessionId}`);
+    }
 
     // Initial page scrape if start_url provided
     let initialPageContent = "";
