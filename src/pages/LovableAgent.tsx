@@ -579,10 +579,69 @@ export default function LovableAgent() {
     }
   }, []);
 
+  // ── Operator Injection (mid-call instructions) ───────────────────────────
+  const [isInjecting, setIsInjecting] = useState(false);
+
+  const injectInstruction = useCallback(async () => {
+    const instruction = input.trim();
+    const taskId = callStateRef.current?.taskId;
+    if (!instruction || !taskId || !session?.access_token) return;
+
+    setIsInjecting(true);
+    setInput("");
+
+    // Show the injection in chat
+    setMessages(prev => [
+      ...prev,
+      { role: "user", content: `🎙️ **Operator injection:** ${instruction}` },
+    ]);
+
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=inject`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ task_id: taskId, instruction }),
+        }
+      );
+
+      const data = await resp.json();
+      if (data.success) {
+        setMessages(prev => [
+          ...prev,
+          { role: "assistant", content: `✅ Instruction injected — will be applied on Maya's next turn. (${data.pendingInjections} pending)` },
+        ]);
+      } else {
+        setMessages(prev => [
+          ...prev,
+          { role: "assistant", content: `⚠️ Injection failed: ${data.error || "Unknown error"}` },
+        ]);
+      }
+    } catch (e: any) {
+      setMessages(prev => [
+        ...prev,
+        { role: "assistant", content: `⚠️ Injection error: ${e.message}` },
+      ]);
+    } finally {
+      setIsInjecting(false);
+    }
+  }, [input, session]);
+
+  const isOnCall = phase === "on_call";
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      if (isOnCall) {
+        injectInstruction();
+      } else {
+        sendMessage();
+      }
     }
   };
 
@@ -718,17 +777,17 @@ export default function LovableAgent() {
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Tell the agent what to do..."
-                className="min-h-[48px] max-h-[200px] resize-none rounded-xl border-border/60 bg-muted/30 pr-12 text-sm focus-visible:ring-primary/30"
+                placeholder={isOnCall ? "Inject instruction to Maya mid-call..." : "Tell the agent what to do..."}
+                className={`min-h-[48px] max-h-[200px] resize-none rounded-xl pr-12 text-sm focus-visible:ring-primary/30 ${isOnCall ? "border-orange-500/60 bg-orange-500/5" : "border-border/60 bg-muted/30"}`}
                 rows={1}
               />
               <Button
-                onClick={() => sendMessage()}
-                disabled={!input.trim() || isLoading}
+                onClick={() => isOnCall ? injectInstruction() : sendMessage()}
+                disabled={!input.trim() || (isLoading && !isOnCall) || isInjecting}
                 size="icon"
-                className="absolute right-2 bottom-2 h-8 w-8 rounded-lg"
+                className={`absolute right-2 bottom-2 h-8 w-8 rounded-lg ${isOnCall ? "bg-orange-500 hover:bg-orange-600" : ""}`}
               >
-                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                {isInjecting ? <Loader2 className="w-4 h-4 animate-spin" /> : isOnCall ? <Mic className="w-4 h-4" /> : isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
             </div>
             <div className="flex items-center justify-between mt-2">
