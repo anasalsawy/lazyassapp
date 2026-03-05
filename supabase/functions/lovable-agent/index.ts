@@ -1072,6 +1072,22 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         // Store taskId for auto-polling by the stream loop
         _activeCallTaskId = responseData.taskId || null;
 
+        // Store retry stores and call config for auto-retry on failure
+        try {
+          const retryRaw = funcBody.retry_stores as string;
+          if (retryRaw) {
+            _activeCallRetryStores = JSON.parse(retryRaw);
+          } else {
+            _activeCallRetryStores = [];
+          }
+        } catch { _activeCallRetryStores = []; }
+        // Save config for retries (without retry_stores and phone_number)
+        const retryConfig = { ...funcBody };
+        delete retryConfig.retry_stores;
+        delete retryConfig.phone_number;
+        delete retryConfig.company_name;
+        _activeCallConfig = retryConfig;
+
         return JSON.stringify({
           success: true,
           callSid: responseData.callSid,
