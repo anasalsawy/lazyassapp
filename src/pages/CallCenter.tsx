@@ -91,15 +91,73 @@ export default function CallCenter() {
       if (resp.ok) {
         const data = await resp.json();
         setActiveCall(data);
-        if (data.status === "completed" || data.status === "failed") {
+        if (data.status === "completed") {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
+          toast.success("Call completed successfully!");
+        } else if (data.status === "failed") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          
+          // Auto-retry: try next store in queue
+          if (retryQueueRef.current.length > 0) {
+            const nextStore = retryQueueRef.current.shift()!;
+            setRetryQueue([...retryQueueRef.current]);
+            setRetryAttempt(prev => prev + 1);
+            toast.info(`Call failed — auto-retrying ${nextStore.name}...`, {
+              icon: <RefreshCw className="w-4 h-4 animate-spin" />,
+            });
+            // Initiate retry call
+            retryCall(nextStore);
+          } else {
+            toast.error("Call failed", { description: data.config?.errorMessage || "No answer or call couldn't complete" });
+          }
         }
       }
     } catch (e) {
       console.error("[CallCenter] poll error:", e);
     }
   }, [session]);
+
+  // Retry call with a different store
+  const retryCall = useCallback(async (store: { name: string; phone: string }) => {
+    if (!session?.access_token) return;
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=initiate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            phone_number: store.phone,
+            objective,
+            caller_name: callerName,
+            company_name: store.name,
+            constraints,
+          }),
+        }
+      );
+      const data = await resp.json();
+      if (!resp.ok) {
+        toast.error(`Retry to ${store.name} failed`, { description: data.error });
+        // Try next store
+        if (retryQueueRef.current.length > 0) {
+          const next = retryQueueRef.current.shift()!;
+          setRetryQueue([...retryQueueRef.current]);
+          setRetryAttempt(prev => prev + 1);
+          retryCall(next);
+        }
+        return;
+      }
+      startPolling(data.taskId);
+    } catch (e: any) {
+      toast.error(`Retry failed`, { description: e.message });
+    }
+  }, [session, objective, callerName, constraints]);
 
   // Start polling when we have an active call
   const startPolling = useCallback((taskId: string) => {
