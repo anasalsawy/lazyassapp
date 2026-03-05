@@ -999,6 +999,30 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
       }
     }
 
+    case "request_secret": {
+      const secretName = args.secret_name as string;
+      const displayLabel = args.display_label as string;
+      const description = args.description as string | undefined;
+      const placeholder = args.placeholder as string | undefined;
+
+      // Emit SSE event to frontend to show secure input
+      if (_sendEventFn) {
+        _sendEventFn("secret_request", {
+          secret_name: secretName,
+          display_label: displayLabel,
+          description: description || `Please enter your ${displayLabel}`,
+          placeholder: placeholder || "",
+        });
+      }
+
+      return JSON.stringify({
+        success: true,
+        message: `I've shown a secure input box for "${displayLabel}". The user will enter the value there. Once submitted, you can use fetch_secret("${secretName}") to retrieve it.`,
+        secret_name: secretName,
+        awaiting_user_input: true,
+      });
+    }
+
     default:
       return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }
