@@ -4,4 +4,5 @@ python-dotenv
 pydantic
 browser-use
 playwright
+langchain-openai
 psutil
