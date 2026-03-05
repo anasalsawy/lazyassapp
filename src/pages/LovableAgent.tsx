@@ -336,7 +336,7 @@ export default function LovableAgent() {
     setPhase("thinking");
     setCurrentPlans([]);
     setCurrentCallState(null);
-
+    callStateRef.current = null;
     let assistantSoFar = "";
 
     const upsertAssistant = (chunk: string) => {
@@ -466,7 +466,7 @@ export default function LovableAgent() {
       setIsLoading(false);
       setPhase("idle");
     }
-  }, [input, isLoading, session, messages, currentPlans, currentCallState, phase]);
+  }, [input, isLoading, session, messages, currentPlans, phase]);
 
   const handleAgentEvent = useCallback((eventType: string, data: any) => {
     switch (eventType) {
