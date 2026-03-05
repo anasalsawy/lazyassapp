@@ -340,6 +340,10 @@ export default function AgentMonitoring() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="simulation">
+            <SimulationReplay />
+          </TabsContent>
         </Tabs>
       </div>
     </AppLayout>
