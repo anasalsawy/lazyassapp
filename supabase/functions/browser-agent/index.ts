@@ -684,15 +684,28 @@ serve(async (req) => {
         const { data: browserProfile } = await supabase.from("browser_profiles")
           .select("browser_use_profile_id").eq("user_id", user.id).single();
 
+        // Pre-create browser session so we can return liveUrl immediately
+        let sessionId: string | null = null;
+        let liveUrl: string | null = null;
+        try {
+          const session = await createBrowserSession(BU_API_KEY!, browserProfile?.browser_use_profile_id);
+          sessionId = session.sessionId;
+          liveUrl = session.liveUrl || null;
+          console.log(`[BrowserAgent] Pre-created session: ${sessionId}, liveUrl: ${liveUrl}`);
+        } catch (sessionErr: any) {
+          console.error(`[BrowserAgent] Session creation failed: ${sessionErr.message}`);
+        }
+
         // Create agent run
         const { data: agentRun } = await supabase.from("agent_runs").insert({
           user_id: user.id,
           run_type: "browser_agent",
           status: "running",
           started_at: new Date().toISOString(),
+          summary_json: { sessionId, liveUrl },
         }).select().single();
 
-        // Run in background
+        // Run in background (pass pre-created sessionId)
         const backgroundWork = async () => {
           try {
             const result = await runMultiAgentBrowser(
@@ -703,6 +716,7 @@ serve(async (req) => {
               LOVABLE_API_KEY!,
               FIRECRAWL_KEY,
               browserProfile?.browser_use_profile_id,
+              sessionId, // pass pre-created session
             );
 
             await supabase.from("agent_runs").update({
@@ -730,6 +744,8 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           success: true,
           runId: agentRun?.id,
+          sessionId,
+          liveUrl,
           status: "running",
           message: "Multi-agent browser task started. Analyst→Director→Navigator loop is active.",
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
