@@ -77,22 +77,22 @@ export interface OrderEmail {
   created_at: string;
 }
 
-// Simple XOR encryption for card data (in production, use proper encryption)
+// XOR encryption for card data - key must match backend (SHOP_PROXY_KEY_2024)
+const ENC_KEY = "SHOP_PROXY_KEY_2024";
+
 const encryptData = (data: string): string => {
-  const key = "autoshop-enc-key";
   let result = "";
   for (let i = 0; i < data.length; i++) {
-    result += String.fromCharCode(data.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    result += String.fromCharCode(data.charCodeAt(i) ^ ENC_KEY.charCodeAt(i % ENC_KEY.length));
   }
   return btoa(result);
 };
 
 const decryptData = (data: string): string => {
-  const key = "autoshop-enc-key";
   const decoded = atob(data);
   let result = "";
   for (let i = 0; i < decoded.length; i++) {
-    result += String.fromCharCode(decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    result += String.fromCharCode(decoded.charCodeAt(i) ^ ENC_KEY.charCodeAt(i % ENC_KEY.length));
   }
   return result;
 };
