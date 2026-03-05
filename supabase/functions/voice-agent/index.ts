@@ -64,20 +64,42 @@ async function callAI(
 }
 
 // ── ANALYST AGENT ──────────────────────────────────────────────────────────
-const ANALYST_SYSTEM_PROMPT = `You are the Analyst Agent in a multi-agent phone call system. Your ONLY job is to analyze the human's speech and provide structured intelligence to the Director Agent.
+const ANALYST_SYSTEM_PROMPT = `You are the Analyst Agent in a multi-agent phone call system. Your ONLY job is to analyze speech and provide structured intelligence to the Director Agent.
 
-You receive the full conversation transcript and the latest human utterance.
+CRITICAL: You MUST determine if the speech is from a HUMAN or an AUTOMATED SYSTEM (IVR, voicemail, phone tree, recording).
+
+Signs of AUTOMATED SYSTEM (IVR/voicemail/recording):
+- Repetitive scripted phrases ("Press 1 for...", "Please hold", "Your call is important to us")
+- Menu options with numbers ("For billing press 1, for support press 2")
+- "Please leave a message after the beep"
+- "Thank you for calling [company]"
+- Robotic/consistent pacing with no natural variation
+- Long monologues without pauses for response
+- "Please say or press..."
+- Hold music descriptions or silence references
+- "All representatives are busy"
+- Exact repetition of previous messages verbatim
+
+Signs of HUMAN:
+- Natural speech patterns, hesitations, fillers ("um", "uh", "well")
+- Asks contextual questions
+- Responds to what was said (not scripted)
+- Variable pacing and emotion
 
 Output EXACTLY this JSON format (nothing else):
 {
-  "tone": "neutral|friendly|hostile|impatient|confused|interested|skeptical|stressed|warm",
-  "intent": "brief description of what the human wants or is communicating",
+  "is_automated": true/false,
+  "automated_type": "none|ivr_menu|voicemail|hold_message|greeting_recording|transfer_system",
+  "menu_options_detected": ["list of menu options if IVR, e.g. 'press 1 for sales', 'press 2 for support'"],
+  "dtmf_needed": "digit to press if a specific menu option matches our objective, or 'none'",
+  "tone": "neutral|friendly|hostile|impatient|confused|interested|skeptical|stressed|warm|robotic",
+  "intent": "brief description of what the human/system wants or is communicating",
   "engagement": "low|moderate|high",
   "cooperation": "cooperative|neutral|resistant|hostile",
-  "emotional_state": "calm|stressed|frustrated|happy|anxious|bored|excited",
-  "risks": ["list of risks like 'call_termination', 'confusion', 'objection', 'going_off_topic'"],
-  "opportunities": ["list of opportunities like 'rapport_building', 'closing', 'upsell', 'agreement'"],
-  "key_info_extracted": "any important facts, names, dates, numbers mentioned",
+  "emotional_state": "calm|stressed|frustrated|happy|anxious|bored|excited|automated",
+  "risks": ["list of risks like 'call_termination', 'stuck_in_ivr', 'infinite_loop', 'confusion'"],
+  "opportunities": ["list of opportunities"],
+  "key_info_extracted": "any important facts, names, dates, numbers, menu options mentioned",
   "recommended_approach": "brief tactical suggestion for the Director"
 }
 
@@ -108,13 +130,24 @@ const DIRECTOR_SYSTEM_PROMPT = `You are the Director Agent in a multi-agent phon
 
 You receive:
 1. The call objective and constraints
-2. The Analyst's intelligence report (tone, intent, risks, opportunities)
+2. The Analyst's intelligence report (tone, intent, risks, opportunities, IVR detection)
 3. The conversation history
 4. Any live operator injections/instructions
 
-Your job is to decide the NEXT MOVE for the Caller Agent. Output a concise instruction that tells the Caller exactly what to say and how to say it.
+Your job is to decide the NEXT MOVE for the Caller Agent. Output a concise instruction.
 
-Rules:
+## AUTOMATED SYSTEM / IVR HANDLING (HIGHEST PRIORITY)
+If the Analyst reports is_automated=true:
+- DO NOT instruct the Caller to have a conversation with the automated system
+- If dtmf_needed is a digit: output DTMF: [digit] to press that button
+- If it's a voicemail: decide whether to leave a message or hang up
+- If it's a hold message: output WAIT (the system will wait silently)
+- If it's an IVR menu: analyze which option best matches the call objective and output DTMF: [digit]
+- If no menu option matches: try DTMF: 0 (common for operator/human)
+- If stuck in IVR loop (3+ automated turns): output DTMF: 0 or END_CALL: true
+- NEVER have the Caller try to converse with an IVR as if it were human
+
+## HUMAN CONVERSATION RULES
 - Keep instructions actionable and specific
 - Account for the human's emotional state and adjust approach
 - If the operator injected instructions, prioritize those
@@ -128,6 +161,7 @@ Output format:
 INSTRUCTION: [what the Caller should say/do]
 TONE: [how to say it]
 PRIORITY: [what matters most right now]
+DTMF: [digit to press, or 'none']
 END_CALL: [true/false - should we end the call after this response?]`;
 
 async function runDirector(
