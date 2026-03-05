@@ -926,54 +926,103 @@ async function executeTool(
         return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
-        // Steel.dev is the primary and only browser engine
+        // Steel.dev is the primary browser engine
+        // For browsing/reading tasks, also scrape content via Firecrawl so the agent gets real data
         const STEEL_API_KEY = Deno.env.get("STEEL_API_KEY");
-        if (!STEEL_API_KEY) return JSON.stringify({ error: "Browser automation not configured — STEEL_API_KEY needed." });
+        const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+        const taskStr = (args.task as string) || "";
+        const startUrl = (args.start_url as string) || "";
 
-        try {
-          // Create a Steel session with proxy + captcha solving
-          const sessionRes = await fetch("https://api.steel.dev/v1/sessions", {
-            method: "POST",
-            headers: { "steel-api-key": STEEL_API_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify({ useProxy: true, solveCaptcha: true }),
-          });
-
-          if (!sessionRes.ok) {
-            const errText = await sessionRes.text();
-            return JSON.stringify({ error: `Steel session failed (${sessionRes.status}): ${errText}` });
+        // Step 1: Always try to scrape page content if we have a URL
+        let pageContent = "";
+        let pageTitle = "";
+        let scrapedUrl = startUrl;
+        if (startUrl && FIRECRAWL_KEY) {
+          try {
+            const scrapeRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${FIRECRAWL_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ url: startUrl, formats: ["markdown"], onlyMainContent: true, waitFor: 3000 }),
+            });
+            if (scrapeRes.ok) {
+              const scrapeData = await scrapeRes.json();
+              pageContent = scrapeData.data?.markdown || scrapeData.markdown || "";
+              pageTitle = scrapeData.data?.metadata?.title || "";
+              scrapedUrl = scrapeData.data?.metadata?.sourceURL || startUrl;
+            }
+          } catch (e) {
+            console.error("[browser_task] Firecrawl scrape failed:", e);
           }
-
-          const steelSession = await sessionRes.json();
-          const debugUrl = steelSession.debugUrl;
-          const sessionId = steelSession.id;
-
-          // Log the task
-          await supabase.from("agent_logs").insert({
-            user_id: userId, agent_name: "manus", log_level: "info",
-            message: `Steel browser task: ${(args.task as string).substring(0, 200)}`,
-            metadata: { task: args.task, start_url: args.start_url, sessionId, debugUrl },
-          });
-
-          // If start_url provided, navigate via Steel's scrape/actions endpoint
-          if (args.start_url && steelSession.wsUrl) {
-            try {
-              await fetch(`https://api.steel.dev/v1/sessions/${sessionId}/actions/navigate`, {
-                method: "POST",
-                headers: { "steel-api-key": STEEL_API_KEY, "Content-Type": "application/json" },
-                body: JSON.stringify({ url: args.start_url }),
-              });
-            } catch { /* navigate is best-effort */ }
-          }
-
-          return JSON.stringify({
-            success: true, sessionId, debugUrl, liveUrl: debugUrl, provider: "steel",
-            message: `🖥️ Steel browser session is live! Watch the agent work in real-time.`,
-            _steelEmbed: { debugUrl, sessionId, interactive: false },
-          });
-        } catch (err: any) {
-          console.error("[Steel]", err);
-          return JSON.stringify({ error: `Steel session failed: ${err.message}` });
         }
+
+        // Step 2: Create Steel session for interactive/live viewing
+        let steelResult: any = null;
+        if (STEEL_API_KEY) {
+          try {
+            const sessionRes = await fetch("https://api.steel.dev/v1/sessions", {
+              method: "POST",
+              headers: { "steel-api-key": STEEL_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({ useProxy: true, solveCaptcha: true }),
+            });
+
+            if (sessionRes.ok) {
+              const steelSession = await sessionRes.json();
+              steelResult = { sessionId: steelSession.id, debugUrl: steelSession.debugUrl };
+
+              // Navigate if URL provided
+              if (startUrl) {
+                try {
+                  await fetch(`https://api.steel.dev/v1/sessions/${steelSession.id}/actions/navigate`, {
+                    method: "POST",
+                    headers: { "steel-api-key": STEEL_API_KEY, "Content-Type": "application/json" },
+                    body: JSON.stringify({ url: startUrl }),
+                  });
+                } catch { /* best-effort */ }
+              }
+            } else {
+              const errText = await sessionRes.text();
+              console.error(`[browser_task] Steel session failed (${sessionRes.status}): ${errText}`);
+            }
+          } catch (err: any) {
+            console.error("[browser_task] Steel error:", err);
+          }
+        }
+
+        // Log the task
+        await supabase.from("agent_logs").insert({
+          user_id: userId, agent_name: "manus", log_level: "info",
+          message: `Steel browser task: ${taskStr.substring(0, 200)}`,
+          metadata: { task: taskStr, start_url: startUrl, sessionId: steelResult?.sessionId, hasContent: !!pageContent },
+        });
+
+        // Build response with actual page content
+        const result: any = {
+          success: true,
+          provider: "steel",
+          task: taskStr,
+          url: scrapedUrl || startUrl,
+        };
+
+        if (pageContent) {
+          result.pageTitle = pageTitle;
+          result.pageContent = pageContent.substring(0, 6000);
+          result.message = `✅ Browsed to ${pageTitle || scrapedUrl}. Page content retrieved successfully.`;
+        }
+
+        if (steelResult) {
+          result.sessionId = steelResult.sessionId;
+          result.debugUrl = steelResult.debugUrl;
+          result.liveUrl = steelResult.debugUrl;
+          result._steelEmbed = { debugUrl: steelResult.debugUrl, sessionId: steelResult.sessionId, interactive: false };
+          result.message = (result.message || "") + ` 🖥️ Live browser session available for interactive tasks.`;
+        }
+
+        if (!pageContent && !steelResult) {
+          result.success = false;
+          result.error = "Browser automation not available — neither STEEL_API_KEY nor FIRECRAWL_API_KEY configured.";
+        }
+
+        return JSON.stringify(result);
       }
 
       case "phone_call": {
