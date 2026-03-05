@@ -1004,75 +1004,137 @@ serve(async (req) => {
     let data = await response.json();
     let choice = data.choices?.[0];
 
-    // Tool call loop (max 10 iterations for chained API calls)
-    let iterations = 0;
-    while (choice?.finish_reason === "tool_calls" && choice?.message?.tool_calls?.length && iterations < 10) {
-      iterations++;
-      const toolCalls = choice.message.tool_calls;
+    // ── STREAMING TOOL LOOP ──
+    // Stream progress events during tool execution so the frontend can show live status
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const sendEvent = (event: string, data: any) => {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        };
 
-      apiMessages.push(choice.message);
+        try {
+          let iterations = 0;
+          while (choice?.finish_reason === "tool_calls" && choice?.message?.tool_calls?.length && iterations < 10) {
+            iterations++;
+            const toolCalls = choice.message.tool_calls;
 
-      for (const tc of toolCalls) {
-        const toolArgs = typeof tc.function.arguments === "string"
-          ? JSON.parse(tc.function.arguments)
-          : tc.function.arguments;
+            apiMessages.push(choice.message);
 
-        console.log(`[tool] ${tc.function.name}`, JSON.stringify(toolArgs).slice(0, 200));
-        const result = await executeTool(tc.function.name, toolArgs);
-        apiMessages.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: result,
-        });
-      }
+            // Send plan event showing what tools will be called
+            sendEvent("plan", {
+              iteration: iterations,
+              tools: toolCalls.map((tc: any) => {
+                const args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+                return { name: tc.function.name, args_preview: summarizeArgs(tc.function.name, args) };
+              }),
+            });
 
-      response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
-          messages: apiMessages,
-          tools: AGENT_TOOLS,
-          stream: false,
-        }),
-      });
+            for (const tc of toolCalls) {
+              const toolArgs = typeof tc.function.arguments === "string"
+                ? JSON.parse(tc.function.arguments)
+                : tc.function.arguments;
 
-      if (!response.ok) break;
-      data = await response.json();
-      choice = data.choices?.[0];
-    }
+              sendEvent("tool_start", { name: tc.function.name, args_preview: summarizeArgs(tc.function.name, toolArgs) });
 
-    // Stream the final response
-    const finalContent = choice?.message?.content || "";
+              console.log(`[tool] ${tc.function.name}`, JSON.stringify(toolArgs).slice(0, 200));
+              const result = await executeTool(tc.function.name, toolArgs);
 
-    const streamResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
+              apiMessages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: result,
+              });
+
+              // Send a brief summary of the result (not the full payload)
+              let resultPreview = "";
+              try {
+                const parsed = JSON.parse(result);
+                if (parsed.error) resultPreview = `Error: ${parsed.error}`;
+                else if (parsed.success === false) resultPreview = `Failed: ${parsed.error || "unknown"}`;
+                else if (parsed.data && Array.isArray(parsed.data)) resultPreview = `Got ${parsed.data.length} results`;
+                else if (parsed.count !== undefined) resultPreview = `${parsed.count} rows`;
+                else if (parsed.success) resultPreview = parsed.message || "Success";
+                else resultPreview = "Done";
+              } catch { resultPreview = result.slice(0, 80); }
+
+              sendEvent("tool_done", { name: tc.function.name, preview: resultPreview });
+            }
+
+            response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: "google/gemini-3-flash-preview",
+                messages: apiMessages,
+                tools: AGENT_TOOLS,
+                stream: false,
+              }),
+            });
+
+            if (!response.ok) break;
+            data = await response.json();
+            choice = data.choices?.[0];
+          }
+
+          // Signal tool phase is done
+          if (iterations > 0) {
+            sendEvent("tools_complete", { iterations });
+          }
+
+          // Stream the final response
+          const finalContent = choice?.message?.content || "";
+
+          sendEvent("phase", { status: "generating" });
+
+          const streamResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${LOVABLE_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "google/gemini-3-flash-preview",
+              messages: [
+                ...apiMessages,
+                ...(finalContent ? [{ role: "assistant", content: finalContent }] : []),
+                { role: "user", content: "Please provide your final response now, incorporating any tool results above. Do NOT reveal raw API keys or secret values to the user — only show masked versions. Summarize what you did and the results. When reporting pipeline status, be clear about what happened and next steps." },
+              ],
+              stream: true,
+            }),
+          });
+
+          if (!streamResponse.ok || !streamResponse.body) {
+            // Fallback: send the non-streamed content
+            const fallbackContent = finalContent || "I processed your request but couldn't stream the response.";
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: fallbackContent } }] })}\n\n`));
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+            return;
+          }
+
+          // Pipe through the SSE stream from the AI gateway
+          const reader = streamResponse.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            controller.enqueue(value);
+          }
+
+          controller.close();
+        } catch (e) {
+          console.error("Stream error:", e);
+          sendEvent("error", { message: e instanceof Error ? e.message : "Unknown error" });
+          controller.close();
+        }
       },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          ...apiMessages,
-          ...(finalContent ? [{ role: "assistant", content: finalContent }] : []),
-          { role: "user", content: "Please provide your final response now, incorporating any tool results above. Do NOT reveal raw API keys or secret values to the user — only show masked versions. Summarize what you did and the results. When reporting pipeline status, be clear about what happened and next steps." },
-        ],
-        stream: true,
-      }),
     });
 
-    if (!streamResponse.ok || !streamResponse.body) {
-      return new Response(JSON.stringify(data), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    return new Response(streamResponse.body, {
-      headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+    return new Response(stream, {
+      headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
     });
   } catch (e) {
     console.error("lovable-agent error:", e);
@@ -1082,3 +1144,18 @@ serve(async (req) => {
     });
   }
 });
+
+// Helper to create human-readable arg summaries
+function summarizeArgs(toolName: string, args: any): string {
+  switch (toolName) {
+    case "fetch_secret": return `secret: ${args.secret_name}`;
+    case "http_request": return `${args.method} ${args.url?.split("?")[0]?.slice(0, 60)}`;
+    case "invoke_edge_function": return `${args.function_name}${args.body?.action ? ` (${args.body.action})` : ""}`;
+    case "query_database": return `${args.table}${args.filters?.length ? ` (${args.filters.length} filters)` : ""}`;
+    case "list_secrets": return "listing available secrets";
+    case "lov-search-files": return `search: "${args.query}"`;
+    case "lov-write": return `write: ${args.file_path}`;
+    case "lov-view": return `read: ${args.file_path}`;
+    default: return JSON.stringify(args).slice(0, 60);
+  }
+}
