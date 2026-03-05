@@ -8,7 +8,8 @@ import ReactMarkdown from "react-markdown";
 import {
   Bot, Send, Loader2, Heart, Code2, FileText, Search, Paintbrush,
   Activity, User, Sparkles, CheckCircle2, Circle, Zap, ChevronDown, ChevronRight,
-  Database, Globe, Key, Terminal, ArrowRight,
+  Database, Globe, Key, Terminal, ArrowRight, Phone, PhoneOff, Mic, Brain, Shield,
+  MessageSquare,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────────────────────
