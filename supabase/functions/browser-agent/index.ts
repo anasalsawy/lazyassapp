@@ -658,11 +658,22 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    // Auth
+    const body = await req.json();
+
+    // Auth: support both user JWT and service-to-service calls with userId in body
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) throw new Error("No authorization header");
-    const { data: { user }, error: authError } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
-    if (authError || !user) throw new Error("Unauthorized");
+    let userId: string;
+
+    if (body.context?.userId) {
+      // Service-to-service call (from agent-chat) — userId provided in body
+      userId = body.context.userId;
+    } else if (authHeader) {
+      const { data: { user }, error: authError } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
+      if (authError || !user) throw new Error("Unauthorized");
+      userId = user.id;
+    } else {
+      throw new Error("No authorization");
+    }
 
     const body = await req.json();
     const action = body.action || "run";
