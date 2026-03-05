@@ -584,7 +584,62 @@ serve(async (req) => {
         });
       }
 
-      // ── STEP 3: CALLER AGENT (only for human conversation) ──
+      // ── HANDLE AUTOMATED SYSTEM (non-hold, non-DTMF) ──
+      // When the Analyst says it's automated but Director didn't pick a DTMF digit,
+      // respond with a SHORT keyword/phrase — NOT full conversational speech.
+      if (analystReport.is_automated && analystReport.automated_type !== "none") {
+        console.log(`[voice-agent] 🤖 AUTOMATED SYSTEM (${analystReport.automated_type}) — Using short keyword response`);
+        
+        // Count consecutive automated turns
+        const recentAutomatedCount = analystReports.slice(-5).filter((r: any) => r.is_automated).length;
+        
+        if (recentAutomatedCount >= 4) {
+          // Stuck in IVR loop — try pressing 0 for operator
+          console.log(`[voice-agent] 🔄 IVR LOOP DETECTED (${recentAutomatedCount} automated turns) — Pressing 0 for operator`);
+          history.push({ role: "assistant", content: `[SYSTEM: IVR loop detected, pressing 0 for operator]` });
+          
+          await supabase.from("agent_tasks").update({
+            result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true },
+          }).eq("id", taskId);
+          
+          return new Response(buildDtmfTwiml("0", gatherUrl, undefined, voice), {
+            headers: { "Content-Type": "text/xml" },
+          });
+        }
+        
+        // Generate a SHORT keyword response for the IVR (not conversational)
+        const ivrResponsePrompt = `The phone system is automated (${analystReport.automated_type}). It said: "${speechResult}"
+        
+Our objective: ${config.objective}
+
+Generate a SHORT response (1-5 words max) that the IVR system would understand. Examples:
+- "Yes" / "No" / "Correct"
+- "Reservations" / "Front desk" / "Operator"  
+- A specific answer like a date, name, or number
+- "Representative" or "Agent" to reach a human
+
+DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keyword/answer.`;
+
+        const ivrResponse = await callAI(
+          "You generate ultra-short keyword responses for automated phone systems. Output ONLY the keyword or short phrase. Nothing else.",
+          [{ role: "user", content: ivrResponsePrompt }],
+          30
+        );
+        
+        const shortResponse = ivrResponse.trim().replace(/['"]/g, "").substring(0, 50) || "Yes";
+        console.log(`[voice-agent] IVR Response: "${shortResponse}"`);
+        history.push({ role: "assistant", content: shortResponse });
+        
+        await supabase.from("agent_tasks").update({
+          result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true },
+        }).eq("id", taskId);
+        
+        return new Response(buildGatherTwiml(shortResponse, gatherUrl, voice), {
+          headers: { "Content-Type": "text/xml" },
+        });
+      }
+
+      // ── STEP 3: CALLER AGENT (only for HUMAN conversation) ──
       console.log(`[voice-agent] Running Caller Agent...`);
       const { speech, shouldEnd: callerWantsEnd } = await runCaller(
         config, directorResult.instruction, directorResult.tone, history
