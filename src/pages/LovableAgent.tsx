@@ -42,12 +42,21 @@ type CallState = {
   recordingUrl: string | null;
 };
 
+type SecretRequest = {
+  secret_name: string;
+  display_label: string;
+  description: string;
+  placeholder: string;
+  status: "pending" | "submitted" | "error";
+};
+
 type Msg = {
   role: "user" | "assistant";
   content: string;
   executionPlan?: ExecutionPlan[];
   callState?: CallState;
   isGenerating?: boolean;
+  secretRequest?: SecretRequest;
 };
 
 // ── Tool Icon Mapper ────────────────────────────────────────────────────────
