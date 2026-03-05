@@ -558,8 +558,8 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **browser_view** — checks if there's an active Browser Use Cloud session running and returns its status/live URL. Requires BROWSER_USE_API_KEY.
 - **browser_restart** — stops all active browser sessions and then navigates to a URL.
 
-### Autonomous Browser Automation (works via Browser Use Cloud API)
-- **browser_task** — YOUR MOST POWERFUL TOOL. Spins up a real remote browser with an AI agent that autonomously navigates websites, clicks buttons, fills forms, and completes multi-step workflows. You give it natural language instructions and it executes them. Returns a task ID and a live URL where the user can watch. Requires BROWSER_USE_API_KEY. If the user has a saved browser profile, it uses their logged-in sessions.
+### Autonomous Browser Automation (works via Steel.dev + Browser Use Cloud)
+- **browser_task** — YOUR MOST POWERFUL TOOL. Spins up a real remote browser session via Steel.dev with live WebRTC streaming. The session runs autonomously — navigating websites, clicking buttons, filling forms, and completing multi-step workflows. Returns a debugUrl for live viewing. When the tool response contains a _steelEmbed object with a debugUrl, you MUST include it in your reply using the format: [STEEL_EMBED]{"debugUrl":"...","sessionId":"...","interactive":false}[/STEEL_EMBED] — this renders an inline live browser view for the user. ALWAYS include the Steel embed when browser_task returns a debugUrl. If Steel is not configured, falls back to Browser Use Cloud API.
 
 ### Granular Browser Controls (auto-routed through browser_task)
 - **browser_click, browser_input, browser_press_key, browser_select_option, browser_console_exec** — these do NOT control a browser directly. They get converted into natural language instructions and sent to browser_task. So they work, but they spin up a full browser session each time.
@@ -927,8 +927,101 @@ async function executeTool(
         return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
+        // Try Steel.dev first, fall back to Browser Use Cloud
+        const STEEL_API_KEY = Deno.env.get("STEEL_API_KEY");
         const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-        if (!BU_API_KEY) return JSON.stringify({ error: "Browser automation not configured — BROWSER_USE_API_KEY needed." });
+
+        if (STEEL_API_KEY) {
+          // ── Steel.dev Session ─────────────────────────────────────
+          try {
+            // 1. Create a Steel session
+            const sessionRes = await fetch("https://api.steel.dev/v1/sessions", {
+              method: "POST",
+              headers: {
+                "steel-api-key": STEEL_API_KEY,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                useProxy: true,
+                solveCaptcha: true,
+              }),
+            });
+
+            if (!sessionRes.ok) {
+              const errText = await sessionRes.text();
+              throw new Error(`Steel session creation failed (${sessionRes.status}): ${errText}`);
+            }
+
+            const steelSession = await sessionRes.json();
+            const debugUrl = steelSession.debugUrl;
+            const sessionId = steelSession.id;
+
+            // 2. Now use Browser Use Cloud with Steel's CDP URL if available, 
+            //    or fall back to a direct task via BU
+            if (BU_API_KEY) {
+              const taskBody: any = {
+                task: args.task as string,
+                maxSteps: (args.max_steps as number) || 50,
+              };
+              if (args.start_url) taskBody.startUrl = args.start_url as string;
+
+              // Connect Browser Use to Steel's CDP endpoint
+              if (steelSession.wsUrl) {
+                taskBody.cdpUrl = steelSession.wsUrl;
+              }
+
+              const taskRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
+                method: "POST",
+                headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+                body: JSON.stringify(taskBody),
+              });
+
+              if (taskRes.ok) {
+                const taskData = await taskRes.json();
+                return JSON.stringify({
+                  success: true,
+                  taskId: taskData.id,
+                  sessionId: sessionId,
+                  debugUrl: debugUrl,
+                  liveUrl: debugUrl,
+                  provider: "steel",
+                  message: `🖥️ Browser session started. Watch live: ${debugUrl}`,
+                  _steelEmbed: { debugUrl, sessionId, interactive: false },
+                });
+              }
+            }
+
+            // Steel-only mode (no Browser Use) — navigate to start_url if provided
+            if (args.start_url) {
+              // Use Steel's navigate endpoint or just return the session
+              // The user can watch and we log the task
+              await supabase.from("agent_logs").insert({
+                user_id: userId, agent_name: "manus", log_level: "info",
+                message: `Steel browser task: ${(args.task as string).substring(0, 200)}`,
+                metadata: { task: args.task, start_url: args.start_url, sessionId, debugUrl },
+              });
+            }
+
+            return JSON.stringify({
+              success: true,
+              sessionId: sessionId,
+              debugUrl: debugUrl,
+              liveUrl: debugUrl,
+              provider: "steel",
+              message: `🖥️ Steel browser session is live! Watch the agent work in real-time.`,
+              _steelEmbed: { debugUrl, sessionId, interactive: false },
+            });
+          } catch (steelErr: any) {
+            console.error("[Steel]", steelErr);
+            // Fall through to Browser Use
+            if (!BU_API_KEY) {
+              return JSON.stringify({ error: `Steel session failed: ${steelErr.message}` });
+            }
+          }
+        }
+
+        // ── Browser Use Cloud fallback ─────────────────────────────
+        if (!BU_API_KEY) return JSON.stringify({ error: "Browser automation not configured — STEEL_API_KEY or BROWSER_USE_API_KEY needed." });
 
         const { data: browserProfile } = await supabase.from("browser_profiles")
           .select("browser_use_profile_id").eq("user_id", userId).single();

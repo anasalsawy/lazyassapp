@@ -1,26 +1,22 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { SteelSessionEmbed } from "@/components/chat/SteelSessionEmbed";
 import { useAuth } from "@/hooks/useAuth";
 import {
-  Bot,
-  Send,
-  Loader2,
-  Sparkles,
-  Briefcase,
-  FileText,
-  ShoppingCart,
-  Search,
-  Mail,
-  Activity,
-  User,
-  Zap,
+  Bot, Send, Loader2, Sparkles, Briefcase, FileText, ShoppingCart,
+  Search, Mail, Activity, User, Zap,
 } from "lucide-react";
 
 type Msg = { role: "user" | "assistant"; content: string };
+
+interface SteelEmbedData {
+  debugUrl: string;
+  sessionId?: string;
+  interactive?: boolean;
+}
 
 const SUGGESTIONS = [
   { icon: Briefcase, text: "Find me matching jobs", color: "text-blue-400" },
@@ -30,6 +26,57 @@ const SUGGESTIONS = [
   { icon: ShoppingCart, text: "Order something for me", color: "text-pink-400" },
   { icon: Search, text: "Research average salaries for my target roles", color: "text-cyan-400" },
 ];
+
+/** Extract Steel embed JSON blocks from assistant messages */
+function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedData[] } {
+  const embeds: SteelEmbedData[] = [];
+  // Match JSON blocks containing _steelEmbed or debugUrl patterns in tool output
+  const embedRegex = /\[STEEL_EMBED\]([\s\S]*?)\[\/STEEL_EMBED\]/g;
+  let text = content;
+  let match;
+
+  while ((match = embedRegex.exec(content)) !== null) {
+    try {
+      const data = JSON.parse(match[1]);
+      if (data.debugUrl) {
+        embeds.push(data);
+      }
+    } catch { /* ignore */ }
+    text = text.replace(match[0], "");
+  }
+
+  // Also check for debugUrl patterns in the raw text (from tool responses)
+  const urlRegex = /https:\/\/[^\s"]+\.steel\.dev[^\s"]*/g;
+  const urls = content.match(urlRegex) || [];
+  for (const url of urls) {
+    if (!embeds.some((e) => e.debugUrl === url)) {
+      embeds.push({ debugUrl: url, interactive: false });
+    }
+  }
+
+  return { text: text.trim(), embeds };
+}
+
+function MessageContent({ content, role }: { content: string; role: "user" | "assistant" }) {
+  const { text, embeds } = useMemo(() =>
+    role === "assistant" ? parseSteelEmbeds(content) : { text: content, embeds: [] },
+    [content, role]
+  );
+
+  return (
+    <>
+      {text && <div className="text-sm whitespace-pre-wrap leading-relaxed">{text}</div>}
+      {embeds.map((embed, i) => (
+        <SteelSessionEmbed
+          key={`${embed.debugUrl}-${i}`}
+          debugUrl={embed.debugUrl}
+          sessionId={embed.sessionId}
+          interactive={embed.interactive}
+        />
+      ))}
+    </>
+  );
+}
 
 export default function Agent() {
   const { session } = useAuth();
@@ -76,10 +123,7 @@ export default function Agent() {
           Authorization: `Bearer ${session.access_token}`,
           apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
-        body: JSON.stringify({
-          messages: [...messages, userMsg],
-          stream: true,
-        }),
+        body: JSON.stringify({ messages: [...messages, userMsg], stream: true }),
       });
 
       if (!resp.ok || !resp.body) {
@@ -136,7 +180,6 @@ export default function Agent() {
         }
       }
 
-      // If no response came through, set a fallback
       if (!assistantSoFar) {
         upsertAssistant("I processed your request. Check the relevant section of the app for results.");
       }
@@ -210,7 +253,7 @@ export default function Agent() {
                           : "bg-muted/60 text-foreground rounded-bl-md"
                       }`}
                     >
-                      <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                      <MessageContent content={msg.content} role={msg.role} />
                     </div>
                     {msg.role === "user" && (
                       <div className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center shrink-0 mt-1">
