@@ -758,6 +758,8 @@ The user can also monitor calls in real-time at /call-center, where they can inj
 // ── Tool Execution ──────────────────────────────────────────────────────────
 // Store user auth token per-request for edge function invocation
 let _currentUserToken: string | null = null;
+// Store current user ID for card injection etc.
+let _currentUserId: string | null = null;
 // Store active call taskId for auto-polling
 let _activeCallTaskId: string | null = null;
 // SSE event emitter — set during stream execution so tools can emit events
