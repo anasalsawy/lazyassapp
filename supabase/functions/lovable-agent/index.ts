@@ -760,6 +760,10 @@ The user can also monitor calls in real-time at /call-center, where they can inj
 let _currentUserToken: string | null = null;
 // Store active call taskId for auto-polling
 let _activeCallTaskId: string | null = null;
+// SSE event emitter — set during stream execution so tools can emit events
+let _sendEventFn: ((event: string, data: any) => void) | null = null;
+// Pending secret requests — tool sets these, stream loop waits for them
+let _pendingSecretRequest: { secret_name: string; display_label: string; description?: string; placeholder?: string; resolve: (value: string) => void } | null = null;
 
 async function executeTool(toolName: string, args: Record<string, unknown>): Promise<string> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
