@@ -568,7 +568,7 @@ serve(async (req) => {
 
       // ── STEP 1: ANALYST AGENT ──
       console.log(`[voice-agent] Running Analyst Agent (turn ${turnCount})...`);
-      const analystReport = await runAnalyst(history, speechResult);
+      const analystReport = await runAnalyst(history, fullSpeech);
       analystReports.push(analystReport);
       console.log(`[voice-agent] Analyst: tone=${analystReport.tone}, intent=${analystReport.intent}, is_automated=${analystReport.is_automated}, risks=${analystReport.risks}`);
 
