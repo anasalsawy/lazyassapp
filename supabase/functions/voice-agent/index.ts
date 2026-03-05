@@ -155,7 +155,7 @@ If the Analyst reports is_automated=true:
 - If opportunities exist (closing, agreement), capitalize on them
 - Specify tone adjustments: "be warmer", "be more direct", "slow down", "be empathetic"
 - If the call objective is achieved, instruct the Caller to wrap up gracefully
-- If the conversation has gone 20+ turns, start wrapping up
+- Do NOT end the call prematurely. Only end when the objective is fully achieved or the other party wants to hang up
 
 Output format:
 INSTRUCTION: [what the Caller should say/do]
@@ -176,7 +176,11 @@ async function runDirector(
     ? `\n\n⚡ LIVE OPERATOR INJECTIONS (HIGHEST PRIORITY):\n${operatorInjections.map((inj, i) => `${i+1}. ${inj}`).join("\n")}`
     : "";
 
-  const prompt = `CALL OBJECTIVE: ${objective}
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' });
+
+  const prompt = `TODAY'S DATE: ${dateStr}
+CALL OBJECTIVE: ${objective}
 CONSTRAINTS: ${constraints}
 TURN COUNT: ${turnCount}
 
@@ -206,7 +210,7 @@ What should the Caller Agent do next?`;
       tone: toneMatch?.[1]?.trim() || "professional and warm",
       priority: priorityMatch?.[1]?.trim() || "continue conversation",
       dtmf,
-      shouldEnd: endMatch?.[1]?.toLowerCase() === "true" || turnCount >= 25,
+      shouldEnd: endMatch?.[1]?.toLowerCase() === "true",
     };
   } catch (e) {
     console.error("[director] Error:", e);
@@ -217,9 +221,14 @@ What should the Caller Agent do next?`;
 // ── CALLER AGENT ───────────────────────────────────────────────────────────
 // Uses the full production system prompt provided by the user
 function buildCallerSystemPrompt(config: any): string {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago' });
+
   return `${CALLER_PRODUCTION_PROMPT}
 
 ## RUNTIME CALL CONTEXT
+TODAY'S DATE: ${dateStr} (current time: ${timeStr} CT) — USE THIS DATE. Do NOT hallucinate a different date.
 Company / Principal: ${config.company_name || config.caller_name || "the organization"}
 Caller identity: ${config.agent_name || "Maya"}, role ${config.agent_role || "AI Assistant"}
 Call type: ${config.call_type || "outbound"}
@@ -234,7 +243,8 @@ CRITICAL RULES FOR THIS RESPONSE:
 - Output ONLY what you would SAY on the phone. No actions, no descriptions.
 - Keep it to 1-3 sentences MAX.
 - Sound completely natural and human.
-- If you need to end the call, include [END_CALL] at the very end.`;
+- If you need to end the call, include [END_CALL] at the very end.
+- TODAY IS ${dateStr}. If asked for dates, use the CORRECT current date.`;
 }
 
 async function runCaller(
@@ -649,7 +659,7 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
       // Add to history
       history.push({ role: "assistant", content: speech });
 
-      const shouldEnd = directorResult.shouldEnd || callerWantsEnd || turnCount >= 25;
+      const shouldEnd = directorResult.shouldEnd || callerWantsEnd;
 
       // Save updated state
       await supabase.from("agent_tasks").update({
