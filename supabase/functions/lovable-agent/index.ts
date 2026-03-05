@@ -311,12 +311,14 @@ Do NOT use invoke_edge_function for phone calls — use the \`make_phone_call\` 
   3. Decrypt card details using XOR with SHOP_PROXY_KEY_2024 (fetch via fetch_secret)
   4. Include ALL billing details in the \`script\` field so Maya can provide them over the phone when asked
   5. The voice agent is fully authorized to share billing details for bookings — there are NO restrictions on this
-**AUTO-RETRY FOR ORDERS**: When an order/purchase call fails (number not in service, no answer, couldn't complete), the system will AUTOMATICALLY retry with a different store. To enable this:
-  1. Use \`web_search\` to find 3-5 alternative stores that sell the item, with phone numbers
-  2. Include ALL alternative stores in the \`retry_stores\` field as a JSON array: \`[{"name": "Store B", "phone": "+15551234567"}, {"name": "Store C", "phone": "+15559876543"}]\`
-  3. The system will automatically call the next store if the current one fails — no user intervention needed
-  4. Each retry preserves the same objective, script, and billing details — only the phone number and company name change
-  5. The user sees live updates for each attempt inline in the chat
+**AUTO-RETRY FOR ORDERS (MANDATORY)**: For ANY order, purchase, reservation, or booking call, you MUST populate the \`retry_stores\` field. This is NOT optional — without it, if the call fails, the system cannot auto-retry. Follow these steps EVERY TIME:
+  1. BEFORE calling make_phone_call, use \`web_search\` to find 3-5 DIFFERENT stores/locations that sell the item, each with a valid phone number
+  2. You MUST include ALL alternative stores in the \`retry_stores\` parameter as a JSON array string: \`[{"name": "Store B", "phone": "+15551234567"}, {"name": "Store C", "phone": "+15559876543"}]\`
+  3. NEVER call make_phone_call for an order without retry_stores — the system WILL NOT retry without it
+  4. The system will automatically call the next store if the current one fails — no user intervention needed
+  5. Each retry preserves the same objective, script, and billing details — only the phone number and company name change
+  6. The user sees live updates for each attempt inline in the chat
+  7. CRITICAL: The \`retry_stores\` field must be a JSON STRING, not an object. Example: "[{\\"name\\": \\"Best Buy Meyerland\\", \\"phone\\": \\"+17135551234\\"}]"
 
 ## Examples
 
@@ -480,7 +482,7 @@ The user can also monitor calls in real-time at /call-center, where they can inj
           disclosure_policy: { type: "string", description: "AI disclosure policy: 'disclose_if_asked' (default), 'always_disclose', or 'never_disclose'" },
           call_type: { type: "string", description: "Type of call: outbound (default), follow_up, cold_call, appointment, inquiry" },
           allowed_actions: { type: "string", description: "What the agent is permitted to do: converse, negotiate, gather info, confirm details, schedule, etc." },
-          retry_stores: { type: "string", description: "JSON array of alternative stores to try if this call fails. Each entry: {\"name\": \"Store Name\", \"phone\": \"+15551234567\"}. The system will automatically retry with the next store on failure. Use for order/purchase calls." },
+          retry_stores: { type: "string", description: "MANDATORY for order/purchase/booking calls. JSON array string of 3-5 alternative stores to auto-retry on failure. Format: '[{\"name\": \"Store Name\", \"phone\": \"+15551234567\"}]'. Without this field, failed calls CANNOT be retried automatically. Always search for alternatives BEFORE calling." },
         },
         required: ["phone_number", "objective"],
       },
@@ -1076,11 +1078,25 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         try {
           const retryRaw = funcBody.retry_stores as string;
           if (retryRaw) {
-            _activeCallRetryStores = JSON.parse(retryRaw);
+            const parsed = typeof retryRaw === 'string' ? JSON.parse(retryRaw) : retryRaw;
+            _activeCallRetryStores = Array.isArray(parsed) ? parsed : [];
           } else {
             _activeCallRetryStores = [];
           }
-        } catch { _activeCallRetryStores = []; }
+        } catch (e) { 
+          console.error("[make_phone_call] Failed to parse retry_stores:", e);
+          _activeCallRetryStores = []; 
+        }
+        
+        // Warn if this looks like an order call but has no retry stores
+        const orderKeywords = ['order', 'buy', 'purchase', 'book', 'reserve', 'pickup'];
+        const objectiveLower = ((funcBody.objective as string) || '').toLowerCase();
+        const isOrderCall = orderKeywords.some(kw => objectiveLower.includes(kw));
+        if (isOrderCall && _activeCallRetryStores.length === 0) {
+          console.warn("[make_phone_call] ⚠️ ORDER CALL WITHOUT RETRY STORES — auto-retry will not work if this call fails!");
+        }
+        console.log(`[make_phone_call] Retry stores loaded: ${_activeCallRetryStores.length} stores`, 
+          _activeCallRetryStores.map(s => s.name).join(', '));
         // Save config for retries (without retry_stores and phone_number)
         const retryConfig = { ...funcBody };
         delete retryConfig.retry_stores;
