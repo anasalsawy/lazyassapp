@@ -298,22 +298,24 @@ Report progress between each stage.
 - ALWAYS update agent_tasks and agent_runs tables when starting/completing workflows
 - For existing edge functions (optimize-resume, search-jobs-deep, submit-application), you can ALSO use invoke_edge_function as a shortcut — they internally call Skyvern too
 
-### Pipeline 7: Professional AI Phone Calls
-**IMPORTANT**: For ALL phone calls, use the \`invoke_edge_function\` tool with function_name: "voice-agent" and body containing:
-- phone_number: E.164 format phone number
-- objective: what the call should accomplish
-- tone: professional/friendly/authoritative/casual (default: professional)
-- script: detailed talking points and strategy
-- caller_name: who to say you're calling on behalf of
-
-The voice-agent conducts REAL multi-turn conversations using AI speech recognition and natural language generation. Each turn:
-1. AI speaks using neural voice synthesis
-2. Twilio captures the other person's speech
-3. AI generates a contextual response
-4. Conversation loops until objective is met or call naturally ends
-
-Do NOT use direct Twilio TwiML \`<Say>\` calls. ALWAYS use the voice-agent edge function for any phone interaction.
-The voice-agent records calls and stores full conversation transcripts in agent_tasks.
+### Pipeline 7: Professional AI Phone Calls (Multi-Agent Voice System)
+**Tool**: \`make_phone_call\` (dedicated tool — use this, NOT invoke_edge_function)
+**Trigger**: User says "call", "phone", "make a call", "ring", "dial"
+**Architecture**: Three AI agents collaborate per turn:
+  1. **Analyst Agent** — Evaluates tone, intent, emotional state, IVR/voicemail detection
+  2. **Director Agent** — Sets strategy, handles operator injections, decides when to end
+  3. **Caller Agent (Maya)** — Generates natural speech (5-14 word sentences, contractions, fillers)
+**Features**:
+  - Real multi-turn conversations with live humans
+  - Automatic IVR/phone-tree navigation via DTMF
+  - Voicemail and hold detection
+  - Barge-in (natural interruption handling)
+  - No time limit — call runs until objective is complete or other party hangs up
+  - Live transcript and analyst reports stored in agent_tasks
+  - Human operators can inject mid-call instructions at /call-center
+**Phone format**: E.164 (e.g., +15551234567). International requires Twilio Geo-Permissions.
+**After call starts**: Query agent_tasks with the returned taskId to check transcript and status.
+Do NOT use invoke_edge_function for phone calls — use the \`make_phone_call\` tool directly.
 
 ## Examples
 
@@ -415,6 +417,53 @@ const AGENT_TOOLS = [
           order: { type: "string", description: "Column to order by, e.g. 'created_at.desc'" },
         },
         required: ["table"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "make_phone_call",
+      description: `Initiate a REAL AI-powered phone call using the multi-agent voice system. This places an actual outbound call via Twilio where an AI agent (Maya) conducts a live, multi-turn conversation.
+
+ARCHITECTURE: Three AI agents collaborate on every call turn:
+1. ANALYST AGENT — Evaluates the other party's tone, intent, emotional state, and detects automated systems (IVR/voicemail)
+2. DIRECTOR AGENT — Sets conversational strategy based on the analyst's report, the call objective, and any live operator injections
+3. CALLER AGENT (Maya) — Generates natural speech following the director's instructions. Uses short sentences (5-14 words), contractions, and light fillers for human-like delivery.
+
+CAPABILITIES:
+- Real multi-turn phone conversations with humans
+- Automatic IVR/phone tree navigation (detects menus, presses DTMF buttons)
+- Voicemail detection and handling
+- Hold/transfer detection (waits silently)
+- Barge-in support (yields when interrupted)
+- Live transcript stored in agent_tasks table
+- Call recording via Twilio
+- Neural voice synthesis (Polly.Matthew-Neural default)
+
+PHONE NUMBER FORMAT: Must be E.164 format (e.g., +15551234567 for US numbers — exactly +1 followed by 10 digits). International numbers require Twilio Geo-Permissions to be enabled.
+
+AFTER INITIATING: The call runs autonomously. You'll get back a callSid and taskId. Use query_database on agent_tasks (filter by the taskId) to check the live transcript, analyst reports, and director decisions. The call ends when the Director determines the objective is complete or the other party hangs up — there is NO time limit.
+
+The user can also monitor calls in real-time at /call-center, where they can inject mid-call instructions to the Director Agent.`,
+      parameters: {
+        type: "object",
+        properties: {
+          phone_number: { type: "string", description: "Target phone number in E.164 format, e.g. '+15551234567'" },
+          objective: { type: "string", description: "What the call should accomplish — be specific and detailed" },
+          company_name: { type: "string", description: "Company or organization the agent represents" },
+          agent_name: { type: "string", description: "Name the AI agent uses on the call (default: Maya)" },
+          agent_role: { type: "string", description: "Role/title the agent introduces themselves as (default: AI Assistant)" },
+          tone: { type: "string", description: "Conversation tone: professional, friendly, authoritative, casual, warm (default: professional)" },
+          voice: { type: "string", description: "Voice style: friendly (Matthew), warm/female (Joanna), british (Amy), authoritative (Stephen). Default: friendly" },
+          script: { type: "string", description: "Detailed talking points, key questions to ask, information to gather, and strategy notes" },
+          success_criteria: { type: "string", description: "How to determine if the call objective was achieved" },
+          constraints: { type: "string", description: "Hard rules — things the agent must NOT do or say" },
+          disclosure_policy: { type: "string", description: "AI disclosure policy: 'disclose_if_asked' (default), 'always_disclose', or 'never_disclose'" },
+          call_type: { type: "string", description: "Type of call: outbound (default), follow_up, cold_call, appointment, inquiry" },
+          allowed_actions: { type: "string", description: "What the agent is permitted to do: converse, negotiate, gather info, confirm details, schedule, etc." },
+        },
+        required: ["phone_number", "objective"],
       },
     },
   },
@@ -858,6 +907,54 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
     case "read_project_analytics":
       return JSON.stringify({ message: "Analytics data would be returned here." });
 
+    case "make_phone_call": {
+      const funcBody: Record<string, unknown> = {};
+      for (const key of ["phone_number", "objective", "company_name", "agent_name", "agent_role", "tone", "voice", "script", "success_criteria", "constraints", "disclosure_policy", "call_type", "allowed_actions"]) {
+        if (args[key]) funcBody[key] = args[key];
+      }
+
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "apikey": Deno.env.get("SUPABASE_ANON_KEY") || serviceRoleKey,
+        };
+        if (_currentUserToken) {
+          headers["Authorization"] = `Bearer ${_currentUserToken}`;
+        } else {
+          headers["Authorization"] = `Bearer ${serviceRoleKey}`;
+        }
+
+        const voiceUrl = `${supabaseUrl}/functions/v1/voice-agent?action=initiate`;
+        console.log(`[make_phone_call] Calling ${funcBody.phone_number}`);
+
+        const resp = await fetch(voiceUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(funcBody),
+        });
+
+        const responseText = await resp.text();
+        let responseData;
+        try { responseData = JSON.parse(responseText); } catch { responseData = responseText; }
+
+        if (!resp.ok) {
+          return JSON.stringify({ success: false, status: resp.status, error: responseData?.error || responseText });
+        }
+
+        return JSON.stringify({
+          success: true,
+          callSid: responseData.callSid,
+          taskId: responseData.taskId,
+          status: responseData.status,
+          to: responseData.to,
+          greeting: responseData.greeting,
+          message: `Phone call initiated to ${funcBody.phone_number}. The multi-agent system (Analyst → Director → Caller) is now conducting the call autonomously. Task ID: ${responseData.taskId}. The user can monitor the live call at /call-center.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Phone call failed" });
+      }
+    }
+
     default:
       return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }
@@ -1153,6 +1250,7 @@ function summarizeArgs(toolName: string, args: any): string {
     case "invoke_edge_function": return `${args.function_name}${args.body?.action ? ` (${args.body.action})` : ""}`;
     case "query_database": return `${args.table}${args.filters?.length ? ` (${args.filters.length} filters)` : ""}`;
     case "list_secrets": return "listing available secrets";
+    case "make_phone_call": return `calling ${args.phone_number} — ${(args.objective as string)?.slice(0, 50)}`;
     case "lov-search-files": return `search: "${args.query}"`;
     case "lov-write": return `write: ${args.file_path}`;
     case "lov-view": return `read: ${args.file_path}`;

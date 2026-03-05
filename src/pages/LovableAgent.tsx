@@ -36,6 +36,7 @@ function ToolIcon({ name }: { name: string }) {
   if (name.includes("database") || name.includes("query")) return <Database className="w-3.5 h-3.5" />;
   if (name.includes("http") || name.includes("fetch_website")) return <Globe className="w-3.5 h-3.5" />;
   if (name.includes("secret")) return <Key className="w-3.5 h-3.5" />;
+  if (name.includes("phone") || name.includes("call")) return <Activity className="w-3.5 h-3.5" />;
   if (name.includes("edge") || name.includes("invoke")) return <Zap className="w-3.5 h-3.5" />;
   if (name.includes("search")) return <Search className="w-3.5 h-3.5" />;
   if (name.includes("write") || name.includes("replace")) return <FileText className="w-3.5 h-3.5" />;
@@ -49,6 +50,7 @@ function friendlyToolName(name: string): string {
     list_secrets: "Listing secrets",
     http_request: "API request",
     invoke_edge_function: "Running backend function",
+    make_phone_call: "Placing phone call",
     query_database: "Querying database",
     "lov-search-files": "Searching codebase",
     "lov-write": "Writing file",
