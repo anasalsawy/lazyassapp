@@ -903,7 +903,7 @@ async function executeTool(
         return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
-        // Browser Use is the primary browser automation engine
+        // Multi-agent browser system: Analyst→Director→Navigator via Browser Use
         const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
         const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
         const taskStr = (args.task as string) || "";
@@ -931,75 +931,43 @@ async function executeTool(
           }
         }
 
-        // Step 2: Create Browser Use task for autonomous execution
-        let buResult: any = null;
-        let buError: { status?: number; message: string } | null = null;
+        // Step 2: Delegate to multi-agent browser-agent function
+        let agentResult: any = null;
+        let agentError: string | null = null;
 
         if (!BU_API_KEY) {
-          buError = { message: "BROWSER_USE_API_KEY not configured." };
+          agentError = "BROWSER_USE_API_KEY not configured.";
         } else {
           try {
-            // Get browser profile for session persistence
-            const { data: browserProfile } = await supabase.from("browser_profiles")
-              .select("browser_use_profile_id").eq("user_id", userId).single();
+            const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+            const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-            const taskBody: any = {
-              task: taskStr,
-              maxSteps: (args.max_steps as number) || 50,
-            };
-            if (startUrl) taskBody.startUrl = startUrl;
-
-            // Create session with profile if available
-            if (browserProfile?.browser_use_profile_id) {
-              try {
-                const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
-                  method: "POST",
-                  headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
-                  body: JSON.stringify({ profileId: browserProfile.browser_use_profile_id }),
-                });
-                if (sessionRes.ok) {
-                  const session = await sessionRes.json();
-                  taskBody.sessionId = session.id;
-                }
-              } catch (e) {
-                console.error("[browser_task] Session creation failed:", e);
-              }
-            }
-
-            const buRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
+            const agentRes = await fetch(`${supabaseUrl}/functions/v1/browser-agent`, {
               method: "POST",
-              headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify(taskBody),
+              headers: {
+                Authorization: `Bearer ${serviceKey}`,
+                "Content-Type": "application/json",
+                apikey: serviceKey,
+              },
+              body: JSON.stringify({
+                action: "run",
+                goal: taskStr,
+                start_url: startUrl || undefined,
+                context: { userId, source: "manus_agent" },
+              }),
             });
 
-            if (buRes.ok) {
-              const buData = await buRes.json();
-              buResult = { runId: buData.id, sessionId: buData.sessionId, status: "running" };
-              console.log(`[browser_task] Browser Use task created: ${buData.id}`);
-
-              // Get live URL
-              if (buData.sessionId) {
-                try {
-                  const sessInfoRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${buData.sessionId}`, {
-                    headers: { "X-Browser-Use-API-Key": BU_API_KEY },
-                  });
-                  if (sessInfoRes.ok) {
-                    const sessInfo = await sessInfoRes.json();
-                    buResult.liveUrl = sessInfo.liveUrl || null;
-                  }
-                } catch (_) {}
-              }
+            if (agentRes.ok) {
+              agentResult = await agentRes.json();
+              console.log(`[browser_task] Multi-agent browser task started: ${agentResult.runId}`);
             } else {
-              const errText = await buRes.text();
-              buError = {
-                status: buRes.status,
-                message: errText?.slice(0, 1200) || "Browser Use task creation failed.",
-              };
-              console.error(`[browser_task] Browser Use error (${buRes.status}): ${errText}`);
+              const errText = await agentRes.text();
+              agentError = `Browser agent failed (${agentRes.status}): ${errText.slice(0, 500)}`;
+              console.error(`[browser_task] Browser agent error: ${agentError}`);
             }
           } catch (err: any) {
-            buError = { message: err?.message || "Browser Use request failed." };
-            console.error("[browser_task] Browser Use error:", err);
+            agentError = err?.message || "Browser agent request failed.";
+            console.error("[browser_task] Browser agent error:", err);
           }
         }
 
@@ -1007,23 +975,23 @@ async function executeTool(
         await supabase.from("agent_logs").insert({
           user_id: userId,
           agent_name: "manus",
-          log_level: buResult ? "info" : "error",
+          log_level: agentResult ? "info" : "error",
           message: `Browser task: ${taskStr.substring(0, 200)}`,
           metadata: {
             task: taskStr,
             start_url: startUrl,
-            browserUseTaskId: buResult?.runId,
-            browserUseStatus: buResult?.status,
-            browserUseError: buError?.message || null,
-            browserUseStatusCode: buError?.status || null,
+            multiAgentRunId: agentResult?.runId,
+            multiAgentStatus: agentResult?.status,
+            agentError: agentError,
             hasContent: !!pageContent,
           },
         });
 
         // Build response
         const result: any = {
-          success: !!buResult,
-          provider: "browser_use",
+          success: !!agentResult,
+          provider: "multi_agent_browser",
+          architecture: "analyst_director_navigator",
           task: taskStr,
           url: scrapedUrl || startUrl,
         };
@@ -1033,20 +1001,16 @@ async function executeTool(
           result.pageContent = pageContent.substring(0, 6000);
         }
 
-        if (buResult) {
-          result.runId = buResult.runId;
-          result.taskId = buResult.runId;
-          result.sessionId = buResult.sessionId;
-          result.liveUrl = buResult.liveUrl;
-          result.taskStatus = buResult.status;
-          result.message = `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
+        if (agentResult) {
+          result.runId = agentResult.runId;
+          result.taskStatus = agentResult.status || "running";
+          result.message = `🤖 Multi-agent browser task ${agentResult.runId} is running (Analyst→Director→Navigator loop active).`;
         } else {
           result.taskStatus = "failed_to_start";
-          result.error = buError?.message || "Browser Use task failed to start.";
-          result.statusCode = buError?.status;
+          result.error = agentError || "Multi-agent browser task failed to start.";
           result.message = pageContent
-            ? "Page content was retrieved, but Browser Use task creation failed."
-            : "Browser Use task creation failed.";
+            ? "Page content was retrieved via Firecrawl, but the multi-agent browser task failed to start."
+            : "Multi-agent browser task failed to start.";
         }
 
         return JSON.stringify(result);
