@@ -112,39 +112,39 @@ serve(async (req) => {
         return await handleCreateProfile(supabase, user.id);
       }
       case "start_login": {
-        await cleanupStaleSessions(supabase, user.id, STEEL_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", STEEL_API_KEY);
+         await cleanupStaleSessions(supabase, user.id, SKYVERN_API_KEY);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail", SKYVERN_API_KEY);
       }
       case "confirm_login": {
-        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail", STEEL_API_KEY);
+        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail", SKYVERN_API_KEY);
       }
       case "cancel_login": {
-        return await handleCancelLogin(supabase, user.id, STEEL_API_KEY);
+        return await handleCancelLogin(supabase, user.id, SKYVERN_API_KEY);
       }
       case "restart_session": {
-        await cleanupStaleSessions(supabase, user.id, STEEL_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", STEEL_API_KEY);
+        await cleanupStaleSessions(supabase, user.id, SKYVERN_API_KEY);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail", SKYVERN_API_KEY);
       }
       case "cleanup_sessions": {
-        return await handleCleanupSessions(supabase, user.id, STEEL_API_KEY);
+        return await handleCleanupSessions(supabase, user.id, SKYVERN_API_KEY);
       }
       case "start_order": {
-        return await handleStartOrder(supabase, user, payload, STEEL_API_KEY, LOVABLE_API_KEY || "", supabaseUrl);
+        return await handleStartOrder(supabase, user, payload, SKYVERN_API_KEY, LOVABLE_API_KEY || "", supabaseUrl);
       }
       case "check_order_status": {
         return await handleCheckOrderStatus(supabase, user.id, payload.orderId!);
       }
       case "sync_all_orders": {
-        return await handleSyncAllOrders(supabase, user, STEEL_API_KEY, supabaseUrl, LOVABLE_API_KEY || "");
+        return await handleSyncAllOrders(supabase, user, SKYVERN_API_KEY, supabaseUrl, LOVABLE_API_KEY || "");
       }
       case "sync_order_emails": {
-        return await handleSyncOrderEmails(supabase, user.id, STEEL_API_KEY, LOVABLE_API_KEY || "");
+        return await handleSyncOrderEmails(supabase, user.id, SKYVERN_API_KEY, LOVABLE_API_KEY || "");
       }
       case "set_proxy": {
         return await handleSetProxy(supabase, user.id, payload);
       }
       case "test_proxy": {
-        return await handleTestProxy(supabase, user.id, STEEL_API_KEY);
+        return await handleTestProxy(supabase, user.id, SKYVERN_API_KEY);
       }
       case "toggle_browserstack": {
         return await handleToggleBrowserstack(supabase, user.id, payload.useBrowserstack ?? false);
@@ -232,224 +232,72 @@ async function handleStartLogin(
   supabase: any,
   userId: string,
   site: string,
-  steelApiKey: string
+  skyvernApiKey: string
 ) {
-  let { data: profile } = await supabase
-    .from("browser_profiles")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
+  let { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
 
   if (!profile?.browser_use_profile_id) {
-    console.log(`[AutoShop] No profile found, auto-creating for user ${userId}`);
-    const profileId = `steel-shop-${userId.substring(0, 8)}-${Date.now()}`;
-
-    await supabase.from("browser_profiles").upsert({
-      user_id: userId,
-      browser_use_profile_id: profileId,
-      status: "ready",
-      shop_sites_logged_in: [],
-    }, { onConflict: "user_id" });
-
-    const { data: newProfile } = await supabase
-      .from("browser_profiles")
-      .select("*")
-      .eq("user_id", userId)
-      .single();
-    
+    const profileId = `skyvern-shop-${userId.substring(0, 8)}-${Date.now()}`;
+    await supabase.from("browser_profiles").upsert({ user_id: userId, browser_use_profile_id: profileId, status: "ready", shop_sites_logged_in: [] }, { onConflict: "user_id" });
+    const { data: newProfile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
     profile = newProfile;
   }
 
-  const siteUrls: Record<string, string> = {
-    gmail: "https://mail.google.com",
-    amazon: "https://www.amazon.com/ap/signin",
-    ebay: "https://signin.ebay.com",
-    walmart: "https://www.walmart.com/account/login",
-  };
-
+  const siteUrls: Record<string, string> = { gmail: "https://mail.google.com", amazon: "https://www.amazon.com/ap/signin", ebay: "https://signin.ebay.com", walmart: "https://www.walmart.com/account/login" };
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
 
-  // Create a Steel session for manual login
-  console.log(`[AutoShop] Creating Steel session for login: ${loginUrl}`);
-  
-  const sessionRes = await steelApi(steelApiKey, "/sessions", {
+  console.log(`[AutoShop] Creating Skyvern task for login: ${loginUrl}`);
+  const taskRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
     method: "POST",
-    body: JSON.stringify({
-      useProxy: true,
-      solveCaptcha: true,
-    }),
+    body: JSON.stringify({ prompt: `Navigate to ${loginUrl} and display the login page.`, url: loginUrl, engine: "skyvern-2.0" }),
   });
 
-  if (!sessionRes.ok) {
-    const err = await sessionRes.text();
-    console.error(`[AutoShop] Steel session creation failed: ${err}`);
-    throw new Error(`Failed to create session: ${err}`);
+  if (!taskRes.ok) {
+    const err = await taskRes.text();
+    console.error(`[AutoShop] Skyvern task creation failed: ${err}`);
+    throw new Error(`Failed to create task: ${err}`);
   }
 
-  const sessionData = await sessionRes.json();
-  const sessionId = sessionData.id;
-  const liveViewUrl = sessionData.debugUrl;
+  const taskData = await taskRes.json();
+  const runId = taskData.run_id;
+  const liveViewUrl = taskData.app_url || null;
 
-  if (!sessionId) {
-    throw new Error("Steel session created but returned no session id");
-  }
+  await supabase.from("browser_profiles").update({ shop_pending_login_site: site, shop_pending_task_id: null, shop_pending_session_id: runId }).eq("user_id", userId);
 
-  await supabase
-    .from("browser_profiles")
-    .update({
-      shop_pending_login_site: site,
-      shop_pending_task_id: null,
-      shop_pending_session_id: sessionId,
-    })
-    .eq("user_id", userId);
-
-  console.log(`[AutoShop] Login session started: id=${sessionId}, debugUrl=${liveViewUrl}`);
-
-  return new Response(
-    JSON.stringify({
-      success: true,
-      taskId: sessionId,
-      sessionId,
-      liveViewUrl,
-      site,
-    }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
+  return new Response(JSON.stringify({ success: true, taskId: runId, sessionId: runId, liveViewUrl, site }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleConfirmLogin(
-  supabase: any,
-  userId: string,
-  site: string,
-  steelApiKey: string
-) {
-  const { data: profile } = await supabase
-    .from("browser_profiles")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
-
+async function handleConfirmLogin(supabase: any, userId: string, site: string, _skyvernApiKey: string) {
+  const { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
   if (!profile) throw new Error("Profile not found");
 
-  // Release the Steel session
-  const sessionId = profile.shop_pending_session_id;
-  if (sessionId) {
-    try {
-      console.log(`[AutoShop] Releasing Steel session ${sessionId}`);
-      await steelApi(steelApiKey, `/sessions/${sessionId}`, { method: "DELETE" });
-      console.log(`[AutoShop] Steel session released`);
-    } catch (e) {
-      console.error(`[AutoShop] Failed to release Steel session:`, e);
-    }
-  }
+  const currentSites: string[] = Array.isArray(profile.shop_sites_logged_in) ? profile.shop_sites_logged_in : [];
+  if (!currentSites.includes(site)) currentSites.push(site);
 
-  const currentSites: string[] = Array.isArray(profile.shop_sites_logged_in) 
-    ? profile.shop_sites_logged_in 
-    : [];
-  if (!currentSites.includes(site)) {
-    currentSites.push(site);
-  }
+  await supabase.from("browser_profiles").update({
+    shop_sites_logged_in: currentSites, shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null, last_login_at: new Date().toISOString(),
+  }).eq("user_id", userId);
 
-  await supabase
-    .from("browser_profiles")
-    .update({
-      shop_sites_logged_in: currentSites,
-      shop_pending_login_site: null,
-      shop_pending_task_id: null,
-      shop_pending_session_id: null,
-      last_login_at: new Date().toISOString(),
-    })
-    .eq("user_id", userId);
-
-  return new Response(
-    JSON.stringify({ success: true, site }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
+  return new Response(JSON.stringify({ success: true, site }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCancelLogin(supabase: any, userId: string, steelApiKey: string) {
-  const { data: profile } = await supabase
-    .from("browser_profiles")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
-
-  if (!profile) {
-    return new Response(
-      JSON.stringify({ success: true, message: "No profile found" }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  }
-
-  // Release pending Steel session
-  if (profile.shop_pending_session_id) {
-    try {
-      await steelApi(steelApiKey, `/sessions/${profile.shop_pending_session_id}`, { method: "DELETE" });
-    } catch (e) {
-      console.error(`[AutoShop] Failed to release session:`, e);
-    }
-  }
-
-  await supabase
-    .from("browser_profiles")
-    .update({
-      shop_pending_login_site: null,
-      shop_pending_task_id: null,
-      shop_pending_session_id: null,
-    })
-    .eq("user_id", userId);
-
-  return new Response(
-    JSON.stringify({ success: true, message: "Login session cancelled" }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
+async function handleCancelLogin(supabase: any, userId: string, _skyvernApiKey: string) {
+  await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
+  return new Response(JSON.stringify({ success: true, message: "Login session cancelled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
-async function cleanupStaleSessions(supabase: any, userId: string, steelApiKey: string): Promise<{ sessionsKilled: number }> {
-  let sessionsKilled = 0;
-
-  const { data: profile } = await supabase
-    .from("browser_profiles")
-    .select("shop_pending_session_id")
-    .eq("user_id", userId)
-    .single();
-
-  if (profile?.shop_pending_session_id) {
-    try {
-      await steelApi(steelApiKey, `/sessions/${profile.shop_pending_session_id}`, { method: "DELETE" });
-      sessionsKilled++;
-    } catch (e) {
-      console.error(`[AutoShop] Failed to release session:`, e);
-    }
-  }
-
-  await supabase
-    .from("browser_profiles")
-    .update({
-      shop_pending_login_site: null,
-      shop_pending_task_id: null,
-      shop_pending_session_id: null,
-    })
-    .eq("user_id", userId);
-
-  return { sessionsKilled };
+async function cleanupStaleSessions(supabase: any, userId: string, _skyvernApiKey: string): Promise<{ sessionsKilled: number }> {
+  await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
+  return { sessionsKilled: 0 };
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCleanupSessions(supabase: any, userId: string, steelApiKey: string) {
-  const result = await cleanupStaleSessions(supabase, userId, steelApiKey);
-
-  return new Response(
-    JSON.stringify({
-      success: true,
-      message: `Cleaned up ${result.sessionsKilled} sessions`,
-      ...result,
-    }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
+async function handleCleanupSessions(supabase: any, userId: string, skyvernApiKey: string) {
+  const result = await cleanupStaleSessions(supabase, userId, skyvernApiKey);
+  return new Response(JSON.stringify({ success: true, message: "Sessions cleaned up", ...result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
@@ -474,7 +322,7 @@ async function handleStartOrder(
   supabase: any,
   user: { id: string; email?: string },
   payload: AutoShopPayload,
-  steelApiKey: string,
+  skyvernApiKey: string,
   lovableApiKey: string,
   supabaseUrl: string
 ) {
@@ -530,58 +378,33 @@ async function handleStartOrder(
     }
   }
 
-  console.log(`[AutoShop] Starting order via Steel: "${productQuery}"`);
-
+  console.log(`[AutoShop] Starting order via Skyvern: "${productQuery}"`);
   await supabase.from("auto_shop_orders").update({ status: "searching" }).eq("id", orderId);
+  await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Starting product search via Skyvern: "${productQuery}"`, metadata: { orderId, productQuery, maxPrice, quantity, userEmail } });
 
-  await supabase.from("agent_logs").insert({
-    user_id: user.id,
-    agent_name: "auto_shop",
-    log_level: "info",
-    message: `Starting product search via Steel: "${productQuery}"`,
-    metadata: { orderId, productQuery, maxPrice, quantity, userEmail },
-  });
-
-  // Create a Steel session for the shopping task
-  const sessionRes = await steelApi(steelApiKey, "/sessions", {
+  // Create a Skyvern task for the shopping task
+  const taskRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
     method: "POST",
     body: JSON.stringify({
-      useProxy: true,
-      solveCaptcha: true,
+      prompt: `Search for and purchase "${productQuery}" at the best price${maxPrice ? ` under $${maxPrice}` : ""}. Use guest checkout with email ${userEmail}.`,
+      url: "https://www.amazon.com",
+      engine: "skyvern-2.0",
     }),
   });
 
-  if (!sessionRes.ok) {
-    const errorData = await sessionRes.text();
-    console.error("[AutoShop] Steel API error:", sessionRes.status, errorData);
-    
-    await supabase.from("auto_shop_orders").update({ 
-      status: "failed",
-      error_message: `Steel API error: ${sessionRes.status}` 
-    }).eq("id", orderId);
-
-    throw new Error(`Steel session creation failed: ${sessionRes.status} - ${errorData}`);
+  if (!taskRes.ok) {
+    const errorData = await taskRes.text();
+    console.error("[AutoShop] Skyvern API error:", taskRes.status, errorData);
+    await supabase.from("auto_shop_orders").update({ status: "failed", error_message: `Skyvern API error: ${taskRes.status}` }).eq("id", orderId);
+    throw new Error(`Skyvern task creation failed: ${taskRes.status} - ${errorData}`);
   }
 
-  const steelSession = await sessionRes.json();
-  const sessionId = steelSession.id;
-  const debugUrl = steelSession.debugUrl;
-  console.log("[AutoShop] Steel session created:", sessionId);
+  const skyvernTask = await taskRes.json();
+  const runId = skyvernTask.run_id;
+  console.log("[AutoShop] Skyvern task created:", runId);
 
-  // Store session ID and debug URL
-  await supabase.from("auto_shop_orders").update({ 
-    browser_use_task_id: sessionId,
-    status: "searching",
-    notes: JSON.stringify({ debugUrl, steelSessionId: sessionId }),
-  }).eq("id", orderId);
-
-  await supabase.from("agent_logs").insert({
-    user_id: user.id,
-    agent_name: "auto_shop",
-    log_level: "info",
-    message: `Steel session created: ${sessionId}`,
-    metadata: { orderId, sessionId, debugUrl },
-  });
+  await supabase.from("auto_shop_orders").update({ browser_use_task_id: runId, status: "searching", notes: JSON.stringify({ skyvernRunId: runId }) }).eq("id", orderId);
+  await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Skyvern task created: ${runId}`, metadata: { orderId, runId } });
 
   // Use Lovable AI to orchestrate the shopping task via the Steel session
   if (lovableApiKey) {
