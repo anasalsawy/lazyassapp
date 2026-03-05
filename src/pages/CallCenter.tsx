@@ -521,6 +521,17 @@ export default function CallCenter() {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
+                    {retryAttempt > 0 && (
+                      <Badge variant="outline" className="text-xs border-amber-500/30 text-amber-400">
+                        <RefreshCw className="w-3 h-3 mr-1" />
+                        Retry #{retryAttempt}
+                      </Badge>
+                    )}
+                    {retryQueue.length > 0 && (
+                      <Badge variant="outline" className="text-xs text-muted-foreground">
+                        {retryQueue.length} backup{retryQueue.length > 1 ? 's' : ''} left
+                      </Badge>
+                    )}
                     <Badge variant="outline" className="text-xs">
                       <MessageSquare className="w-3 h-3 mr-1" />
                       Turn {activeCall?.turnCount || 0}
