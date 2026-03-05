@@ -604,6 +604,7 @@ serve(async (req) => {
             lastAnalysis: analystReport,
             lastDirective: directorResult,
             ivrDetected: true,
+            pendingTranscriptBuffer: "",
           },
         }).eq("id", taskId);
 
