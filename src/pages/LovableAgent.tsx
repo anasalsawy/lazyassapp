@@ -625,6 +625,11 @@ export default function LovableAgent() {
                         <ExecutionPanel plans={msg.executionPlan} isActive={false} />
                       ) : null}
 
+                      {/* Call monitor panel (after execution, before content) */}
+                      {msg.role === "assistant" && msg.callState ? (
+                        <CallMonitorPanel callState={msg.callState} isLive={false} />
+                      ) : null}
+
                       <div
                         className={`rounded-2xl px-4 py-3 ${
                           msg.role === "user"
@@ -657,6 +662,18 @@ export default function LovableAgent() {
                     </div>
                     <div className="max-w-[85%] min-w-0">
                       <ExecutionPanel plans={currentPlans} isActive={true} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Live call monitor panel */}
+                {isLoading && currentCallState && (
+                  <div className="flex gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
+                      <Bot className="w-4 h-4 text-white" />
+                    </div>
+                    <div className="max-w-[85%] min-w-0">
+                      <CallMonitorPanel callState={currentCallState} isLive={true} />
                     </div>
                   </div>
                 )}
