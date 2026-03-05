@@ -1008,8 +1008,13 @@ async function executeTool(
 
         if (agentResult) {
           result.runId = agentResult.runId;
+          result.sessionId = agentResult.sessionId || null;
+          result.liveUrl = agentResult.liveUrl || null;
           result.taskStatus = agentResult.status || "running";
           result.message = `🤖 Multi-agent browser task ${agentResult.runId} is running (Analyst→Director→Navigator loop active).`;
+          if (agentResult.liveUrl) {
+            result.browserEmbed = `[BROWSER_EMBED]{"debugUrl":"${agentResult.liveUrl}","sessionId":"${agentResult.sessionId || ""}","interactive":true}[/BROWSER_EMBED]`;
+          }
         } else {
           result.taskStatus = "failed_to_start";
           result.error = agentError || "Multi-agent browser task failed to start.";

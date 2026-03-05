@@ -326,25 +326,28 @@ async function executeNavigatorAction(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LLM CALL HELPER
+// LLM CALL HELPER — uses Lovable AI Gateway (no external API key needed)
 // ═══════════════════════════════════════════════════════════════════════════
+const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+
 async function callLLM(
-  apiKey: string,
+  lovableApiKey: string,
   systemPrompt: string,
   messages: { role: string; content: string }[],
   jsonMode = true,
 ): Promise<string> {
   const body: any = {
-    model: "gpt-4o",
+    model: "google/gemini-2.5-flash",
     messages: [{ role: "system", content: systemPrompt }, ...messages],
     temperature: 0.1,
     max_tokens: 4000,
+    stream: false,
   };
   if (jsonMode) body.response_format = { type: "json_object" };
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetch(AI_GATEWAY, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${lovableApiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
@@ -375,9 +378,10 @@ async function runMultiAgentBrowser(
   userId: string,
   supabase: ReturnType<typeof createClient>,
   buApiKey: string,
-  openaiKey: string,
+  lovableApiKey: string,
   firecrawlKey?: string,
   profileId?: string,
+  preCreatedSessionId?: string | null,
 ): Promise<any> {
   const maxSteps = 50;
   let stepCount = 0;
@@ -385,7 +389,7 @@ async function runMultiAgentBrowser(
   const urlStack: string[] = [];
   const visitedSignatures = new Set<string>();
   const failureBudget: Record<string, number> = {};
-  let sessionId: string | null = null;
+  let sessionId: string | null = preCreatedSessionId || null;
   let liveUrl: string | null = null;
 
   // Conversation histories for each agent
@@ -404,12 +408,16 @@ async function runMultiAgentBrowser(
   };
 
   try {
-    // Create browser session
-    await log("info", "Creating browser session...", { profileId });
-    const session = await createBrowserSession(buApiKey, profileId);
-    sessionId = session.sessionId;
-    liveUrl = session.liveUrl || null;
-    await log("info", `Session created: ${sessionId}`, { liveUrl });
+    // Create browser session if not pre-created
+    if (!sessionId) {
+      await log("info", "Creating browser session...", { profileId });
+      const session = await createBrowserSession(buApiKey, profileId);
+      sessionId = session.sessionId;
+      liveUrl = session.liveUrl || null;
+      await log("info", `Session created: ${sessionId}`, { liveUrl });
+    } else {
+      await log("info", `Using pre-created session: ${sessionId}`);
+    }
 
     // Initial page scrape if start_url provided
     let initialPageContent = "";
@@ -474,7 +482,7 @@ async function runMultiAgentBrowser(
         }),
       });
 
-      const analystRaw = await callLLM(openaiKey, ANALYST_PROMPT, analystHistory);
+      const analystRaw = await callLLM(lovableApiKey, ANALYST_PROMPT, analystHistory);
       analystHistory.push({ role: "assistant", content: analystRaw });
 
       let analystReport: any;
@@ -507,7 +515,7 @@ async function runMultiAgentBrowser(
         }),
       });
 
-      const directorRaw = await callLLM(openaiKey, DIRECTOR_PROMPT, directorHistory);
+      const directorRaw = await callLLM(lovableApiKey, DIRECTOR_PROMPT, directorHistory);
       directorHistory.push({ role: "assistant", content: directorRaw });
 
       let directorDecision: any;
@@ -633,7 +641,7 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-  const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
   if (!BU_API_KEY) {
@@ -641,8 +649,8 @@ serve(async (req) => {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  if (!OPENAI_KEY) {
-    return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), {
+  if (!LOVABLE_API_KEY) {
+    return new Response(JSON.stringify({ error: "LOVABLE_API_KEY not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
@@ -650,13 +658,23 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    // Auth
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) throw new Error("No authorization header");
-    const { data: { user }, error: authError } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
-    if (authError || !user) throw new Error("Unauthorized");
-
     const body = await req.json();
+
+    // Auth: support both user JWT and service-to-service calls with userId in body
+    const authHeader = req.headers.get("Authorization");
+    let userId: string;
+
+    if (body.context?.userId) {
+      // Service-to-service call (from agent-chat) — userId provided in body
+      userId = body.context.userId;
+    } else if (authHeader) {
+      const { data: { user }, error: authError } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
+      if (authError || !user) throw new Error("Unauthorized");
+      userId = user.id;
+    } else {
+      throw new Error("No authorization");
+    }
+
     const action = body.action || "run";
 
     switch (action) {
@@ -679,27 +697,41 @@ serve(async (req) => {
 
         // Get browser profile
         const { data: browserProfile } = await supabase.from("browser_profiles")
-          .select("browser_use_profile_id").eq("user_id", user.id).single();
+          .select("browser_use_profile_id").eq("user_id", userId).single();
+
+        // Pre-create browser session so we can return liveUrl immediately
+        let sessionId: string | null = null;
+        let liveUrl: string | null = null;
+        try {
+          const session = await createBrowserSession(BU_API_KEY!, browserProfile?.browser_use_profile_id);
+          sessionId = session.sessionId;
+          liveUrl = session.liveUrl || null;
+          console.log(`[BrowserAgent] Pre-created session: ${sessionId}, liveUrl: ${liveUrl}`);
+        } catch (sessionErr: any) {
+          console.error(`[BrowserAgent] Session creation failed: ${sessionErr.message}`);
+        }
 
         // Create agent run
         const { data: agentRun } = await supabase.from("agent_runs").insert({
-          user_id: user.id,
+          user_id: userId,
           run_type: "browser_agent",
           status: "running",
           started_at: new Date().toISOString(),
+          summary_json: { sessionId, liveUrl },
         }).select().single();
 
-        // Run in background
+        // Run in background (pass pre-created sessionId)
         const backgroundWork = async () => {
           try {
             const result = await runMultiAgentBrowser(
               taskSpec,
-              user.id,
+              userId,
               supabase,
               BU_API_KEY!,
-              OPENAI_KEY!,
+              LOVABLE_API_KEY!,
               FIRECRAWL_KEY,
               browserProfile?.browser_use_profile_id,
+              sessionId, // pass pre-created session
             );
 
             await supabase.from("agent_runs").update({
@@ -727,6 +759,8 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           success: true,
           runId: agentRun?.id,
+          sessionId,
+          liveUrl,
           status: "running",
           message: "Multi-agent browser task started. Analyst→Director→Navigator loop is active.",
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -751,14 +785,14 @@ serve(async (req) => {
         }
 
         const { data: browserProfile } = await supabase.from("browser_profiles")
-          .select("browser_use_profile_id").eq("user_id", user.id).single();
+          .select("browser_use_profile_id").eq("user_id", userId).single();
 
         const result = await runMultiAgentBrowser(
           taskSpec,
-          user.id,
+          userId,
           supabase,
           BU_API_KEY!,
-          OPENAI_KEY!,
+          LOVABLE_API_KEY!,
           FIRECRAWL_KEY,
           browserProfile?.browser_use_profile_id,
         );
@@ -772,12 +806,12 @@ serve(async (req) => {
         const runId = body.run_id;
         if (!runId) throw new Error("run_id required");
         const { data: run } = await supabase.from("agent_runs")
-          .select("*").eq("id", runId).eq("user_id", user.id).single();
+          .select("*").eq("id", runId).eq("user_id", userId).single();
         if (!run) throw new Error("Run not found");
 
         const { data: logs } = await supabase.from("agent_logs")
           .select("message, log_level, created_at, metadata")
-          .eq("user_id", user.id).eq("agent_name", "browser_agent")
+          .eq("user_id", userId).eq("agent_name", "browser_agent")
           .order("created_at", { ascending: false }).limit(20);
 
         return new Response(JSON.stringify({ run, recentLogs: logs || [] }), {
