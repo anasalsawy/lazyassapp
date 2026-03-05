@@ -23,7 +23,9 @@ import {
   Send,
   Bot,
   ArrowRight,
+  PlayCircle,
 } from "lucide-react";
+import { SimulationReplay } from "@/components/monitoring/SimulationReplay";
 import { formatDistanceToNow, format } from "date-fns";
 
 interface AgentRun {
@@ -194,6 +196,10 @@ export default function AgentMonitoring() {
             <TabsTrigger value="runs">Agent Runs</TabsTrigger>
             <TabsTrigger value="logs">Logs</TabsTrigger>
             <TabsTrigger value="pipeline">Pipeline View</TabsTrigger>
+            <TabsTrigger value="simulation" className="gap-1.5">
+              <PlayCircle className="w-3.5 h-3.5" />
+              Simulation
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="runs">
