@@ -337,9 +337,8 @@ async function callLLM(
   jsonMode = true,
 ): Promise<string> {
   const body: any = {
-    model: "google/gemini-2.5-flash",
+    model: "openai/gpt-5.2",
     messages: [{ role: "system", content: systemPrompt }, ...messages],
-    temperature: 0.1,
     max_tokens: 4000,
     stream: false,
   };
