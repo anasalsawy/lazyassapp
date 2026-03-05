@@ -14,10 +14,10 @@ const corsHeaders = {
 // 2. AI infers optimal search queries from the CV
 // 3. Scrapes Lever job boards via Firecrawl
 // 4. Scores each job for compatibility (80+ threshold)
-// 5. Submits each qualified URL to Skyvern for application
+// 5. Creates Steel sessions for qualified job applications
 // =============================================
 
-const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
+const STEEL_API_BASE = "https://api.steel.dev/v1";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -27,24 +27,24 @@ serve(async (req) => {
   try {
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
+    const STEEL_API_KEY = Deno.env.get("STEEL_API_KEY");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
     if (!FIRECRAWL_API_KEY) throw new Error("FIRECRAWL_API_KEY not configured");
-    if (!SKYVERN_API_KEY) throw new Error("SKYVERN_API_KEY not configured");
+    if (!STEEL_API_KEY) throw new Error("STEEL_API_KEY not configured");
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Auth - support both bearer token and service-role internal calls
+    // Auth
     const authHeader = req.headers.get("Authorization");
     let userId: string;
 
     const { resumeId, userId: internalUserId } = await req.json();
 
     if (internalUserId) {
-      // Internal call from redesign-resume (service-role context)
       userId = internalUserId;
     } else {
       if (!authHeader) throw new Error("No authorization header");
@@ -181,7 +181,6 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
 
           for (const result of results) {
             const url = result.url || "";
-            // Match Lever job URLs: https://jobs.lever.co/company/uuid
             if (url.match(/^https:\/\/jobs\.lever\.co\/[^/]+\/[a-f0-9-]+/) && !seenUrls.has(url)) {
               seenUrls.add(url);
               const urlParts = url.match(/jobs\.lever\.co\/([^/]+)\//);
@@ -196,10 +195,6 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
               });
             }
           }
-
-          console.log(
-            `[LeverResearch] Query "${query}" found ${results.filter((r: any) => r.url?.match(/jobs\.lever\.co\/[^/]+\/[a-f0-9-]+/)).length} job links`
-          );
         } catch (e) {
           console.error(`[LeverResearch] Error searching query "${query}":`, e);
         }
@@ -224,8 +219,8 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
         );
       }
 
-      // ---- STEP 4: Enrich jobs with details (batch scrape top jobs) ----
-      const jobsToEnrich = allJobs.slice(0, 40); // Cap at 40 for broader coverage
+      // ---- STEP 4: Enrich jobs with details ----
+      const jobsToEnrich = allJobs.slice(0, 40);
       const enrichedJobs: LeverJob[] = [];
 
       for (const job of jobsToEnrich) {
@@ -251,18 +246,15 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
             const detailData = await detailResult.json();
             const md = detailData.data?.markdown || detailData.markdown || "";
 
-            // Extract title from markdown
             const titleMatch = md.match(/^#\s+(.+)/m);
             if (titleMatch) job.title = titleMatch[1].trim();
 
-            // Extract location
             const locMatch = md.match(/(?:Location|📍|🌍)[:\s]*([^\n]+)/i);
             if (locMatch) job.location = locMatch[1].trim();
 
             job.description = md.substring(0, 2000);
             enrichedJobs.push(job);
           } else {
-            // Use what we have
             enrichedJobs.push(job);
           }
         } catch (e) {
@@ -303,7 +295,7 @@ Return a JSON array of objects:
   "recommendation": "apply" | "review" | "skip"
 }]
 
-Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority fit, role alignment, industry relevance. Be generous - if the candidate could realistically do the job, score 65+.`;
+Score HONESTLY. 60+ means reasonable match.`;
 
       const scoringResponse = await callOpenAI(OPENAI_API_KEY, {
         model: "gpt-4o",
@@ -321,7 +313,7 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
         total_scored: scores.length,
       });
 
-      // ---- STEP 6: Filter 80+ and build result ----
+      // ---- STEP 6: Filter 60+ and build result ----
       const qualifiedJobs: ScoredJob[] = [];
 
       for (const score of scores) {
@@ -343,11 +335,10 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
         }
       }
 
-      // Sort by score descending
       qualifiedJobs.sort((a, b) => b.score - a.score);
 
       console.log(
-        `[LeverResearch] Qualified jobs (80+): ${qualifiedJobs.length} out of ${enrichedJobs.length}`
+        `[LeverResearch] Qualified jobs (60+): ${qualifiedJobs.length} out of ${enrichedJobs.length}`
       );
 
       // ---- STEP 7: Save qualified jobs to DB ----
@@ -371,42 +362,7 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
         }
       }
 
-      // ---- STEP 8: Upload resume to Skyvern & submit workflow ----
-      let skyvernResumeS3Uri = "";
-
-      // Upload resume PDF to Skyvern's file storage
-      if (resume.file_path) {
-        try {
-          const { data: fileData, error: dlError } = await supabase.storage
-            .from("resumes")
-            .download(resume.file_path);
-
-          if (dlError || !fileData) {
-            console.error(`[LeverResearch] Failed to download resume:`, dlError);
-          } else {
-            const filename = resume.original_filename || "resume.pdf";
-            const formData = new FormData();
-            formData.append("file", new File([fileData], filename, { type: "application/pdf" }));
-
-            const uploadResp = await fetch(`${SKYVERN_API_BASE}/files`, {
-              method: "POST",
-              headers: { "x-api-key": SKYVERN_API_KEY },
-              body: formData,
-            });
-
-            if (uploadResp.ok) {
-              const uploadData = await uploadResp.json();
-              skyvernResumeS3Uri = uploadData.s3_uri || "";
-              console.log(`[LeverResearch] Resume uploaded to Skyvern: ${skyvernResumeS3Uri}`);
-            } else {
-              console.error(`[LeverResearch] Skyvern upload error: ${uploadResp.status} ${await uploadResp.text()}`);
-            }
-          }
-        } catch (e) {
-          console.error(`[LeverResearch] Resume upload error:`, e);
-        }
-      }
-
+      // ---- STEP 8: Submit qualified jobs via Steel sessions ----
       const header = redesigned?.header || {};
       const education = redesigned?.education || [];
       const candidateInfo = [
@@ -421,49 +377,38 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
         experienceSummary && `Work Experience:\n${experienceSummary}`,
       ].filter(Boolean).join("\n");
 
-      // Build apply URLs (append /apply if not already present)
       const applyUrls = qualifiedJobs
         .filter((j) => j.recommendation === "apply")
         .map((j) => j.url.endsWith("/apply") ? j.url : `${j.url}/apply`);
 
-      const SKYVERN_WORKFLOW_ID = "wpid_351487857063054716";
-
-      const skyvernResults: { url: string; runId?: string; error?: string }[] = [];
+      const steelResults: { url: string; sessionId?: string; error?: string }[] = [];
 
       for (const jobUrl of applyUrls) {
         try {
-          const workflowParams: Record<string, any> = {
-            additional_information: candidateInfo,
-            job_urls: [jobUrl],
-          };
-          if (skyvernResumeS3Uri) {
-            workflowParams.resume = skyvernResumeS3Uri;
-          }
-
-          const skyvernResponse = await fetch(`${SKYVERN_API_BASE}/run/workflows`, {
+          // Create a Steel session for each job application
+          const sessionRes = await fetch(`${STEEL_API_BASE}/sessions`, {
             method: "POST",
             headers: {
-              "x-api-key": SKYVERN_API_KEY,
+              "steel-api-key": STEEL_API_KEY,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              workflow_id: SKYVERN_WORKFLOW_ID,
-              parameters: workflowParams,
-              proxy_location: "RESIDENTIAL",
+              useProxy: true,
+              solveCaptcha: true,
             }),
           });
 
-          if (!skyvernResponse.ok) {
-            const errText = await skyvernResponse.text();
-            console.error(`[LeverResearch] Skyvern workflow error for ${jobUrl}: ${skyvernResponse.status} ${errText}`);
-            skyvernResults.push({ url: jobUrl, error: `${skyvernResponse.status}` });
+          if (!sessionRes.ok) {
+            const errText = await sessionRes.text();
+            console.error(`[LeverResearch] Steel session error for ${jobUrl}: ${sessionRes.status} ${errText}`);
+            steelResults.push({ url: jobUrl, error: `${sessionRes.status}` });
             continue;
           }
 
-          const skyvernData = await skyvernResponse.json();
-          const runId = skyvernData.workflow_run_id || skyvernData.run_id || skyvernData.id;
-          console.log(`[LeverResearch] Skyvern workflow submitted for ${jobUrl}: ${runId}`);
-          skyvernResults.push({ url: jobUrl, runId });
+          const steelSession = await sessionRes.json();
+          const sessionId = steelSession.id;
+          console.log(`[LeverResearch] Steel session created for ${jobUrl}: ${sessionId}`);
+          steelResults.push({ url: jobUrl, sessionId });
 
           // Create application record
           const matchingJob = qualifiedJobs.find((j) => j.url === jobUrl);
@@ -478,19 +423,29 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
               platform: "lever",
               status: "applying",
               status_source: "system",
-              status_message: `Skyvern task: ${runId}`,
-              extra_metadata: { skyvern_run_id: runId, match_score: matchingJob?.score },
+              status_message: `Steel session: ${sessionId}`,
+              extra_metadata: { steel_session_id: sessionId, match_score: matchingJob?.score },
             });
           }
+
+          // Release the session after recording (actual application handled by AI agent)
+          try {
+            await fetch(`${STEEL_API_BASE}/sessions/${sessionId}`, {
+              method: "DELETE",
+              headers: { "steel-api-key": STEEL_API_KEY },
+            });
+          } catch {
+            // Ignore cleanup errors
+          }
         } catch (e) {
-          console.error(`[LeverResearch] Error submitting to Skyvern:`, e);
-          skyvernResults.push({ url: jobUrl, error: String(e) });
+          console.error(`[LeverResearch] Error creating Steel session:`, e);
+          steelResults.push({ url: jobUrl, error: String(e) });
         }
       }
 
-      await logAgent(supabase, userId, runId, "skyvern_submission", {
-        total_submitted: skyvernResults.filter((r) => r.runId).length,
-        total_errors: skyvernResults.filter((r) => r.error).length,
+      await logAgent(supabase, userId, runId, "steel_submission", {
+        total_submitted: steelResults.filter((r) => r.sessionId).length,
+        total_errors: steelResults.filter((r) => r.error).length,
       });
 
       // Update agent run
@@ -498,7 +453,7 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
         jobs_found: allJobs.length,
         jobs_enriched: enrichedJobs.length,
         jobs_qualified: qualifiedJobs.length,
-        jobs_submitted_to_skyvern: skyvernResults.filter((r) => r.runId).length,
+        jobs_submitted_to_steel: steelResults.filter((r) => r.sessionId).length,
         queries_used: queryData.queries,
         target_roles: queryData.targetRoles,
         seniority: queryData.seniorityLevel,
@@ -511,16 +466,16 @@ Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority f
           found: allJobs.length,
           enriched: enrichedJobs.length,
           qualified: qualifiedJobs.length,
-          submittedToSkyvern: skyvernResults.filter((r) => r.runId).length,
+          submittedToSteel: steelResults.filter((r) => r.sessionId).length,
           queries: queryData.queries,
           targetRoles: queryData.targetRoles,
           seniorityLevel: queryData.seniorityLevel,
         },
-        skyvernTasks: skyvernResults,
+        steelTasks: steelResults,
       };
 
       console.log(
-        `[LeverResearch] Complete. ${skyvernResults.filter((r) => r.runId).length} jobs submitted to Skyvern`
+        `[LeverResearch] Complete. ${steelResults.filter((r) => r.sessionId).length} jobs submitted via Steel`
       );
 
       return new Response(JSON.stringify(result), {
@@ -596,10 +551,8 @@ async function callOpenAI(
 
 function parseJSON(text: string): any {
   try {
-    // Try direct parse
     return JSON.parse(text);
   } catch {
-    // Extract JSON from markdown code blocks or mixed text
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/(\[[\s\S]*\])/) || text.match(/(\{[\s\S]*\})/);
     if (jsonMatch) {
       return JSON.parse(jsonMatch[1]);
