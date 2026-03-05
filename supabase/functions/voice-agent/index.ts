@@ -869,10 +869,16 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
 
       if (taskId) {
         const supabase = getSupabase();
-        const { data: task } = await supabase.from("agent_tasks").select("result").eq("id", taskId).single();
+        const { data: task } = await supabase.from("agent_tasks").select("result, status").eq("id", taskId).single();
+        // Only update status if not already set by the gather handler (which has objective context)
+        const alreadyResolved = task?.status === "completed" || task?.status === "failed";
+        const twilioFailed = ["busy", "no-answer", "canceled", "failed"].includes(callStatus);
+        const newStatus = alreadyResolved ? task.status : (twilioFailed ? "failed" : "completed");
+        const errorMsg = twilioFailed && !alreadyResolved ? `Call ${callStatus}` : undefined;
         await supabase.from("agent_tasks").update({
-          status: callStatus === "completed" ? "completed" : "failed",
+          status: newStatus,
           completed_at: new Date().toISOString(),
+          ...(errorMsg ? { error_message: errorMsg } : {}),
           result: { ...(task?.result as any || {}), callStatus, callDuration: parseInt(callDuration) },
         }).eq("id", taskId);
       }
