@@ -326,25 +326,26 @@ async function executeNavigatorAction(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LLM CALL HELPER — uses Lovable AI Gateway (no external API key needed)
+// LLM CALL HELPER — uses OpenAI API directly
 // ═══════════════════════════════════════════════════════════════════════════
-const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const OPENAI_API = "https://api.openai.com/v1/chat/completions";
 
 async function callLLM(
-  lovableApiKey: string,
+  lovableApiKey: string, // actually openaiApiKey, kept param name for compat
   systemPrompt: string,
   messages: { role: string; content: string }[],
   jsonMode = true,
 ): Promise<string> {
   const body: any = {
-    model: "openai/gpt-5.2",
+    model: "gpt-4o",
     messages: [{ role: "system", content: systemPrompt }, ...messages],
     max_tokens: 4000,
+    temperature: 0.1,
     stream: false,
   };
   if (jsonMode) body.response_format = { type: "json_object" };
 
-  const res = await fetch(AI_GATEWAY, {
+  const res = await fetch(OPENAI_API, {
     method: "POST",
     headers: { Authorization: `Bearer ${lovableApiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
