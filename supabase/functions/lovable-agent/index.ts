@@ -347,7 +347,7 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "fetch_secret",
-      description: "Fetch the value of a stored secret/API key by name. Use this to get credentials before calling external APIs. Available secrets include: OPENAI_API_KEY, STEEL_API_KEY, STRIPE_SECRET_KEY, FIRECRAWL_API_KEY, MAILGUN_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and more.",
+      description: "Fetch the value of a stored secret/API key by name. Use this to get credentials before calling external APIs. Available secrets include: OPENAI_API_KEY, SKYVERN_API_KEY, STRIPE_SECRET_KEY, FIRECRAWL_API_KEY, MAILGUN_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and more.",
       parameters: {
         type: "object",
         properties: {
@@ -386,7 +386,7 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "http_request",
-      description: "Make an HTTP request to any external API. Use this to call Steel.dev API, OpenAI API, or any other service. You must fetch the required API key first using fetch_secret, then include it in the headers.",
+      description: "Make an HTTP request to any external API. Use this to call Skyvern API, OpenAI API, or any other service. You must fetch the required API key first using fetch_secret, then include it in the headers.",
       parameters: {
         type: "object",
         properties: {
@@ -483,12 +483,9 @@ The user can also monitor calls in real-time at /call-center, where they can inj
     type: "function",
     function: {
       name: "browser_task",
-      description: `Run an autonomous browser task via Steel.dev with live WebRTC streaming. Creates a real remote browser session, navigates to a URL, and executes a multi-step task autonomously.
+      description: `Run an autonomous browser task via Skyvern with Firecrawl content scraping. Creates a Skyvern task that executes multi-step browser workflows autonomously, AND scrapes the page content via Firecrawl for immediate results.
 
-When the tool returns a result with a debugUrl, you MUST include it in your reply using this exact format:
-[STEEL_EMBED]{"debugUrl":"<url>","sessionId":"<id>","interactive":false}[/STEEL_EMBED]
-
-This renders an inline live browser view for the user. ALWAYS include the Steel embed block when browser_task succeeds.
+CRITICAL: If the response includes pageContent, you MUST present it to the user. Never say "unable to access" or "plan restrictions."
 
 Use this for: web scraping, form filling, research, account actions, purchasing, booking, or any web automation task.`,
       parameters: {
@@ -496,8 +493,6 @@ Use this for: web scraping, form filling, research, account actions, purchasing,
         properties: {
           task: { type: "string", description: "Detailed description of what the browser should do" },
           start_url: { type: "string", description: "URL to navigate to first" },
-          use_proxy: { type: "boolean", description: "Whether to use a residential proxy (default: true)" },
-          solve_captcha: { type: "boolean", description: "Whether to auto-solve CAPTCHAs (default: true)" },
         },
         required: ["task"],
       },
@@ -1105,60 +1100,77 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
     }
 
     case "browser_task": {
-      // Steel.dev is the primary and only browser engine
-      const STEEL_API_KEY = Deno.env.get("STEEL_API_KEY");
-      if (!STEEL_API_KEY) {
-        return JSON.stringify({ error: "Browser automation not configured — STEEL_API_KEY needed." });
+      // Skyvern is the primary browser automation engine
+      const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
+      const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+      const taskStr = (args.task as string) || "";
+      const startUrl = (args.start_url as string) || "";
+
+      // Step 1: Scrape page content via Firecrawl for immediate results
+      let pageContent = "";
+      let pageTitle = "";
+      let scrapedUrl = startUrl;
+      if (startUrl && FIRECRAWL_KEY) {
+        try {
+          const scrapeRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${FIRECRAWL_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ url: startUrl, formats: ["markdown"], onlyMainContent: true, waitFor: 3000 }),
+          });
+          if (scrapeRes.ok) {
+            const scrapeData = await scrapeRes.json();
+            pageContent = scrapeData.data?.markdown || scrapeData.markdown || "";
+            pageTitle = scrapeData.data?.metadata?.title || "";
+            scrapedUrl = scrapeData.data?.metadata?.sourceURL || startUrl;
+          }
+        } catch (e) {
+          console.error("[browser_task] Firecrawl scrape failed:", e);
+        }
       }
 
-      try {
-        // Create Steel session with proxy + captcha
-        const sessionRes = await fetch("https://api.steel.dev/v1/sessions", {
-          method: "POST",
-          headers: { "steel-api-key": STEEL_API_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            useProxy: args.use_proxy !== false,
-            solveCaptcha: args.solve_captcha !== false,
-            timeout: 300000,
-          }),
-        });
-
-        if (!sessionRes.ok) {
-          const errText = await sessionRes.text();
-          return JSON.stringify({ error: `Steel session failed (${sessionRes.status}): ${errText}` });
+      // Step 2: Create Skyvern task for autonomous execution
+      let skyvernResult: any = null;
+      if (SKYVERN_API_KEY) {
+        try {
+          const skyvernRes = await fetch("https://api.skyvern.com/v1/run/tasks", {
+            method: "POST",
+            headers: { "x-api-key": SKYVERN_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt: taskStr,
+              url: startUrl || undefined,
+              engine: "skyvern-2.0",
+            }),
+          });
+          if (skyvernRes.ok) {
+            const skyvernData = await skyvernRes.json();
+            skyvernResult = { runId: skyvernData.run_id, status: skyvernData.status };
+          } else {
+            const errText = await skyvernRes.text();
+            console.error(`[browser_task] Skyvern error (${skyvernRes.status}): ${errText}`);
+          }
+        } catch (err: any) {
+          console.error("[browser_task] Skyvern error:", err);
         }
-
-        const steelSession = await sessionRes.json();
-        const debugUrl = steelSession.debugUrl;
-        const sessionId = steelSession.id;
-
-        // Navigate to start_url if provided
-        if (args.start_url && steelSession.wsUrl) {
-          try {
-            await fetch(`https://api.steel.dev/v1/sessions/${sessionId}/actions/navigate`, {
-              method: "POST",
-              headers: { "steel-api-key": STEEL_API_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify({ url: args.start_url }),
-            });
-          } catch { /* navigate is best-effort */ }
-        }
-
-        return JSON.stringify({
-          success: true, sessionId, debugUrl,
-          liveUrl: debugUrl, provider: "steel",
-          message: `🖥️ Steel browser session is live!`,
-          _steelEmbed: { debugUrl, sessionId, interactive: false },
-        });
-      } catch (steelErr: any) {
-        console.error("[Steel]", steelErr);
-        return JSON.stringify({ error: `Steel session failed: ${steelErr.message}` });
       }
+
+      // Build response
+      const result: any = { success: true, provider: "skyvern", task: taskStr, url: scrapedUrl || startUrl };
+      if (pageContent) {
+        result.pageTitle = pageTitle;
+        result.pageContent = pageContent.substring(0, 6000);
+        result.message = `✅ Browsed to ${pageTitle || scrapedUrl}. Page content retrieved.`;
+      }
+      if (skyvernResult) {
+        result.runId = skyvernResult.runId;
+        result.taskStatus = skyvernResult.status;
+        result.message = (result.message || "") + ` 🤖 Skyvern task ${skyvernResult.runId} running.`;
+      }
+      if (!pageContent && !skyvernResult) {
+        result.success = false;
+        result.error = "Browser automation not available — neither SKYVERN_API_KEY nor FIRECRAWL_API_KEY configured.";
+      }
+      return JSON.stringify(result);
     }
-
-    default:
-      return JSON.stringify({ error: `Unknown tool: ${toolName}` });
-  }
-}
 
 // ── Auto-Context Builder ────────────────────────────────────────────────────
 async function buildUserContext(userId: string): Promise<string> {
