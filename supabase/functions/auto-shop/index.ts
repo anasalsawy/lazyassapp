@@ -55,21 +55,21 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled;
 }
 
-// Steel.dev API configuration
-const STEEL_API_BASE = "https://api.steel.dev/v1";
+// Skyvern API configuration
+const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
 
-async function steelApi(
+async function skyvernApi(
   apiKey: string,
   path: string,
   init: RequestInit = {}
 ): Promise<Response> {
-  const url = `${STEEL_API_BASE}${path}`;
+  const url = `${SKYVERN_API_BASE}${path}`;
   const headers: Record<string, string> = {
-    "steel-api-key": apiKey,
+    "x-api-key": apiKey,
     "Content-Type": "application/json",
     ...(init.headers as Record<string, string> || {}),
   };
-  console.log(`[Steel] ${init.method || "GET"} ${path}`);
+  console.log(`[Skyvern] ${init.method || "GET"} ${path}`);
   return fetch(url, { ...init, headers });
 }
 
@@ -79,13 +79,13 @@ serve(async (req) => {
   }
 
   try {
-    const STEEL_API_KEY = Deno.env.get("STEEL_API_KEY");
+    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    if (!STEEL_API_KEY) {
-      throw new Error("STEEL_API_KEY is not configured");
+    if (!SKYVERN_API_KEY) {
+      throw new Error("SKYVERN_API_KEY is not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
