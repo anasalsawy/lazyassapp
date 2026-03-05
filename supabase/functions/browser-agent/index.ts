@@ -675,7 +675,6 @@ serve(async (req) => {
       throw new Error("No authorization");
     }
 
-    const body = await req.json();
     const action = body.action || "run";
 
     switch (action) {
