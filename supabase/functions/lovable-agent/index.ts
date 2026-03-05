@@ -391,6 +391,23 @@ const AGENT_TOOLS = [
   {
     type: "function",
     function: {
+      name: "request_secret",
+      description: "Prompt the user with a secure input box to enter a secret (API key, token, etc.). The user will see a masked input field in the chat. After they submit, the secret is stored and becomes available via fetch_secret. Use this when an integration requires an API key that is not yet configured.",
+      parameters: {
+        type: "object",
+        properties: {
+          secret_name: { type: "string", description: "The name/key for the secret, e.g. 'OPENAI_API_KEY', 'MY_SERVICE_TOKEN'" },
+          display_label: { type: "string", description: "Human-friendly label shown to user, e.g. 'OpenAI API Key'" },
+          description: { type: "string", description: "Brief explanation of what this secret is for and where to find it" },
+          placeholder: { type: "string", description: "Placeholder text for the input, e.g. 'sk-...'" },
+        },
+        required: ["secret_name", "display_label"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "http_request",
       description: "Make an HTTP request to any external API. Use this to call Browser Use Cloud API (https://api.browser-use.com/api/v2/), Skyvern API, OpenAI API, or any other service. You must fetch the required API key first using fetch_secret, then include it in the headers.",
       parameters: {
