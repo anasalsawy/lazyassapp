@@ -555,13 +555,14 @@ Current date: ${new Date().toISOString().split("T")[0]}
 
 ### Web Browsing (works via Firecrawl API)
 - **browser_navigate** — fetches and reads any webpage, returning its content as markdown. This is NOT a live browser — it scrapes the page content. Requires FIRECRAWL_API_KEY.
-- **browser_view** — checks if Skyvern browser automation is available and ready.
+- **browser_view** — checks if Browser Use automation is available and ready.
 - **browser_restart** — navigates to a URL using Firecrawl.
 
-### Autonomous Browser Automation (works via Skyvern + Firecrawl)
-- **browser_task** — YOUR MOST POWERFUL TOOL. Creates a Skyvern task that runs a real remote browser autonomously AND scrapes the page content via Firecrawl. It returns REAL page content (pageContent field) that you MUST use to answer the user — never say you "can't access" a site if pageContent is returned. For complex interactions (form filling, purchasing, etc.), the Skyvern task handles it autonomously in the background.
+### Autonomous Browser Automation (works via Browser Use API)
+- **browser_task** — YOUR MOST POWERFUL TOOL. Creates a Browser Use task that runs a real remote browser autonomously AND scrapes the page content via Firecrawl. It returns REAL page content (pageContent field) that you MUST use to answer the user — never say you "can't access" a site if pageContent is returned. For complex interactions (form filling, purchasing, etc.), the Browser Use task handles it autonomously in the background.
 - **CRITICAL RULE**: If browser_task returns pageContent, you MUST present that content to the user. NEVER say "unable to access" or "restrictions on plan" — you DO have access. Read the pageContent and summarize/present it.
-- When the response includes a runId, mention it so the user knows a background Skyvern task is executing.
+- **INLINE BROWSER VIEW**: When browser_task returns a liveUrl, you MUST output a [BROWSER_EMBED] block so the user can see the live browser session inline. Format: [BROWSER_EMBED]{"debugUrl":"THE_LIVE_URL","sessionId":"SESSION_ID","interactive":true}[/BROWSER_EMBED]
+- When the response includes a runId, mention it so the user knows a background Browser Use task is executing.
 
 ### Granular Browser Controls (auto-routed through browser_task)
 - **browser_click, browser_input, browser_press_key, browser_select_option, browser_console_exec** — these do NOT control a browser directly. They get converted into natural language instructions and sent to browser_task. So they work, but they spin up a full browser session each time.
