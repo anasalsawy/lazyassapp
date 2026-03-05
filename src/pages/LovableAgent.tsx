@@ -393,6 +393,74 @@ function CallMonitorPanel({ callState, isLive }: { callState: CallState; isLive:
   );
 }
 
+// ── Steel Embed Parser ───────────────────────────────────────────────────────
+interface SteelEmbedData {
+  debugUrl: string;
+  sessionId?: string;
+  interactive?: boolean;
+}
+
+function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedData[] } {
+  const embeds: SteelEmbedData[] = [];
+  const embedRegex = /\[STEEL_EMBED\]([\s\S]*?)\[\/STEEL_EMBED\]/g;
+  let text = content;
+  let match;
+
+  while ((match = embedRegex.exec(content)) !== null) {
+    try {
+      const data = JSON.parse(match[1]);
+      if (data.debugUrl) embeds.push(data);
+    } catch { /* ignore */ }
+    text = text.replace(match[0], "");
+  }
+
+  const urlRegex = /https:\/\/[^\s"]+\.steel\.dev[^\s"]*/g;
+  const urls = content.match(urlRegex) || [];
+  for (const url of urls) {
+    if (!embeds.some((e) => e.debugUrl === url)) {
+      embeds.push({ debugUrl: url, interactive: false });
+    }
+  }
+
+  return { text: text.trim(), embeds };
+}
+
+// ── Lovable Message Content (with Steel embeds) ─────────────────────────────
+function LovableMessageContent({ content, role }: { content: string; role: "user" | "assistant" }) {
+  const { text, embeds } = useMemo(() =>
+    role === "assistant" ? parseSteelEmbeds(content) : { text: content, embeds: [] as SteelEmbedData[] },
+    [content, role]
+  );
+
+  return (
+    <>
+      <div
+        className={`rounded-2xl px-4 py-3 ${
+          role === "user"
+            ? "bg-primary text-primary-foreground rounded-br-md"
+            : "bg-muted/60 text-foreground rounded-bl-md"
+        }`}
+      >
+        {role === "assistant" ? (
+          <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-headings:my-2 prose-code:text-primary prose-pre:bg-muted prose-pre:border prose-pre:border-border/40">
+            <ReactMarkdown>{text}</ReactMarkdown>
+          </div>
+        ) : (
+          <div className="text-sm whitespace-pre-wrap leading-relaxed">{text}</div>
+        )}
+      </div>
+      {embeds.map((embed, i) => (
+        <SteelSessionEmbed
+          key={`${embed.debugUrl}-${i}`}
+          debugUrl={embed.debugUrl}
+          sessionId={embed.sessionId}
+          interactive={embed.interactive}
+        />
+      ))}
+    </>
+  );
+}
+
 // ── Suggestions ─────────────────────────────────────────────────────────────
 const SUGGESTIONS = [
   { icon: Sparkles, text: "Run the full pipeline — optimize, search, apply", color: "text-emerald-400" },
