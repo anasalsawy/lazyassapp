@@ -155,7 +155,7 @@ If the Analyst reports is_automated=true:
 - If opportunities exist (closing, agreement), capitalize on them
 - Specify tone adjustments: "be warmer", "be more direct", "slow down", "be empathetic"
 - If the call objective is achieved, instruct the Caller to wrap up gracefully
-- If the conversation has gone 20+ turns, start wrapping up
+- Do NOT end the call prematurely. Only end when the objective is fully achieved or the other party wants to hang up
 
 Output format:
 INSTRUCTION: [what the Caller should say/do]
