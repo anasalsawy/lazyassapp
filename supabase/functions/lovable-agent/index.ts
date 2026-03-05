@@ -502,6 +502,30 @@ The user can also monitor calls in real-time at /call-center, where they can inj
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "browser_task",
+      description: `Run an autonomous browser task via Steel.dev with live WebRTC streaming. Creates a real remote browser session, navigates to a URL, and executes a multi-step task autonomously.
+
+When the tool returns a result with a debugUrl, you MUST include it in your reply using this exact format:
+[STEEL_EMBED]{"debugUrl":"<url>","sessionId":"<id>","interactive":false}[/STEEL_EMBED]
+
+This renders an inline live browser view for the user. ALWAYS include the Steel embed block when browser_task succeeds.
+
+Use this for: web scraping, form filling, research, account actions, purchasing, booking, or any web automation task.`,
+      parameters: {
+        type: "object",
+        properties: {
+          task: { type: "string", description: "Detailed description of what the browser should do" },
+          start_url: { type: "string", description: "URL to navigate to first" },
+          use_proxy: { type: "boolean", description: "Whether to use a residential proxy (default: true)" },
+          solve_captcha: { type: "boolean", description: "Whether to auto-solve CAPTCHAs (default: true)" },
+        },
+        required: ["task"],
+      },
+    },
+  },
 
   // ========== ALL 16 TOOLS FROM AgentTools-2.json (verbatim) ==========
   {
@@ -1101,6 +1125,98 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         secret_name: secretName,
         awaiting_user_input: true,
       });
+    }
+
+    case "browser_task": {
+      // Steel.dev browser automation with live WebRTC streaming
+      const STEEL_API_KEY = Deno.env.get("STEEL_API_KEY");
+      const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+
+      if (!STEEL_API_KEY && !BU_API_KEY) {
+        return JSON.stringify({ error: "Browser automation not configured — STEEL_API_KEY or BROWSER_USE_API_KEY needed." });
+      }
+
+      if (STEEL_API_KEY) {
+        try {
+          // Create Steel session
+          const sessionRes = await fetch("https://api.steel.dev/v1/sessions", {
+            method: "POST",
+            headers: { "steel-api-key": STEEL_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              useProxy: args.use_proxy !== false,
+              solveCaptcha: args.solve_captcha !== false,
+              timeout: 300000,
+            }),
+          });
+
+          if (!sessionRes.ok) {
+            const errText = await sessionRes.text();
+            throw new Error(`Steel session failed (${sessionRes.status}): ${errText}`);
+          }
+
+          const steelSession = await sessionRes.json();
+          const debugUrl = steelSession.debugUrl;
+          const sessionId = steelSession.id;
+
+          // If Browser Use API key is available, connect it to Steel's CDP
+          if (BU_API_KEY) {
+            const taskBody: Record<string, unknown> = {
+              task: args.task as string,
+              save_browser_data: true,
+            };
+            if (args.start_url) taskBody.startUrl = args.start_url as string;
+            if (steelSession.wsUrl) taskBody.cdpUrl = steelSession.wsUrl;
+
+            const buRes = await fetch("https://api.browser-use.com/api/v2/run-task", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${BU_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify(taskBody),
+            });
+
+            if (buRes.ok) {
+              const buData = await buRes.json();
+              return JSON.stringify({
+                success: true, taskId: buData.id, sessionId, debugUrl,
+                liveUrl: debugUrl, provider: "steel+browseruse",
+                message: `🖥️ Browser session started. Watch live: ${debugUrl}`,
+                _steelEmbed: { debugUrl, sessionId, interactive: false },
+              });
+            }
+          }
+
+          // Steel-only mode
+          return JSON.stringify({
+            success: true, sessionId, debugUrl,
+            liveUrl: debugUrl, provider: "steel",
+            message: `🖥️ Steel browser session is live!`,
+            _steelEmbed: { debugUrl, sessionId, interactive: false },
+          });
+        } catch (steelErr: any) {
+          console.error("[Steel]", steelErr);
+          if (!BU_API_KEY) return JSON.stringify({ error: `Steel session failed: ${steelErr.message}` });
+          // Fall through to Browser Use
+        }
+      }
+
+      // Browser Use Cloud fallback
+      if (BU_API_KEY) {
+        const taskBody: Record<string, unknown> = { task: args.task as string, save_browser_data: true };
+        if (args.start_url) taskBody.startUrl = args.start_url as string;
+
+        const buRes = await fetch("https://api.browser-use.com/api/v2/run-task", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${BU_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify(taskBody),
+        });
+
+        const buData = await buRes.json();
+        return JSON.stringify({
+          success: buRes.ok, taskId: buData.id,
+          provider: "browser-use", message: buRes.ok ? "Browser task started via Browser Use Cloud." : (buData.error || "Task failed"),
+        });
+      }
+
+      return JSON.stringify({ error: "No browser automation provider available." });
     }
 
     default:
