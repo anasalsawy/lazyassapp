@@ -963,6 +963,7 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         
         if (needsBilling && _currentUserId) {
           console.log("[make_phone_call] Billing keywords detected — auto-injecting card details");
+          const supabase = createClient(supabaseUrl, serviceRoleKey);
           const encKey = Deno.env.get("SHOP_PROXY_KEY_2024") || "SHOP_PROXY_KEY_2024";
           
           // XOR decrypt helper (matches frontend useAutoShop.ts logic)
