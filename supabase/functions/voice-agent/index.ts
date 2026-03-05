@@ -659,7 +659,7 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
       // Add to history
       history.push({ role: "assistant", content: speech });
 
-      const shouldEnd = directorResult.shouldEnd || callerWantsEnd || turnCount >= 25;
+      const shouldEnd = directorResult.shouldEnd || callerWantsEnd;
 
       // Save updated state
       await supabase.from("agent_tasks").update({
