@@ -1172,6 +1172,11 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
       return JSON.stringify(result);
     }
 
+    default:
+      return JSON.stringify({ error: `Unknown tool: ${toolName}` });
+  }
+}
+
 // ── Auto-Context Builder ────────────────────────────────────────────────────
 async function buildUserContext(userId: string): Promise<string> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
