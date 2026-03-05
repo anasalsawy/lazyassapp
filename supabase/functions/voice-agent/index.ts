@@ -217,9 +217,14 @@ What should the Caller Agent do next?`;
 // ── CALLER AGENT ───────────────────────────────────────────────────────────
 // Uses the full production system prompt provided by the user
 function buildCallerSystemPrompt(config: any): string {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago' });
+
   return `${CALLER_PRODUCTION_PROMPT}
 
 ## RUNTIME CALL CONTEXT
+TODAY'S DATE: ${dateStr} (current time: ${timeStr} CT) — USE THIS DATE. Do NOT hallucinate a different date.
 Company / Principal: ${config.company_name || config.caller_name || "the organization"}
 Caller identity: ${config.agent_name || "Maya"}, role ${config.agent_role || "AI Assistant"}
 Call type: ${config.call_type || "outbound"}
@@ -234,7 +239,8 @@ CRITICAL RULES FOR THIS RESPONSE:
 - Output ONLY what you would SAY on the phone. No actions, no descriptions.
 - Keep it to 1-3 sentences MAX.
 - Sound completely natural and human.
-- If you need to end the call, include [END_CALL] at the very end.`;
+- If you need to end the call, include [END_CALL] at the very end.
+- TODAY IS ${dateStr}. If asked for dates, use the CORRECT current date.`;
 }
 
 async function runCaller(
