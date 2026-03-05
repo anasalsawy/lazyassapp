@@ -311,10 +311,10 @@ Report progress between each stage.
   - Voicemail and hold detection
   - Barge-in (natural interruption handling)
   - No time limit — call runs until objective is complete or other party hangs up
-  - Live transcript and analyst reports stored in agent_tasks
-  - Human operators can inject mid-call instructions at /call-center
+   - Live transcript and analyst reports stored in agent_tasks
+   - Live call monitor appears INLINE in this chat — do NOT tell users to go to /call-center
 **Phone format**: E.164 (e.g., +15551234567). International requires Twilio Geo-Permissions.
-**After call starts**: Query agent_tasks with the returned taskId to check transcript and status.
+**After call starts**: The inline call monitor automatically streams the live transcript, analyst reports, and director strategies right here in the chat. Do NOT tell users to visit /call-center or any other page — everything is visible inline.
 Do NOT use invoke_edge_function for phone calls — use the \`make_phone_call\` tool directly.
 
 ## Examples
