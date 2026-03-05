@@ -42,12 +42,21 @@ type CallState = {
   recordingUrl: string | null;
 };
 
+type SecretRequest = {
+  secret_name: string;
+  display_label: string;
+  description: string;
+  placeholder: string;
+  status: "pending" | "submitted" | "error";
+};
+
 type Msg = {
   role: "user" | "assistant";
   content: string;
   executionPlan?: ExecutionPlan[];
   callState?: CallState;
   isGenerating?: boolean;
+  secretRequest?: SecretRequest;
 };
 
 // ── Tool Icon Mapper ────────────────────────────────────────────────────────
@@ -66,6 +75,7 @@ function ToolIcon({ name }: { name: string }) {
 function friendlyToolName(name: string): string {
   const map: Record<string, string> = {
     fetch_secret: "Fetching credential",
+    request_secret: "Requesting secret from user",
     list_secrets: "Listing secrets",
     http_request: "API request",
     invoke_edge_function: "Running backend function",
@@ -166,6 +176,91 @@ function ExecutionPanel({ plans, isActive }: { plans: ExecutionPlan[]; isActive:
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Secret Input Panel Component ────────────────────────────────────────────
+function SecretInputPanel({ 
+  secretRequest, 
+  onSubmit 
+}: { 
+  secretRequest: SecretRequest; 
+  onSubmit: (secretName: string, value: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showValue, setShowValue] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!value.trim()) return;
+    setIsSubmitting(true);
+    await onSubmit(secretRequest.secret_name, value.trim());
+    setIsSubmitting(false);
+  };
+
+  if (secretRequest.status === "submitted") {
+    return (
+      <div className="my-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
+        <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="w-4 h-4" />
+          <span className="font-medium">{secretRequest.display_label}</span>
+          <span className="text-muted-foreground">— stored securely</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-2 rounded-xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+      <div className="px-4 py-3 space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
+            <Key className="w-4 h-4 text-amber-500" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-foreground">{secretRequest.display_label}</div>
+            <div className="text-xs text-muted-foreground">{secretRequest.description}</div>
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type={showValue ? "text" : "password"}
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder={secretRequest.placeholder || "Enter secret value..."}
+              className="w-full h-10 rounded-lg border border-border/60 bg-background px-3 pr-10 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50"
+              onKeyDown={e => { if (e.key === "Enter") handleSubmit(); }}
+              autoComplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+            />
+            <button
+              onClick={() => setShowValue(!showValue)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              type="button"
+            >
+              {showValue ? <Shield className="w-4 h-4" /> : <Key className="w-4 h-4" />}
+            </button>
+          </div>
+          <Button
+            onClick={handleSubmit}
+            disabled={!value.trim() || isSubmitting}
+            size="default"
+            className="bg-amber-500 hover:bg-amber-600 text-white shrink-0"
+          >
+            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+            <span className="ml-1">Store</span>
+          </Button>
+        </div>
+
+        <p className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
+          <Shield className="w-3 h-3" />
+          Encrypted and stored securely. Never visible in logs or chat.
+        </p>
+      </div>
     </div>
   );
 }
@@ -587,11 +682,71 @@ export default function LovableAgent() {
         if (data.status === "generating") setPhase("generating");
         break;
 
+      case "secret_request":
+        // Add a message with a secret input panel
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "",
+            secretRequest: {
+              secret_name: data.secret_name,
+              display_label: data.display_label,
+              description: data.description || "",
+              placeholder: data.placeholder || "",
+              status: "pending",
+            },
+          },
+        ]);
+        break;
+
       case "error":
         console.error("[agent event] Error:", data.message);
         break;
     }
   }, []);
+
+  // ── Secret Submission ─────────────────────────────────────────────────────
+  const submitSecret = useCallback(async (secretName: string, secretValue: string) => {
+    if (!session?.access_token) return;
+
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/lovable-agent?action=store_secret`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ secret_name: secretName, secret_value: secretValue }),
+        }
+      );
+
+      const data = await resp.json();
+      if (data.success) {
+        // Update the message's secretRequest status to "submitted"
+        setMessages(prev =>
+          prev.map(m =>
+            m.secretRequest?.secret_name === secretName
+              ? { ...m, secretRequest: { ...m.secretRequest, status: "submitted" as const } }
+              : m
+          )
+        );
+      } else {
+        setMessages(prev =>
+          prev.map(m =>
+            m.secretRequest?.secret_name === secretName
+              ? { ...m, secretRequest: { ...m.secretRequest, status: "error" as const } }
+              : m
+          )
+        );
+      }
+    } catch (e) {
+      console.error("[submitSecret]", e);
+    }
+  }, [session]);
 
   // ── Operator Injection (mid-call instructions) ───────────────────────────
   const [isInjecting, setIsInjecting] = useState(false);
@@ -714,6 +869,11 @@ export default function LovableAgent() {
                       {/* Call monitor panel (after execution, before content) */}
                       {msg.role === "assistant" && msg.callState ? (
                         <CallMonitorPanel callState={msg.callState} isLive={false} />
+                      ) : null}
+
+                      {/* Secret input panel */}
+                      {msg.role === "assistant" && msg.secretRequest ? (
+                        <SecretInputPanel secretRequest={msg.secretRequest} onSubmit={submitSecret} />
                       ) : null}
 
                       <div
