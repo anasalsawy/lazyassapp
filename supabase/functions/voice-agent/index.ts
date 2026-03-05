@@ -210,7 +210,7 @@ What should the Caller Agent do next?`;
       tone: toneMatch?.[1]?.trim() || "professional and warm",
       priority: priorityMatch?.[1]?.trim() || "continue conversation",
       dtmf,
-      shouldEnd: endMatch?.[1]?.toLowerCase() === "true" || turnCount >= 25,
+      shouldEnd: endMatch?.[1]?.toLowerCase() === "true",
     };
   } catch (e) {
     console.error("[director] Error:", e);
