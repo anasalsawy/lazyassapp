@@ -277,12 +277,11 @@ function escapeXml(str: string): string {
 function buildGatherTwiml(speech: string, webhookUrl: string, voice = "Polly.Matthew-Neural"): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST" bargeIn="true">
     <Say voice="${voice}">${escapeXml(speech)}</Say>
   </Gather>
-  <Say voice="${voice}">I didn't catch that. Are you still there?</Say>
-  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
-    <Say voice="${voice}">Hello?</Say>
+  <Gather input="speech dtmf" speechTimeout="4" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
+    <Say voice="${voice}">I didn't catch that. Are you still there?</Say>
   </Gather>
   <Say voice="${voice}">It seems like the connection dropped. Have a great day!</Say>
 </Response>`;
@@ -295,7 +294,7 @@ function buildDtmfTwiml(digit: string, webhookUrl: string, speechAfter?: string,
 <Response>
   <Play digits="${escapeXml(digit)}"/>
   <Pause length="2"/>${sayAfter}
-  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Say voice="${voice}">.</Say>
   </Gather>
 </Response>`;
@@ -306,7 +305,7 @@ function buildWaitTwiml(webhookUrl: string, voice = "Polly.Matthew-Neural"): str
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Pause length="5"/>
-  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Say voice="${voice}">.</Say>
   </Gather>
 </Response>`;
@@ -495,9 +494,8 @@ serve(async (req) => {
 
       console.log(`[voice-agent] Gather — CallSid: ${callSid}, Speech: "${speechResult}", Confidence: ${confidence}`);
 
-      if (!speechResult || !taskId) {
-        const gatherUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
-        return new Response(buildGatherTwiml("I'm still here. Go ahead.", gatherUrl), {
+      if (!taskId) {
+        return new Response(buildEndCallTwiml("Something went wrong. Goodbye!"), {
           headers: { "Content-Type": "text/xml" },
         });
       }
@@ -519,13 +517,58 @@ serve(async (req) => {
       const directorDecisions: any[] = result?.directorDecisions || [];
       const operatorInjections: string[] = result?.operatorInjections || [];
       const turnCount = (result?.turnCount || 0) + 1;
+      const pendingBuffer: string = result?.pendingTranscriptBuffer || "";
 
-      // Add user speech to history
-      history.push({ role: "user", content: speechResult });
+      const gatherUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
+
+      // ── TRANSCRIPT BUFFERING ──────────────────────────────────────────
+      // If the speech is very short (under ~4 words) AND low confidence,
+      // it's likely a fragment caused by a premature STT cut.
+      // Buffer it and wait for the next chunk before processing.
+      const wordCount = speechResult.trim().split(/\s+/).length;
+      const isFragment = speechResult && wordCount <= 3 && confidence < 0.75 && confidence > 0;
+      
+      if (!speechResult) {
+        // Empty result (silence) — if we have buffered text, process it; otherwise re-gather
+        if (pendingBuffer.trim()) {
+          console.log(`[voice-agent] Silence after buffered speech — flushing buffer: "${pendingBuffer}"`);
+          // Fall through to process the buffer as the full speech
+        } else {
+          console.log(`[voice-agent] Silence detected, re-gathering...`);
+          return new Response(buildGatherTwiml("I'm still here. Go ahead.", gatherUrl, voice), {
+            headers: { "Content-Type": "text/xml" },
+          });
+        }
+      } else if (isFragment) {
+        // Short fragment — buffer it and re-gather without running agents
+        const newBuffer = (pendingBuffer + " " + speechResult).trim();
+        console.log(`[voice-agent] ✂️ FRAGMENT DETECTED (${wordCount} words, conf=${confidence}) — Buffering: "${newBuffer}"`);
+        
+        await supabase.from("agent_tasks").update({
+          result: { ...result, pendingTranscriptBuffer: newBuffer },
+        }).eq("id", taskId);
+
+        // Silent re-gather — just listen for more speech without saying anything
+        return new Response(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(gatherUrl)}" method="POST">
+    <Pause length="1"/>
+  </Gather>
+</Response>`, { headers: { "Content-Type": "text/xml" } });
+      }
+
+      // Combine any buffered speech with current speech
+      const fullSpeech = (pendingBuffer + " " + speechResult).trim();
+      if (pendingBuffer) {
+        console.log(`[voice-agent] 🔗 MERGED buffered + current speech: "${fullSpeech}"`);
+      }
+
+      // Add user speech to history (full merged version)
+      history.push({ role: "user", content: fullSpeech });
 
       // ── STEP 1: ANALYST AGENT ──
       console.log(`[voice-agent] Running Analyst Agent (turn ${turnCount})...`);
-      const analystReport = await runAnalyst(history, speechResult);
+      const analystReport = await runAnalyst(history, fullSpeech);
       analystReports.push(analystReport);
       console.log(`[voice-agent] Analyst: tone=${analystReport.tone}, intent=${analystReport.intent}, is_automated=${analystReport.is_automated}, risks=${analystReport.risks}`);
 
@@ -561,6 +604,7 @@ serve(async (req) => {
             lastAnalysis: analystReport,
             lastDirective: directorResult,
             ivrDetected: true,
+            pendingTranscriptBuffer: "",
           },
         }).eq("id", taskId);
 
@@ -586,6 +630,7 @@ serve(async (req) => {
             lastTurnAt: new Date().toISOString(),
             lastAnalysis: analystReport,
             lastDirective: directorResult,
+            pendingTranscriptBuffer: "",
           },
         }).eq("id", taskId);
 
@@ -609,7 +654,7 @@ serve(async (req) => {
           history.push({ role: "assistant", content: `[SYSTEM: IVR loop detected, pressing 0 for operator]` });
           
           await supabase.from("agent_tasks").update({
-            result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true },
+            result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true, pendingTranscriptBuffer: "" },
           }).eq("id", taskId);
           
           return new Response(buildDtmfTwiml("0", gatherUrl, undefined, voice), {
@@ -641,7 +686,7 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
         history.push({ role: "assistant", content: shortResponse });
         
         await supabase.from("agent_tasks").update({
-          result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true },
+          result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true, pendingTranscriptBuffer: "" },
         }).eq("id", taskId);
         
         return new Response(buildGatherTwiml(shortResponse, gatherUrl, voice), {
@@ -674,6 +719,7 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
           lastTurnAt: new Date().toISOString(),
           lastAnalysis: analystReport,
           lastDirective: directorResult,
+          pendingTranscriptBuffer: "",
         },
       }).eq("id", taskId);
 
