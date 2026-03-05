@@ -17,7 +17,7 @@ const corsHeaders = {
 // 5. Creates Steel sessions for qualified job applications
 // =============================================
 
-const STEEL_API_BASE = "https://api.steel.dev/v1";
+const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -34,7 +34,9 @@ serve(async (req) => {
 
     if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
     if (!FIRECRAWL_API_KEY) throw new Error("FIRECRAWL_API_KEY not configured");
-    if (!STEEL_API_KEY) throw new Error("STEEL_API_KEY not configured");
+    if (!STEEL_API_KEY) console.warn("STEEL_API_KEY not configured — using SKYVERN_API_KEY");
+    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
+    if (!SKYVERN_API_KEY) throw new Error("SKYVERN_API_KEY not configured");
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -362,7 +364,7 @@ Score HONESTLY. 60+ means reasonable match.`;
         }
       }
 
-      // ---- STEP 8: Submit qualified jobs via Steel sessions ----
+      // ---- STEP 8: Submit qualified jobs via Skyvern tasks ----
       const header = redesigned?.header || {};
       const education = redesigned?.education || [];
       const candidateInfo = [
@@ -381,34 +383,35 @@ Score HONESTLY. 60+ means reasonable match.`;
         .filter((j) => j.recommendation === "apply")
         .map((j) => j.url.endsWith("/apply") ? j.url : `${j.url}/apply`);
 
-      const steelResults: { url: string; sessionId?: string; error?: string }[] = [];
+      const skyvernResults: { url: string; runId?: string; error?: string }[] = [];
 
       for (const jobUrl of applyUrls) {
         try {
-          // Create a Steel session for each job application
-          const sessionRes = await fetch(`${STEEL_API_BASE}/sessions`, {
+          // Create a Skyvern task for each job application
+          const taskRes = await fetch(`${SKYVERN_API_BASE}/run/tasks`, {
             method: "POST",
             headers: {
-              "steel-api-key": STEEL_API_KEY,
+              "x-api-key": SKYVERN_API_KEY,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              useProxy: true,
-              solveCaptcha: true,
+              prompt: `Apply to this job at ${jobUrl}. Fill out the application form with the following candidate info:\n${candidateInfo}\n\nComplete and submit the application.`,
+              url: jobUrl,
+              engine: "skyvern-2.0",
             }),
           });
 
-          if (!sessionRes.ok) {
-            const errText = await sessionRes.text();
-            console.error(`[LeverResearch] Steel session error for ${jobUrl}: ${sessionRes.status} ${errText}`);
-            steelResults.push({ url: jobUrl, error: `${sessionRes.status}` });
+          if (!taskRes.ok) {
+            const errText = await taskRes.text();
+            console.error(`[LeverResearch] Skyvern task error for ${jobUrl}: ${taskRes.status} ${errText}`);
+            skyvernResults.push({ url: jobUrl, error: `${taskRes.status}` });
             continue;
           }
 
-          const steelSession = await sessionRes.json();
-          const sessionId = steelSession.id;
-          console.log(`[LeverResearch] Steel session created for ${jobUrl}: ${sessionId}`);
-          steelResults.push({ url: jobUrl, sessionId });
+          const skyvernTask = await taskRes.json();
+          const runId = skyvernTask.run_id;
+          console.log(`[LeverResearch] Skyvern task created for ${jobUrl}: ${runId}`);
+          skyvernResults.push({ url: jobUrl, runId });
 
           // Create application record
           const matchingJob = qualifiedJobs.find((j) => j.url === jobUrl);
@@ -423,29 +426,19 @@ Score HONESTLY. 60+ means reasonable match.`;
               platform: "lever",
               status: "applying",
               status_source: "system",
-              status_message: `Steel session: ${sessionId}`,
-              extra_metadata: { steel_session_id: sessionId, match_score: matchingJob?.score },
+              status_message: `Skyvern task: ${runId}`,
+              extra_metadata: { skyvern_run_id: runId, match_score: matchingJob?.score },
             });
-          }
-
-          // Release the session after recording (actual application handled by AI agent)
-          try {
-            await fetch(`${STEEL_API_BASE}/sessions/${sessionId}`, {
-              method: "DELETE",
-              headers: { "steel-api-key": STEEL_API_KEY },
-            });
-          } catch {
-            // Ignore cleanup errors
           }
         } catch (e) {
-          console.error(`[LeverResearch] Error creating Steel session:`, e);
-          steelResults.push({ url: jobUrl, error: String(e) });
+          console.error(`[LeverResearch] Error creating Skyvern task:`, e);
+          skyvernResults.push({ url: jobUrl, error: String(e) });
         }
       }
 
-      await logAgent(supabase, userId, runId, "steel_submission", {
-        total_submitted: steelResults.filter((r) => r.sessionId).length,
-        total_errors: steelResults.filter((r) => r.error).length,
+      await logAgent(supabase, userId, runId, "skyvern_submission", {
+        total_submitted: skyvernResults.filter((r) => r.runId).length,
+        total_errors: skyvernResults.filter((r) => r.error).length,
       });
 
       // Update agent run
@@ -453,7 +446,7 @@ Score HONESTLY. 60+ means reasonable match.`;
         jobs_found: allJobs.length,
         jobs_enriched: enrichedJobs.length,
         jobs_qualified: qualifiedJobs.length,
-        jobs_submitted_to_steel: steelResults.filter((r) => r.sessionId).length,
+        jobs_submitted_to_skyvern: skyvernResults.filter((r) => r.runId).length,
         queries_used: queryData.queries,
         target_roles: queryData.targetRoles,
         seniority: queryData.seniorityLevel,
@@ -466,16 +459,16 @@ Score HONESTLY. 60+ means reasonable match.`;
           found: allJobs.length,
           enriched: enrichedJobs.length,
           qualified: qualifiedJobs.length,
-          submittedToSteel: steelResults.filter((r) => r.sessionId).length,
+          submittedToSkyvern: skyvernResults.filter((r) => r.runId).length,
           queries: queryData.queries,
           targetRoles: queryData.targetRoles,
           seniorityLevel: queryData.seniorityLevel,
         },
-        steelTasks: steelResults,
+        skyvernTasks: skyvernResults,
       };
 
       console.log(
-        `[LeverResearch] Complete. ${steelResults.filter((r) => r.sessionId).length} jobs submitted via Steel`
+        `[LeverResearch] Complete. ${skyvernResults.filter((r) => r.runId).length} jobs submitted via Skyvern`
       );
 
       return new Response(JSON.stringify(result), {
