@@ -314,7 +314,8 @@ export default function LovableAgent() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [currentPlans, setCurrentPlans] = useState<ExecutionPlan[]>([]);
-  const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating">("idle");
+  const [currentCallState, setCurrentCallState] = useState<CallState | null>(null);
+  const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
