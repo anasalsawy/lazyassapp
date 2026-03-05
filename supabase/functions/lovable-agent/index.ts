@@ -1078,11 +1078,25 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         try {
           const retryRaw = funcBody.retry_stores as string;
           if (retryRaw) {
-            _activeCallRetryStores = JSON.parse(retryRaw);
+            const parsed = typeof retryRaw === 'string' ? JSON.parse(retryRaw) : retryRaw;
+            _activeCallRetryStores = Array.isArray(parsed) ? parsed : [];
           } else {
             _activeCallRetryStores = [];
           }
-        } catch { _activeCallRetryStores = []; }
+        } catch (e) { 
+          console.error("[make_phone_call] Failed to parse retry_stores:", e);
+          _activeCallRetryStores = []; 
+        }
+        
+        // Warn if this looks like an order call but has no retry stores
+        const orderKeywords = ['order', 'buy', 'purchase', 'book', 'reserve', 'pickup'];
+        const objectiveLower = ((funcBody.objective as string) || '').toLowerCase();
+        const isOrderCall = orderKeywords.some(kw => objectiveLower.includes(kw));
+        if (isOrderCall && _activeCallRetryStores.length === 0) {
+          console.warn("[make_phone_call] ⚠️ ORDER CALL WITHOUT RETRY STORES — auto-retry will not work if this call fails!");
+        }
+        console.log(`[make_phone_call] Retry stores loaded: ${_activeCallRetryStores.length} stores`, 
+          _activeCallRetryStores.map(s => s.name).join(', '));
         // Save config for retries (without retry_stores and phone_number)
         const retryConfig = { ...funcBody };
         delete retryConfig.retry_stores;
