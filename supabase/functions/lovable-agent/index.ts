@@ -1187,6 +1187,84 @@ serve(async (req) => {
             sendEvent("tools_complete", { iterations });
           }
 
+          // ── AUTO-POLL ACTIVE CALL ──
+          // If a phone call was initiated, poll agent_tasks for live updates
+          if (_activeCallTaskId) {
+            const callTaskId = _activeCallTaskId;
+            _activeCallTaskId = null; // Reset for next request
+            const supabase = createClient(
+              Deno.env.get("SUPABASE_URL")!,
+              Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+            );
+
+            sendEvent("call_started", { taskId: callTaskId });
+
+            let lastTurnCount = 0;
+            let lastStatus = "running";
+            const MAX_POLLS = 120; // ~4 minutes max polling
+            const POLL_INTERVAL = 2000; // 2 seconds
+
+            for (let poll = 0; poll < MAX_POLLS; poll++) {
+              await new Promise(r => setTimeout(r, POLL_INTERVAL));
+
+              const { data: task } = await supabase
+                .from("agent_tasks")
+                .select("status, result, completed_at, error_message")
+                .eq("id", callTaskId)
+                .single();
+
+              if (!task) {
+                sendEvent("call_update", { status: "error", message: "Call task not found" });
+                break;
+              }
+
+              const result = task.result as Record<string, any> || {};
+              const history = (result.conversationHistory || []) as Array<{ role: string; content: string }>;
+              const turnCount = result.turnCount || 0;
+              const currentStatus = task.status;
+
+              // Send new transcript entries
+              if (turnCount > lastTurnCount) {
+                const newEntries = history.slice(lastTurnCount * 2); // rough: 2 entries per turn (user+assistant)
+                // Send the latest conversation entries
+                const recentHistory = history.slice(-6); // last 3 turns
+                sendEvent("call_update", {
+                  status: currentStatus,
+                  turnCount,
+                  transcript: recentHistory,
+                  lastAnalysis: result.lastAnalysis || null,
+                  lastDirective: result.lastDirective || null,
+                  objective: result.objective || null,
+                  agentName: result.agentName || "Maya",
+                });
+                lastTurnCount = turnCount;
+              } else if (currentStatus !== lastStatus) {
+                sendEvent("call_update", {
+                  status: currentStatus,
+                  turnCount,
+                  transcript: history.slice(-4),
+                  lastAnalysis: result.lastAnalysis || null,
+                  lastDirective: result.lastDirective || null,
+                });
+              }
+
+              lastStatus = currentStatus;
+
+              // Stop polling when call is done
+              if (currentStatus === "completed" || currentStatus === "failed") {
+                sendEvent("call_ended", {
+                  status: currentStatus,
+                  turnCount,
+                  transcript: history,
+                  lastAnalysis: result.lastAnalysis || null,
+                  errorMessage: task.error_message || null,
+                  recordingUrl: result.recordingUrl || null,
+                });
+                break;
+              }
+            }
+          }
+
           // Stream the final response
           const finalContent = choice?.message?.content || "";
 
