@@ -480,6 +480,7 @@ The user can also monitor calls in real-time at /call-center, where they can inj
           disclosure_policy: { type: "string", description: "AI disclosure policy: 'disclose_if_asked' (default), 'always_disclose', or 'never_disclose'" },
           call_type: { type: "string", description: "Type of call: outbound (default), follow_up, cold_call, appointment, inquiry" },
           allowed_actions: { type: "string", description: "What the agent is permitted to do: converse, negotiate, gather info, confirm details, schedule, etc." },
+          retry_stores: { type: "string", description: "JSON array of alternative stores to try if this call fails. Each entry: {\"name\": \"Store Name\", \"phone\": \"+15551234567\"}. The system will automatically retry with the next store on failure. Use for order/purchase calls." },
         },
         required: ["phone_number", "objective"],
       },
