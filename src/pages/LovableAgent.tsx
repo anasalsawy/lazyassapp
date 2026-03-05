@@ -724,9 +724,10 @@ export default function LovableAgent() {
               </p>
               {isLoading && (
                 <Badge variant="outline" className="text-xs animate-pulse">
-                  <Activity className="w-3 h-3 mr-1" />
+                  {phase === "on_call" ? <Phone className="w-3 h-3 mr-1" /> : <Activity className="w-3 h-3 mr-1" />}
                   {phase === "thinking" ? "Thinking..." :
                    phase === "executing" ? "Executing tools..." :
+                   phase === "on_call" ? "On call..." :
                    phase === "generating" ? "Writing response..." :
                    "Working..."}
                 </Badge>
