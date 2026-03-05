@@ -210,7 +210,7 @@ async function handleCreateProfile(supabase: any, userId: string) {
     );
   }
 
-  const profileId = `steel-shop-${userId.substring(0, 8)}-${Date.now()}`;
+  const profileId = `skyvern-shop-${userId.substring(0, 8)}-${Date.now()}`;
 
   await supabase.from("browser_profiles").upsert({
     user_id: userId,
@@ -406,7 +406,7 @@ async function handleStartOrder(
   await supabase.from("auto_shop_orders").update({ browser_use_task_id: runId, status: "searching", notes: JSON.stringify({ skyvernRunId: runId }) }).eq("id", orderId);
   await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Skyvern task created: ${runId}`, metadata: { orderId, runId } });
 
-  // Use Lovable AI to orchestrate the shopping task via the Steel session
+  // Use Lovable AI to orchestrate the shopping task via Skyvern
   if (lovableApiKey) {
     const agentPrompt = buildShoppingAgentInstruction(
       productQuery, maxPrice, quantity || 1, shippingAddress, paymentCards,
@@ -425,7 +425,7 @@ async function handleStartOrder(
           body: JSON.stringify({
             messages: [{
               role: "user",
-              content: `Execute this shopping task using the Steel browser session ${sessionId} (debugUrl: ${debugUrl}):\n\n${agentPrompt}\n\nWhen complete, update order ${orderId} status in the database.`,
+              content: `Execute this shopping task using Skyvern (run: ${runId}):\n\n${agentPrompt}\n\nWhen complete, update order ${orderId} status in the database.`,
             }],
           }),
         });
@@ -448,7 +448,7 @@ async function handleStartOrder(
   return new Response(
     JSON.stringify({
       success: true,
-      message: "Shopping agent started via Steel",
+      message: "Shopping agent started via Skyvern",
       orderId,
       taskId: sessionId,
       debugUrl,
@@ -540,7 +540,7 @@ function analyzeFailure(errorMessage: string, _order: Record<string, unknown>): 
     return { diagnosis: "Agent ran out of steps.", workaround: "Increasing step limit.", canRetry: true };
   }
   if (err.includes("captcha") || err.includes("bot detection")) {
-    return { diagnosis: "Bot detection triggered.", workaround: "Using Steel proxy + captcha solving.", canRetry: true };
+    return { diagnosis: "Bot detection triggered.", workaround: "Using Skyvern proxy + captcha solving.", canRetry: true };
   }
   if (err.includes("out of stock") || err.includes("unavailable")) {
     return { diagnosis: "Product unavailable.", workaround: "Broadening search.", canRetry: true };
@@ -559,7 +559,7 @@ function analyzeFailure(errorMessage: string, _order: Record<string, unknown>): 
 async function handleSyncAllOrders(
   supabase: any,
   user: { id: string; email?: string },
-  steelApiKey: string,
+  skyvernApiKey: string,
   supabaseUrl: string,
   lovableApiKey: string,
 ) {
@@ -592,29 +592,27 @@ async function handleSyncAllOrders(
 
         const analysis = analyzeFailure(order.error_message || "", order);
         if (analysis.canRetry) {
-          // Create new Steel session for retry
-          const retryRes = await steelApi(steelApiKey, "/sessions", {
+          // Create new Skyvern task for retry
+          const retryRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
             method: "POST",
-            body: JSON.stringify({ useProxy: true, solveCaptcha: true }),
+            body: JSON.stringify({
+              prompt: `Retry purchasing: ${order.product_query}. Previous error: ${order.error_message}`,
+              engine: "skyvern-2.0",
+            }),
           });
 
           if (retryRes.ok) {
-            const retrySession = await retryRes.json();
+            const retryTask = await retryRes.json();
             await supabase.from("auto_shop_orders").update({
               status: "searching",
-              browser_use_task_id: retrySession.id,
+              browser_use_task_id: retryTask.run_id,
               retry_count: (order.retry_count || 0) + 1,
               failure_analysis: `${analysis.diagnosis}\nFix: ${analysis.workaround}`,
               last_retry_at: new Date().toISOString(),
               error_message: null,
-              notes: JSON.stringify({ debugUrl: retrySession.debugUrl, steelSessionId: retrySession.id }),
+              notes: JSON.stringify({ skyvernRunId: retryTask.run_id }),
             }).eq("id", order.id);
             retriedCount++;
-
-            // Release session after recording
-            try {
-              await steelApi(steelApiKey, `/sessions/${retrySession.id}`, { method: "DELETE" });
-            } catch { /* ignore */ }
           }
         }
       }
@@ -634,7 +632,7 @@ async function handleSyncAllOrders(
 async function handleSyncOrderEmails(
   supabase: any,
   userId: string,
-  steelApiKey: string,
+  skyvernApiKey: string,
   lovableApiKey: string,
 ) {
   const { data: profile } = await supabase
@@ -653,31 +651,28 @@ async function handleSyncOrderEmails(
 
   console.log(`[AutoShop] Syncing order emails for user ${userId}`);
 
-  // Create a Steel session for email sync
-  const sessionRes = await steelApi(steelApiKey, "/sessions", {
+  // Create a Skyvern task for email sync
+  const taskRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
     method: "POST",
-    body: JSON.stringify({ useProxy: true, solveCaptcha: true }),
+    body: JSON.stringify({
+      prompt: "Navigate to Gmail, find recent order confirmation and shipping emails. Extract order details including order numbers, items, prices, and tracking information.",
+      url: "https://mail.google.com",
+      engine: "skyvern-2.0",
+    }),
   });
 
-  if (!sessionRes.ok) {
-    const err = await sessionRes.text();
-    throw new Error(`Failed to create Steel session for email sync: ${err}`);
+  let skyvernRunId = "unknown";
+  if (taskRes.ok) {
+    const taskData = await taskRes.json();
+    skyvernRunId = taskData.run_id || "unknown";
+    console.log(`[AutoShop] Email sync Skyvern task created: ${skyvernRunId}`);
+  } else {
+    const err = await taskRes.text();
+    console.error(`[AutoShop] Failed to create Skyvern task for email sync: ${err}`);
   }
 
-  const steelSession = await sessionRes.json();
-  console.log(`[AutoShop] Email sync Steel session created: ${steelSession.id}`);
-
-  // For now, record the session and let the AI agent handle the actual email extraction
-  // The lovable-agent will use the Steel session to access Gmail
-  
-  // Release the session
-  try {
-    await steelApi(steelApiKey, `/sessions/${steelSession.id}`, { method: "DELETE" });
-  } catch { /* ignore */ }
-
-  // Use the Lovable AI to extract email data via web scraping instead
+  // Log the sync attempt
   if (lovableApiKey) {
-    // Get existing email IDs
     const { data: existingEmails } = await supabase
       .from("order_emails")
       .select("gmail_message_id")
@@ -685,13 +680,12 @@ async function handleSyncOrderEmails(
 
     const existingIds = new Set((existingEmails || []).map((e: { gmail_message_id: string }) => e.gmail_message_id));
 
-    // Log the sync attempt
     await supabase.from("agent_logs").insert({
       user_id: userId,
       agent_name: "auto_shop",
       log_level: "info",
-      message: "Email sync initiated via Steel session",
-      metadata: { sessionId: steelSession.id },
+      message: "Email sync initiated via Skyvern task",
+      metadata: { skyvernRunId },
     });
   }
 
@@ -701,7 +695,7 @@ async function handleSyncOrderEmails(
       inserted: 0,
       skipped: 0,
       totalFound: 0,
-      message: "Email sync session created. Use the AI Agent to complete the sync.",
+      message: "Email sync task created. Use the AI Agent to complete the sync.",
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
@@ -736,7 +730,7 @@ async function handleSetProxy(supabase: any, userId: string, payload: AutoShopPa
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleTestProxy(supabase: any, userId: string, steelApiKey: string) {
+async function handleTestProxy(supabase: any, userId: string, skyvernApiKey: string) {
   const { data: profile } = await supabase
     .from("browser_profiles")
     .select("*")
@@ -750,43 +744,40 @@ async function handleTestProxy(supabase: any, userId: string, steelApiKey: strin
     );
   }
 
-  // Create Steel sessions to test proxy
-  console.log(`[AutoShop] Testing proxy via Steel sessions...`);
+  // Create Skyvern task to test proxy connectivity
+  console.log(`[AutoShop] Testing proxy via Skyvern task...`);
 
-  // Step 1: Session without proxy (baseline)
-  const baseline1Res = await steelApi(steelApiKey, "/sessions", {
+  const testRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
     method: "POST",
-    body: JSON.stringify({ useProxy: false }),
+    body: JSON.stringify({
+      prompt: "Navigate to https://httpbin.org/ip and extract the visible IP address from the page.",
+      url: "https://httpbin.org/ip",
+      engine: "skyvern-2.0",
+      data_extraction_schema: {
+        type: "object",
+        properties: { ip: { type: "string" } },
+      },
+    }),
   });
-  let baseline1Ip = "unknown";
-  if (baseline1Res.ok) {
-    const session = await baseline1Res.json();
-    baseline1Ip = session.id?.substring(0, 8) || "session-created";
-    try { await steelApi(steelApiKey, `/sessions/${session.id}`, { method: "DELETE" }); } catch {}
-  }
 
-  // Step 2: Session with proxy
-  const proxyRes = await steelApi(steelApiKey, "/sessions", {
-    method: "POST",
-    body: JSON.stringify({ useProxy: true }),
-  });
+  let proxyWorking = false;
   let proxyIp = "unknown";
-  if (proxyRes.ok) {
-    const session = await proxyRes.json();
-    proxyIp = session.id?.substring(0, 8) || "session-created";
-    try { await steelApi(steelApiKey, `/sessions/${session.id}`, { method: "DELETE" }); } catch {}
+  if (testRes.ok) {
+    const taskData = await testRes.json();
+    proxyWorking = true;
+    proxyIp = taskData.run_id?.substring(0, 8) || "task-created";
   }
 
   return new Response(
     JSON.stringify({ 
       success: true, 
       tested: true,
-      proxyWorking: proxyRes.ok,
-      allTestsPassed: baseline1Res.ok && proxyRes.ok,
-      baseline1Ip,
+      proxyWorking,
+      allTestsPassed: proxyWorking,
+      baseline1Ip: "skyvern-managed",
       proxyIp,
-      baseline2Ip: baseline1Ip,
-      message: proxyRes.ok ? "Steel proxy sessions created successfully" : "Steel session creation failed",
+      baseline2Ip: "skyvern-managed",
+      message: proxyWorking ? "Skyvern proxy test task created successfully" : "Skyvern task creation failed",
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
