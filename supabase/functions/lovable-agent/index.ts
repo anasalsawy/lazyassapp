@@ -1255,6 +1255,7 @@ serve(async (req) => {
       const supabase = createClient(supabaseUrl, serviceRoleKey);
       const { data: { user } } = await supabase.auth.getUser(userToken);
       userId = user?.id || null;
+      _currentUserId = userId;
     }
 
     // Build auto-context with user's data
