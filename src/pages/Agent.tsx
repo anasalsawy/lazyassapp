@@ -27,26 +27,27 @@ const SUGGESTIONS = [
   { icon: Search, text: "Research average salaries for my target roles", color: "text-cyan-400" },
 ];
 
-/** Extract Steel embed JSON blocks from assistant messages */
-function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedData[] } {
+/** Extract browser embed JSON blocks from assistant messages */
+function parseBrowserEmbeds(content: string): { text: string; embeds: SteelEmbedData[] } {
   const embeds: SteelEmbedData[] = [];
-  // Match JSON blocks containing _steelEmbed or debugUrl patterns in tool output
-  const embedRegex = /\[STEEL_EMBED\]([\s\S]*?)\[\/STEEL_EMBED\]/g;
+  // Match [BROWSER_EMBED] or legacy [STEEL_EMBED] blocks
+  const embedRegex = /\[(BROWSER_EMBED|STEEL_EMBED)\]([\s\S]*?)\[\/(BROWSER_EMBED|STEEL_EMBED)\]/g;
   let text = content;
   let match;
 
   while ((match = embedRegex.exec(content)) !== null) {
     try {
-      const data = JSON.parse(match[1]);
-      if (data.debugUrl) {
-        embeds.push(data);
+      const data = JSON.parse(match[2]);
+      const url = data.debugUrl || data.liveUrl;
+      if (url) {
+        embeds.push({ debugUrl: url, sessionId: data.sessionId, interactive: data.interactive });
       }
     } catch { /* ignore */ }
     text = text.replace(match[0], "");
   }
 
-  // Also check for debugUrl patterns in the raw text (from tool responses)
-  const urlRegex = /https:\/\/[^\s"]+\.steel\.dev[^\s"]*/g;
+  // Also detect Browser Use live URLs and Steel URLs in raw text
+  const urlRegex = /https:\/\/[^\s"]+(?:\.steel\.dev|browser-use\.com\/live|\.browserbase\.com)[^\s"]*/g;
   const urls = content.match(urlRegex) || [];
   for (const url of urls) {
     if (!embeds.some((e) => e.debugUrl === url)) {
@@ -59,7 +60,7 @@ function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedDa
 
 function MessageContent({ content, role }: { content: string; role: "user" | "assistant" }) {
   const { text, embeds } = useMemo(() =>
-    role === "assistant" ? parseSteelEmbeds(content) : { text: content, embeds: [] },
+    role === "assistant" ? parseBrowserEmbeds(content) : { text: content, embeds: [] },
     [content, role]
   );
 
