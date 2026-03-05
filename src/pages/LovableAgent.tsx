@@ -747,6 +747,44 @@ export default function LovableAgent() {
         break;
       }
 
+      case "call_retry": {
+        // A retry is starting — notify user and reset call state for new attempt
+        setMessages(prev => [
+          ...prev,
+          { role: "assistant", content: `🔄 **Auto-retry**: ${data.message}\n\n_${data.remainingStores} more store(s) in queue_` },
+        ]);
+        const retryInitial: CallState = {
+          taskId: "",
+          status: "ringing",
+          turnCount: 0,
+          transcript: [],
+          lastAnalysis: null,
+          lastDirective: null,
+          agentName: "Maya",
+          errorMessage: null,
+          recordingUrl: null,
+        };
+        setCurrentCallState(retryInitial);
+        callStateRef.current = retryInitial;
+        setPhase("on_call");
+        break;
+      }
+
+      case "call_retry_failed":
+        setMessages(prev => [
+          ...prev,
+          { role: "assistant", content: `⚠️ Retry to **${data.storeName}** failed: ${data.error}` },
+        ]);
+        break;
+
+      case "call_all_retries_exhausted":
+        setMessages(prev => [
+          ...prev,
+          { role: "assistant", content: `❌ **All stores exhausted** — tried ${data.storesTried?.length || 0} stores, none succeeded. ${data.message}` },
+        ]);
+        setPhase("generating");
+        break;
+
       case "phase":
         if (data.status === "generating") setPhase("generating");
         break;
