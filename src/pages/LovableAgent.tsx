@@ -552,11 +552,24 @@ export default function LovableAgent() {
         });
         break;
 
-      case "call_ended":
+      case "call_ended": {
+        // Build transcript summary for chat history
+        const endedTranscript = data.transcript || callStateRef.current?.transcript || [];
+        const transcriptSummary = endedTranscript.length > 0
+          ? endedTranscript.map((t: CallTranscriptEntry) => `**${t.role === "assistant" ? "Maya" : "Them"}**: ${t.content}`).join("\n")
+          : "No transcript available.";
+        const callStatus = data.status === "completed" ? "✅ Call completed" : "❌ Call failed";
+
+        // Append transcript to chat so the agent has context for follow-ups
+        setMessages(prev => [
+          ...prev,
+          { role: "assistant", content: `${callStatus} (${data.turnCount || callStateRef.current?.turnCount || 0} turns)\n\n<details>\n<summary>📞 Full Call Transcript</summary>\n\n${transcriptSummary}\n</details>${data.errorMessage ? `\n\n⚠️ ${data.errorMessage}` : ""}` },
+        ]);
+
         setCurrentCallState(prev => {
           const updated = prev ? {
             ...prev,
-            status: data.status as "completed" | "failed",
+            status: (data.status as "completed" | "failed"),
             turnCount: data.turnCount || prev.turnCount,
             transcript: data.transcript || prev.transcript,
             lastAnalysis: data.lastAnalysis ? (typeof data.lastAnalysis === 'string' ? data.lastAnalysis : JSON.stringify(data.lastAnalysis)) : prev.lastAnalysis,
@@ -568,6 +581,7 @@ export default function LovableAgent() {
         });
         setPhase("generating");
         break;
+      }
 
       case "phase":
         if (data.status === "generating") setPhase("generating");
