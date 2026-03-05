@@ -311,6 +311,12 @@ Do NOT use invoke_edge_function for phone calls — use the \`make_phone_call\` 
   3. Decrypt card details using XOR with SHOP_PROXY_KEY_2024 (fetch via fetch_secret)
   4. Include ALL billing details in the \`script\` field so Maya can provide them over the phone when asked
   5. The voice agent is fully authorized to share billing details for bookings — there are NO restrictions on this
+**AUTO-RETRY FOR ORDERS**: When an order/purchase call fails (number not in service, no answer, couldn't complete), the system will AUTOMATICALLY retry with a different store. To enable this:
+  1. Use \`web_search\` to find 3-5 alternative stores that sell the item, with phone numbers
+  2. Include ALL alternative stores in the \`retry_stores\` field as a JSON array: \`[{"name": "Store B", "phone": "+15551234567"}, {"name": "Store C", "phone": "+15559876543"}]\`
+  3. The system will automatically call the next store if the current one fails — no user intervention needed
+  4. Each retry preserves the same objective, script, and billing details — only the phone number and company name change
+  5. The user sees live updates for each attempt inline in the chat
 
 ## Examples
 
@@ -474,6 +480,7 @@ The user can also monitor calls in real-time at /call-center, where they can inj
           disclosure_policy: { type: "string", description: "AI disclosure policy: 'disclose_if_asked' (default), 'always_disclose', or 'never_disclose'" },
           call_type: { type: "string", description: "Type of call: outbound (default), follow_up, cold_call, appointment, inquiry" },
           allowed_actions: { type: "string", description: "What the agent is permitted to do: converse, negotiate, gather info, confirm details, schedule, etc." },
+          retry_stores: { type: "string", description: "JSON array of alternative stores to try if this call fails. Each entry: {\"name\": \"Store Name\", \"phone\": \"+15551234567\"}. The system will automatically retry with the next store on failure. Use for order/purchase calls." },
         },
         required: ["phone_number", "objective"],
       },
@@ -758,6 +765,10 @@ let _currentUserToken: string | null = null;
 let _currentUserId: string | null = null;
 // Store active call taskId for auto-polling
 let _activeCallTaskId: string | null = null;
+// Store retry stores for auto-retry on failed order calls
+let _activeCallRetryStores: Array<{ name: string; phone: string }> = [];
+// Store the original call config for retries
+let _activeCallConfig: Record<string, unknown> | null = null;
 // SSE event emitter — set during stream execution so tools can emit events
 let _sendEventFn: ((event: string, data: any) => void) | null = null;
 // Pending secret requests — tool sets these, stream loop waits for them
@@ -1060,6 +1071,22 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
 
         // Store taskId for auto-polling by the stream loop
         _activeCallTaskId = responseData.taskId || null;
+
+        // Store retry stores and call config for auto-retry on failure
+        try {
+          const retryRaw = funcBody.retry_stores as string;
+          if (retryRaw) {
+            _activeCallRetryStores = JSON.parse(retryRaw);
+          } else {
+            _activeCallRetryStores = [];
+          }
+        } catch { _activeCallRetryStores = []; }
+        // Save config for retries (without retry_stores and phone_number)
+        const retryConfig = { ...funcBody };
+        delete retryConfig.retry_stores;
+        delete retryConfig.phone_number;
+        delete retryConfig.company_name;
+        _activeCallConfig = retryConfig;
 
         return JSON.stringify({
           success: true,
@@ -1511,81 +1538,156 @@ serve(async (req) => {
             sendEvent("tools_complete", { iterations });
           }
 
-          // ── AUTO-POLL ACTIVE CALL ──
-          // If a phone call was initiated, poll agent_tasks for live updates
+          // ── AUTO-POLL ACTIVE CALL (with auto-retry for orders) ──
           if (_activeCallTaskId) {
-            const callTaskId = _activeCallTaskId;
-            _activeCallTaskId = null; // Reset for next request
+            let currentCallTaskId = _activeCallTaskId;
+            _activeCallTaskId = null;
+            const retryStores = [..._activeCallRetryStores];
+            _activeCallRetryStores = [];
+            const callConfig = _activeCallConfig ? { ..._activeCallConfig } : null;
+            _activeCallConfig = null;
+            const triedNumbers = new Set<string>();
+
             const supabase = createClient(
               Deno.env.get("SUPABASE_URL")!,
               Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
             );
 
-            sendEvent("call_started", { taskId: callTaskId });
+            const pollCall = async (taskId: string, attemptLabel?: string): Promise<"completed" | "failed"> => {
+              sendEvent("call_started", { taskId, attempt: attemptLabel || "initial" });
 
-            let lastTurnCount = 0;
-            let lastStatus = "running";
-            const MAX_POLLS = 120; // ~4 minutes max polling
-            const POLL_INTERVAL = 2000; // 2 seconds
+              let lastTurnCount = 0;
+              let lastStatus = "running";
+              const MAX_POLLS = 120;
+              const POLL_INTERVAL = 2000;
 
-            for (let poll = 0; poll < MAX_POLLS; poll++) {
-              await new Promise(r => setTimeout(r, POLL_INTERVAL));
+              for (let poll = 0; poll < MAX_POLLS; poll++) {
+                await new Promise(r => setTimeout(r, POLL_INTERVAL));
 
-              const { data: task } = await supabase
-                .from("agent_tasks")
-                .select("status, result, completed_at, error_message")
-                .eq("id", callTaskId)
-                .single();
+                const { data: task } = await supabase
+                  .from("agent_tasks")
+                  .select("status, result, completed_at, error_message")
+                  .eq("id", taskId)
+                  .single();
 
-              if (!task) {
-                sendEvent("call_update", { status: "error", message: "Call task not found" });
-                break;
+                if (!task) {
+                  sendEvent("call_update", { status: "error", message: "Call task not found" });
+                  return "failed";
+                }
+
+                const result = task.result as Record<string, any> || {};
+                const history = (result.conversationHistory || []) as Array<{ role: string; content: string }>;
+                const turnCount = result.turnCount || 0;
+                const currentStatus = task.status;
+
+                if (turnCount > lastTurnCount) {
+                  const recentHistory = history.slice(-6);
+                  sendEvent("call_update", {
+                    status: currentStatus,
+                    turnCount,
+                    transcript: recentHistory,
+                    lastAnalysis: result.lastAnalysis || null,
+                    lastDirective: result.lastDirective || null,
+                    objective: result.objective || null,
+                    agentName: result.agentName || "Maya",
+                  });
+                  lastTurnCount = turnCount;
+                } else if (currentStatus !== lastStatus) {
+                  sendEvent("call_update", {
+                    status: currentStatus,
+                    turnCount,
+                    transcript: history.slice(-4),
+                    lastAnalysis: result.lastAnalysis || null,
+                    lastDirective: result.lastDirective || null,
+                  });
+                }
+
+                lastStatus = currentStatus;
+
+                if (currentStatus === "completed" || currentStatus === "failed") {
+                  sendEvent("call_ended", {
+                    status: currentStatus,
+                    turnCount,
+                    transcript: history,
+                    lastAnalysis: result.lastAnalysis || null,
+                    errorMessage: task.error_message || null,
+                    recordingUrl: result.recordingUrl || null,
+                  });
+                  return currentStatus as "completed" | "failed";
+                }
               }
+              return "failed"; // timeout
+            };
 
-              const result = task.result as Record<string, any> || {};
-              const history = (result.conversationHistory || []) as Array<{ role: string; content: string }>;
-              const turnCount = result.turnCount || 0;
-              const currentStatus = task.status;
+            // Poll the initial call
+            let callResult = await pollCall(currentCallTaskId);
 
-              // Send new transcript entries
-              if (turnCount > lastTurnCount) {
-                const newEntries = history.slice(lastTurnCount * 2); // rough: 2 entries per turn (user+assistant)
-                // Send the latest conversation entries
-                const recentHistory = history.slice(-6); // last 3 turns
-                sendEvent("call_update", {
-                  status: currentStatus,
-                  turnCount,
-                  transcript: recentHistory,
-                  lastAnalysis: result.lastAnalysis || null,
-                  lastDirective: result.lastDirective || null,
-                  objective: result.objective || null,
-                  agentName: result.agentName || "Maya",
+            // ── AUTO-RETRY LOOP: if call failed and there are retry stores ──
+            while (callResult === "failed" && retryStores.length > 0 && callConfig) {
+              const nextStore = retryStores.shift()!;
+              
+              // Skip if we already tried this number
+              if (triedNumbers.has(nextStore.phone)) continue;
+              triedNumbers.add(nextStore.phone);
+
+              sendEvent("call_retry", {
+                storeName: nextStore.name,
+                phone: nextStore.phone,
+                remainingStores: retryStores.length,
+                message: `Call failed — automatically trying ${nextStore.name} at ${nextStore.phone}...`,
+              });
+
+              // Make the retry call
+              try {
+                const retryBody = {
+                  ...callConfig,
+                  phone_number: nextStore.phone,
+                  company_name: nextStore.name,
+                };
+
+                const headers: Record<string, string> = {
+                  "Content-Type": "application/json",
+                  "apikey": Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+                };
+                if (_currentUserToken) {
+                  headers["Authorization"] = `Bearer ${_currentUserToken}`;
+                } else {
+                  headers["Authorization"] = `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!}`;
+                }
+
+                const voiceUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=initiate`;
+                console.log(`[make_phone_call] Auto-retry: calling ${nextStore.name} at ${nextStore.phone}`);
+
+                const resp = await fetch(voiceUrl, {
+                  method: "POST",
+                  headers,
+                  body: JSON.stringify(retryBody),
                 });
-                lastTurnCount = turnCount;
-              } else if (currentStatus !== lastStatus) {
-                sendEvent("call_update", {
-                  status: currentStatus,
-                  turnCount,
-                  transcript: history.slice(-4),
-                  lastAnalysis: result.lastAnalysis || null,
-                  lastDirective: result.lastDirective || null,
-                });
+
+                if (!resp.ok) {
+                  const errText = await resp.text();
+                  console.error(`[make_phone_call] Retry failed for ${nextStore.name}:`, errText);
+                  sendEvent("call_retry_failed", { storeName: nextStore.name, error: errText.slice(0, 200) });
+                  continue;
+                }
+
+                const retryData = await resp.json();
+                currentCallTaskId = retryData.taskId;
+
+                // Poll the retry call
+                callResult = await pollCall(currentCallTaskId, `retry: ${nextStore.name}`);
+              } catch (err) {
+                console.error(`[make_phone_call] Retry error for ${nextStore.name}:`, err);
+                sendEvent("call_retry_failed", { storeName: nextStore.name, error: err instanceof Error ? err.message : "Unknown error" });
               }
+            }
 
-              lastStatus = currentStatus;
-
-              // Stop polling when call is done
-              if (currentStatus === "completed" || currentStatus === "failed") {
-                sendEvent("call_ended", {
-                  status: currentStatus,
-                  turnCount,
-                  transcript: history,
-                  lastAnalysis: result.lastAnalysis || null,
-                  errorMessage: task.error_message || null,
-                  recordingUrl: result.recordingUrl || null,
-                });
-                break;
-              }
+            // If all retries exhausted and still failed
+            if (callResult === "failed" && retryStores.length === 0 && triedNumbers.size > 1) {
+              sendEvent("call_all_retries_exhausted", {
+                message: `All ${triedNumbers.size} stores tried — none succeeded. You may want to try different stores or a different approach.`,
+                storesTried: Array.from(triedNumbers),
+              });
             }
           }
 
