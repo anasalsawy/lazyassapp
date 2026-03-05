@@ -583,8 +583,6 @@ serve(async (req) => {
       // Clear consumed operator injections
       const consumedInjections = [...operatorInjections];
 
-      const gatherUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
-
       // ── HANDLE DTMF (IVR navigation) ──
       if (directorResult.dtmf !== "none") {
         console.log(`[voice-agent] 📱 IVR DETECTED — Pressing DTMF: ${directorResult.dtmf}`);
