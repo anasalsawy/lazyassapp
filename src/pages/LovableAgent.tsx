@@ -75,6 +75,7 @@ function ToolIcon({ name }: { name: string }) {
 function friendlyToolName(name: string): string {
   const map: Record<string, string> = {
     fetch_secret: "Fetching credential",
+    request_secret: "Requesting secret from user",
     list_secrets: "Listing secrets",
     http_request: "API request",
     invoke_edge_function: "Running backend function",
