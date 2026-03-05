@@ -180,6 +180,91 @@ function ExecutionPanel({ plans, isActive }: { plans: ExecutionPlan[]; isActive:
   );
 }
 
+// ── Secret Input Panel Component ────────────────────────────────────────────
+function SecretInputPanel({ 
+  secretRequest, 
+  onSubmit 
+}: { 
+  secretRequest: SecretRequest; 
+  onSubmit: (secretName: string, value: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showValue, setShowValue] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!value.trim()) return;
+    setIsSubmitting(true);
+    await onSubmit(secretRequest.secret_name, value.trim());
+    setIsSubmitting(false);
+  };
+
+  if (secretRequest.status === "submitted") {
+    return (
+      <div className="my-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
+        <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="w-4 h-4" />
+          <span className="font-medium">{secretRequest.display_label}</span>
+          <span className="text-muted-foreground">— stored securely</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-2 rounded-xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+      <div className="px-4 py-3 space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
+            <Key className="w-4 h-4 text-amber-500" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-foreground">{secretRequest.display_label}</div>
+            <div className="text-xs text-muted-foreground">{secretRequest.description}</div>
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type={showValue ? "text" : "password"}
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder={secretRequest.placeholder || "Enter secret value..."}
+              className="w-full h-10 rounded-lg border border-border/60 bg-background px-3 pr-10 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500/50"
+              onKeyDown={e => { if (e.key === "Enter") handleSubmit(); }}
+              autoComplete="off"
+              data-lpignore="true"
+              data-1p-ignore="true"
+            />
+            <button
+              onClick={() => setShowValue(!showValue)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              type="button"
+            >
+              {showValue ? <Shield className="w-4 h-4" /> : <Key className="w-4 h-4" />}
+            </button>
+          </div>
+          <Button
+            onClick={handleSubmit}
+            disabled={!value.trim() || isSubmitting}
+            size="default"
+            className="bg-amber-500 hover:bg-amber-600 text-white shrink-0"
+          >
+            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+            <span className="ml-1">Store</span>
+          </Button>
+        </div>
+
+        <p className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
+          <Shield className="w-3 h-3" />
+          Encrypted and stored securely. Never visible in logs or chat.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Call Monitor Panel Component ────────────────────────────────────────────
 function CallMonitorPanel({ callState, isLive }: { callState: CallState; isLive: boolean }) {
   const [collapsed, setCollapsed] = useState(false);
