@@ -477,7 +477,7 @@ async function runMultiAgentBrowser(
         }),
       });
 
-      const analystRaw = await callLLM(openaiKey, ANALYST_PROMPT, analystHistory);
+      const analystRaw = await callLLM(lovableApiKey, ANALYST_PROMPT, analystHistory);
       analystHistory.push({ role: "assistant", content: analystRaw });
 
       let analystReport: any;
@@ -510,7 +510,7 @@ async function runMultiAgentBrowser(
         }),
       });
 
-      const directorRaw = await callLLM(openaiKey, DIRECTOR_PROMPT, directorHistory);
+      const directorRaw = await callLLM(lovableApiKey, DIRECTOR_PROMPT, directorHistory);
       directorHistory.push({ role: "assistant", content: directorRaw });
 
       let directorDecision: any;
@@ -700,7 +700,7 @@ serve(async (req) => {
               user.id,
               supabase,
               BU_API_KEY!,
-              OPENAI_KEY!,
+              LOVABLE_API_KEY!,
               FIRECRAWL_KEY,
               browserProfile?.browser_use_profile_id,
             );
@@ -761,7 +761,7 @@ serve(async (req) => {
           user.id,
           supabase,
           BU_API_KEY!,
-          OPENAI_KEY!,
+          LOVABLE_API_KEY!,
           FIRECRAWL_KEY,
           browserProfile?.browser_use_profile_id,
         );
