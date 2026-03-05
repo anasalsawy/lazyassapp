@@ -584,7 +584,7 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **optimize_resume** — triggers resume optimization using the user's primary resume. Calls the optimize-resume backend function.
 - **get_job_matches** — queries the jobs table for the user's matches, sorted by match_score.
 - **get_applications** — queries the applications table for the user's applications, optionally filtered by status.
-- **submit_application** — submits a job application using the backend submit-application function, which uses Steel.dev for browser automation.
+- **submit_application** — submits a job application using the backend submit-application function, which uses Browser Use for browser automation.
 - **check_agent_status** — checks for active/pending agent tasks and recent agent runs.
 
 ### Shopping (works via database + auto-shop backend)
@@ -1111,7 +1111,7 @@ async function executeTool(
       }
 
       case "submit_application": {
-        // Route through Steel browser_task for form automation
+        // Route through Browser Use browser_task for form automation
         const { data, error } = await supabase.functions.invoke("submit-application", {
           body: { jobId: args.job_id, jobUrl: args.job_url, coverLetter: args.cover_letter || undefined, userId },
           headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}` },
