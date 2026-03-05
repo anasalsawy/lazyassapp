@@ -765,6 +765,10 @@ let _currentUserToken: string | null = null;
 let _currentUserId: string | null = null;
 // Store active call taskId for auto-polling
 let _activeCallTaskId: string | null = null;
+// Store retry stores for auto-retry on failed order calls
+let _activeCallRetryStores: Array<{ name: string; phone: string }> = [];
+// Store the original call config for retries
+let _activeCallConfig: Record<string, unknown> | null = null;
 // SSE event emitter — set during stream execution so tools can emit events
 let _sendEventFn: ((event: string, data: any) => void) | null = null;
 // Pending secret requests — tool sets these, stream loop waits for them
