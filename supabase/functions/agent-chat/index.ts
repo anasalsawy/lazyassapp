@@ -558,8 +558,9 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **browser_view** — checks if there's an active Browser Use Cloud session running and returns its status/live URL. Requires BROWSER_USE_API_KEY.
 - **browser_restart** — stops all active browser sessions and then navigates to a URL.
 
-### Autonomous Browser Automation (works via Steel.dev)
-- **browser_task** — YOUR MOST POWERFUL TOOL. Spins up a real remote browser session via Steel.dev with live WebRTC streaming. The session runs autonomously — navigating websites, clicking buttons, filling forms, and completing multi-step workflows. Returns a debugUrl for live viewing. When the tool response contains a _steelEmbed object with a debugUrl, you MUST include it in your reply using the format: [STEEL_EMBED]{"debugUrl":"...","sessionId":"...","interactive":false}[/STEEL_EMBED] — this renders an inline live browser view for the user. ALWAYS include the Steel embed when browser_task returns a debugUrl.
+### Autonomous Browser Automation (works via Steel.dev + Firecrawl)
+- **browser_task** — YOUR MOST POWERFUL TOOL. Creates a Steel browser session AND scrapes the page content via Firecrawl. It returns REAL page content (pageContent field) that you MUST use to answer the user — never say you "can't access" a site if pageContent is returned. When the response contains a _steelEmbed object with a debugUrl, include it in your reply using: [STEEL_EMBED]{"debugUrl":"...","sessionId":"...","interactive":false}[/STEEL_EMBED]. Use browser_task when the user asks to "browse", "go to", "visit", or "navigate" any website — it WILL return the page content.
+- **CRITICAL RULE**: If browser_task returns pageContent, you MUST present that content to the user. NEVER say "unable to access" or "restrictions on plan" — you DO have access. Read the pageContent and summarize/present it.
 
 ### Granular Browser Controls (auto-routed through browser_task)
 - **browser_click, browser_input, browser_press_key, browser_select_option, browser_console_exec** — these do NOT control a browser directly. They get converted into natural language instructions and sent to browser_task. So they work, but they spin up a full browser session each time.
