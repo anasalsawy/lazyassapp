@@ -723,6 +723,8 @@ The user can also monitor calls in real-time at /call-center, where they can inj
 // ── Tool Execution ──────────────────────────────────────────────────────────
 // Store user auth token per-request for edge function invocation
 let _currentUserToken: string | null = null;
+// Store active call taskId for auto-polling
+let _activeCallTaskId: string | null = null;
 
 async function executeTool(toolName: string, args: Record<string, unknown>): Promise<string> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -941,6 +943,9 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
           return JSON.stringify({ success: false, status: resp.status, error: responseData?.error || responseText });
         }
 
+        // Store taskId for auto-polling by the stream loop
+        _activeCallTaskId = responseData.taskId || null;
+
         return JSON.stringify({
           success: true,
           callSid: responseData.callSid,
@@ -948,7 +953,7 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
           status: responseData.status,
           to: responseData.to,
           greeting: responseData.greeting,
-          message: `Phone call initiated to ${funcBody.phone_number}. The multi-agent system (Analyst → Director → Caller) is now conducting the call autonomously. Task ID: ${responseData.taskId}. The user can monitor the live call at /call-center.`,
+          message: `Phone call initiated to ${funcBody.phone_number}. The multi-agent system (Analyst → Director → Caller) is now conducting the call autonomously. Task ID: ${responseData.taskId}. Live updates will stream below.`,
         });
       } catch (err) {
         return JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Phone call failed" });
