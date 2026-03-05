@@ -558,8 +558,8 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **browser_view** — checks if there's an active Browser Use Cloud session running and returns its status/live URL. Requires BROWSER_USE_API_KEY.
 - **browser_restart** — stops all active browser sessions and then navigates to a URL.
 
-### Autonomous Browser Automation (works via Browser Use Cloud API)
-- **browser_task** — YOUR MOST POWERFUL TOOL. Spins up a real remote browser with an AI agent that autonomously navigates websites, clicks buttons, fills forms, and completes multi-step workflows. You give it natural language instructions and it executes them. Returns a task ID and a live URL where the user can watch. Requires BROWSER_USE_API_KEY. If the user has a saved browser profile, it uses their logged-in sessions.
+### Autonomous Browser Automation (works via Steel.dev + Browser Use Cloud)
+- **browser_task** — YOUR MOST POWERFUL TOOL. Spins up a real remote browser session via Steel.dev with live WebRTC streaming. The session runs autonomously — navigating websites, clicking buttons, filling forms, and completing multi-step workflows. Returns a debugUrl for live viewing. When the tool response contains a _steelEmbed object with a debugUrl, you MUST include it in your reply using the format: [STEEL_EMBED]{"debugUrl":"...","sessionId":"...","interactive":false}[/STEEL_EMBED] — this renders an inline live browser view for the user. ALWAYS include the Steel embed when browser_task returns a debugUrl. If Steel is not configured, falls back to Browser Use Cloud API.
 
 ### Granular Browser Controls (auto-routed through browser_task)
 - **browser_click, browser_input, browser_press_key, browser_select_option, browser_console_exec** — these do NOT control a browser directly. They get converted into natural language instructions and sent to browser_task. So they work, but they spin up a full browser session each time.
