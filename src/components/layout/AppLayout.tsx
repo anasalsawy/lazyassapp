@@ -20,7 +20,8 @@ import {
   Menu,
   LogOut,
   User,
-  Sparkles
+  Sparkles,
+  Phone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { path: "/resume", label: "Resume", icon: FileText },
   { path: "/connections", label: "Connections", icon: Link2 },
   { path: "/shop", label: "Auto-Shop", icon: ShoppingCart },
+  { path: "/call-center", label: "Call Center", icon: Phone },
   { path: "/monitoring", label: "Monitoring", icon: Activity },
   { path: "/lovable-agent", label: "AI Agent", icon: Bot },
 ];
