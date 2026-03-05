@@ -207,30 +207,16 @@ You have REAL access to:
 
 When the user asks you to interact with an external service, chain tools: fetch the secret first, then use http_request with the key.
 
-## ━━━ PIPELINE ORCHESTRATION (Skyvern-Managed) ━━━
-You are the PRIMARY ORCHESTRATOR for ALL automation pipelines. You manage Skyvern workflows DIRECTLY using your tools. Do NOT tell users to go to other pages — handle everything here.
+## ━━━ PIPELINE ORCHESTRATION (Steel.dev-Managed) ━━━
+You are the PRIMARY ORCHESTRATOR for ALL automation pipelines. You manage Steel.dev browser sessions DIRECTLY using the \`browser_task\` tool and your other tools. Do NOT tell users to go to other pages — handle everything here.
 
-### How You Call Skyvern
-1. Use \`fetch_secret\` to get SKYVERN_API_KEY
-2. Use \`http_request\` to call Skyvern API at https://api.skyvern.com/v1/
-3. Track results in the database via \`query_database\` or \`invoke_edge_function\`
+### How You Use Steel.dev
+1. Use the \`browser_task\` tool — it creates a Steel.dev session with live WebRTC streaming
+2. The tool returns a debugUrl — ALWAYS embed it in your reply using [STEEL_EMBED] blocks
+3. Steel.dev handles: residential proxy, CAPTCHA solving, live video at 25fps, session persistence
 
-**Skyvern API Reference:**
-- **Start workflow**: POST https://api.skyvern.com/v1/run/workflows
-  Headers: { "x-api-key": "<SKYVERN_API_KEY>", "Content-Type": "application/json", "x-max-steps-override": "150" }
-  Body: { "workflow_id": "<id>", "parameters": {...}, "proxy_location": "RESIDENTIAL", "run_with": "agent", "ai_fallback": true }
-  Response: { "run_id": "..." }
-- **Poll workflow**: GET https://api.skyvern.com/v1/run/workflows/<run_id>
-  Headers: { "x-api-key": "<SKYVERN_API_KEY>" }
-  Response: { "status": "running|completed|failed", "output": "...", "recording_url": "..." }
-- **Start task**: POST https://api.skyvern.com/v1/tasks
-  Headers: { "x-api-key": "<SKYVERN_API_KEY>", "Content-Type": "application/json", "x-max-steps-override": "100" }
-  Body: { "url": "<target_url>", "navigation_goal": "...", "data_extraction_goal": "...", "proxy_location": "RESIDENTIAL" }
-- **Poll task**: GET https://api.skyvern.com/v1/tasks/<task_id>
-- **ChatGPT credential ID**: cred_498232209221167088 (pass as chatgpt_credentials parameter)
-
-### Pipeline 1: Resume Optimization (Lovable AI Direct — NO Skyvern)
-**Engine**: Lovable AI Gateway (GPT-5) — NOT Skyvern, NOT ChatGPT Deep Research
+### Pipeline 1: Resume Optimization (Lovable AI Direct — NO browser automation)
+**Engine**: Lovable AI Gateway (GPT-5) — NOT browser-based
 **Trigger**: User says "optimize my resume", "improve my resume", "make my resume better"
 **Steps**:
 1. Use \`query_database\` to find the user's primary resume (table: resumes, filter: is_primary=true, user_id filter)
@@ -243,34 +229,26 @@ You are the PRIMARY ORCHESTRATOR for ALL automation pipelines. You manage Skyver
 8. When status is "completed", the optimizedText is already saved to resumes.parsed_content
 
 **Fields updated**: agent_tasks (task_type: optimize_resume), resumes.parsed_content.optimizedText
-**IMPORTANT**: Do NOT use Skyvern or ChatGPT for resume optimization. The old workflow wpid_498196715611431438 is DEPRECATED.
 
-### Pipeline 2: Deep Research Job Search (Skyvern Workflow)
-**Workflow ID**: wpid_498725285882867288
+### Pipeline 2: Deep Research Job Search (Steel.dev Browser)
 **Trigger**: User says "find jobs", "search for jobs", "look for jobs"
 **Steps**:
 1. Use \`query_database\` to verify user has a primary resume
 2. Get resume text (prefer optimizedText over rawText)
 3. Get job preferences from job_preferences table
-4. Use \`fetch_secret\` to get SKYVERN_API_KEY
-5. Use \`http_request\` POST to https://api.skyvern.com/v1/run/workflows with:
-   - Body: { workflow_id: "wpid_498725285882867288", parameters: { chatgpt_credentials: "cred_498232209221167088", resume: "<text>", job_description: "<preferences>", resume_owner_name: "<name>" }, proxy_location: "RESIDENTIAL", run_with: "agent", ai_fallback: true }
-6. Save run_id, report to user
-7. To poll: GET the workflow run status
-8. When completed: use \`invoke_edge_function\` (search-jobs-deep with action: "poll") to parse and save jobs to DB
+4. Use \`invoke_edge_function\` with function_name: "search-jobs-deep" and body: { action: "start" }
+5. Poll with action: "poll" until complete
+6. When completed: jobs are saved to the jobs table
 
 **Fields updated**: agent_tasks (task_type: search_jobs_deep), jobs table
 
-### Pipeline 3: Job Application (Skyvern Workflow)
-**Workflow ID**: wpid_351487857063054716
+### Pipeline 3: Job Application (Steel.dev Browser)
 **Trigger**: User says "apply to jobs", "submit applications"
 **Steps**:
 1. Use \`query_database\` to list available jobs (table: jobs, order by match_score desc)
 2. Check applications table for already-applied jobs
 3. For each job, use \`invoke_edge_function\` with function_name: "submit-application" and body: { jobId: "<id>", generateCoverLetter: true }
-4. Alternatively, for direct form-filling, use Skyvern task API:
-   - POST https://api.skyvern.com/v1/tasks with navigation_goal describing the application process
-5. Report results to user
+4. Report results to user
 
 **Fields updated**: applications table, agent_logs
 
@@ -279,30 +257,20 @@ You are the PRIMARY ORCHESTRATOR for ALL automation pipelines. You manage Skyver
 **Steps**: Run Pipeline 1 → poll until complete → Run Pipeline 2 → poll until complete → Run Pipeline 3
 Report progress between each stage.
 
-### Pipeline 5: Custom Skyvern Task
+### Pipeline 5: Custom Browser Task (Steel.dev)
 **Trigger**: User asks you to browse a website, fill a form, scrape data, or any web automation
 **Steps**:
-1. Use \`fetch_secret\` to get SKYVERN_API_KEY
-2. Use \`http_request\` POST to https://api.skyvern.com/v1/tasks with:
-   - Body: { url: "<target>", navigation_goal: "<what to do>", data_extraction_goal: "<what to extract>", proxy_location: "RESIDENTIAL" }
-3. Poll GET /tasks/<task_id> for status
+1. Use \`browser_task\` with task description and start_url
+2. Steel.dev creates a live session with WebRTC streaming
+3. ALWAYS embed the debugUrl in your reply with [STEEL_EMBED] blocks
 4. Return extracted data or confirmation to user
 
-### Pipeline 6: Account Management (Skyvern Tasks)
-**Trigger**: User says "connect my accounts", "log into LinkedIn"
-**Steps**:
-1. Use Skyvern tasks to navigate to login pages
-2. Use site_credentials table for stored credentials
-3. Report login status
-
 ### Important Notes
-- You manage Skyvern DIRECTLY — fetch the API key, make the HTTP calls, track the results
-- When polling, tell the user "I'll check the status" and use http_request to poll Skyvern
-- Report progress clearly: "Your resume optimization is running on Skyvern... I'll check back."
-- If a pipeline fails, read the Skyvern error and suggest next steps
+- Steel.dev is the ONLY browser automation engine — use \`browser_task\` for ALL web interactions
+- When browser_task returns a debugUrl, you MUST include it as: [STEEL_EMBED]{"debugUrl":"<url>","sessionId":"<id>","interactive":false}[/STEEL_EMBED]
 - You can check current status anytime: query agent_tasks, agent_runs, jobs, applications tables
 - ALWAYS update agent_tasks and agent_runs tables when starting/completing workflows
-- For existing edge functions (optimize-resume, search-jobs-deep, submit-application), you can ALSO use invoke_edge_function as a shortcut — they internally call Skyvern too
+- For existing edge functions (optimize-resume, search-jobs-deep, submit-application), you can use invoke_edge_function as a shortcut
 
 ### Pipeline 8: Smart Browsing (Steel.dev Live Sessions)
 **Tool**: \`browser_task\` (dedicated tool)
@@ -382,7 +350,7 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "fetch_secret",
-      description: "Fetch the value of a stored secret/API key by name. Use this to get credentials before calling external APIs. Available secrets include: OPENAI_API_KEY, BROWSER_USE_API_KEY, SKYVERN_API_KEY, STRIPE_SECRET_KEY, FIRECRAWL_API_KEY, HYPERBROWSER_API_KEY, MAILGUN_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and more.",
+      description: "Fetch the value of a stored secret/API key by name. Use this to get credentials before calling external APIs. Available secrets include: OPENAI_API_KEY, STEEL_API_KEY, STRIPE_SECRET_KEY, FIRECRAWL_API_KEY, MAILGUN_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and more.",
       parameters: {
         type: "object",
         properties: {
@@ -421,7 +389,7 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "http_request",
-      description: "Make an HTTP request to any external API. Use this to call Browser Use Cloud API (https://api.browser-use.com/api/v2/), Skyvern API, OpenAI API, or any other service. You must fetch the required API key first using fetch_secret, then include it in the headers.",
+      description: "Make an HTTP request to any external API. Use this to call Steel.dev API, OpenAI API, or any other service. You must fetch the required API key first using fetch_secret, then include it in the headers.",
       parameters: {
         type: "object",
         properties: {
