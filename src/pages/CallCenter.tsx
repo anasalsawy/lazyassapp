@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -13,7 +14,7 @@ import {
   Phone, PhoneOff, Send, Activity, Brain, Eye, Mic,
   AlertTriangle, CheckCircle, Clock, MessageSquare,
   Zap, Users, BarChart3, Radio, Loader2, ChevronDown,
-  ChevronUp, Volume2,
+  ChevronUp, Volume2, RefreshCw, Plus, X,
 } from "lucide-react";
 
 type CallState = {
