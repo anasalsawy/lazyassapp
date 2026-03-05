@@ -518,7 +518,7 @@ serve(async (req) => {
       console.log(`[voice-agent] Running Analyst Agent (turn ${turnCount})...`);
       const analystReport = await runAnalyst(history, speechResult);
       analystReports.push(analystReport);
-      console.log(`[voice-agent] Analyst: tone=${analystReport.tone}, intent=${analystReport.intent}, risks=${analystReport.risks}`);
+      console.log(`[voice-agent] Analyst: tone=${analystReport.tone}, intent=${analystReport.intent}, is_automated=${analystReport.is_automated}, risks=${analystReport.risks}`);
 
       // ── STEP 2: DIRECTOR AGENT ──
       console.log(`[voice-agent] Running Director Agent...`);
@@ -526,12 +526,66 @@ serve(async (req) => {
         config.objective, config.constraints || "", analystReport, history, operatorInjections, turnCount
       );
       directorDecisions.push(directorResult);
-      console.log(`[voice-agent] Director: instruction="${directorResult.instruction.substring(0, 80)}...", end=${directorResult.shouldEnd}`);
+      console.log(`[voice-agent] Director: instruction="${directorResult.instruction.substring(0, 80)}...", dtmf=${directorResult.dtmf}, end=${directorResult.shouldEnd}`);
 
       // Clear consumed operator injections
       const consumedInjections = [...operatorInjections];
 
-      // ── STEP 3: CALLER AGENT ──
+      const gatherUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
+
+      // ── HANDLE DTMF (IVR navigation) ──
+      if (directorResult.dtmf !== "none") {
+        console.log(`[voice-agent] 📱 IVR DETECTED — Pressing DTMF: ${directorResult.dtmf}`);
+        history.push({ role: "assistant", content: `[SYSTEM: Pressed ${directorResult.dtmf} to navigate IVR menu]` });
+
+        // Save state
+        await supabase.from("agent_tasks").update({
+          result: {
+            ...result,
+            conversationHistory: history,
+            analystReports: analystReports.slice(-10),
+            directorDecisions: directorDecisions.slice(-10),
+            operatorInjections: [],
+            consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections],
+            turnCount,
+            lastTurnAt: new Date().toISOString(),
+            lastAnalysis: analystReport,
+            lastDirective: directorResult,
+            ivrDetected: true,
+          },
+        }).eq("id", taskId);
+
+        return new Response(buildDtmfTwiml(directorResult.dtmf, gatherUrl, undefined, voice), {
+          headers: { "Content-Type": "text/xml" },
+        });
+      }
+
+      // ── HANDLE WAIT (on hold) ──
+      if (analystReport.is_automated && analystReport.automated_type === "hold_message") {
+        console.log(`[voice-agent] ⏳ ON HOLD — Waiting silently...`);
+        history.push({ role: "assistant", content: `[SYSTEM: Waiting on hold]` });
+
+        await supabase.from("agent_tasks").update({
+          result: {
+            ...result,
+            conversationHistory: history,
+            analystReports: analystReports.slice(-10),
+            directorDecisions: directorDecisions.slice(-10),
+            operatorInjections: [],
+            consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections],
+            turnCount,
+            lastTurnAt: new Date().toISOString(),
+            lastAnalysis: analystReport,
+            lastDirective: directorResult,
+          },
+        }).eq("id", taskId);
+
+        return new Response(buildWaitTwiml(gatherUrl, voice), {
+          headers: { "Content-Type": "text/xml" },
+        });
+      }
+
+      // ── STEP 3: CALLER AGENT (only for human conversation) ──
       console.log(`[voice-agent] Running Caller Agent...`);
       const { speech, shouldEnd: callerWantsEnd } = await runCaller(
         config, directorResult.instruction, directorResult.tone, history
@@ -548,9 +602,9 @@ serve(async (req) => {
         result: {
           ...result,
           conversationHistory: history,
-          analystReports: analystReports.slice(-10), // Keep last 10 reports
+          analystReports: analystReports.slice(-10),
           directorDecisions: directorDecisions.slice(-10),
-          operatorInjections: [], // Clear consumed injections
+          operatorInjections: [],
           consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections],
           turnCount,
           lastTurnAt: new Date().toISOString(),
@@ -565,7 +619,6 @@ serve(async (req) => {
         return new Response(buildEndCallTwiml(speech, voice), { headers: { "Content-Type": "text/xml" } });
       }
 
-      const gatherUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
       return new Response(buildGatherTwiml(speech, gatherUrl, voice), { headers: { "Content-Type": "text/xml" } });
     }
 
