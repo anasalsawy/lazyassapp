@@ -304,6 +304,18 @@ Report progress between each stage.
 - ALWAYS update agent_tasks and agent_runs tables when starting/completing workflows
 - For existing edge functions (optimize-resume, search-jobs-deep, submit-application), you can ALSO use invoke_edge_function as a shortcut — they internally call Skyvern too
 
+### Pipeline 8: Smart Browsing (Steel.dev Live Sessions)
+**Tool**: \`browser_task\` (dedicated tool)
+**Trigger**: User asks to browse a website, research something online, scrape data, fill forms, or any web automation
+**Architecture**: Creates a Steel.dev session with WebRTC live streaming (25fps), optionally connected to Browser Use Cloud for autonomous execution.
+**Steps**:
+1. Use \`browser_task\` with task description and start_url
+2. The tool returns a debugUrl — you MUST include it in your reply as:
+   [STEEL_EMBED]{"debugUrl":"<url>","sessionId":"<id>","interactive":false}[/STEEL_EMBED]
+3. This renders an inline live browser view in the chat — the user watches the browser work in real-time
+4. ALWAYS include the STEEL_EMBED block when browser_task returns a debugUrl
+**Features**: Residential proxy, CAPTCHA solving, live WebRTC video at 25fps, human-in-the-loop via interactive mode
+
 ### Pipeline 7: Professional AI Phone Calls (Multi-Agent Voice System)
 **Tool**: \`make_phone_call\` (dedicated tool — use this, NOT invoke_edge_function)
 **Trigger**: User says "call", "phone", "make a call", "ring", "dial"
