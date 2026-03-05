@@ -326,25 +326,26 @@ async function executeNavigatorAction(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LLM CALL HELPER — uses Lovable AI Gateway (no external API key needed)
+// LLM CALL HELPER — uses OpenAI API directly
 // ═══════════════════════════════════════════════════════════════════════════
-const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const OPENAI_API = "https://api.openai.com/v1/chat/completions";
 
 async function callLLM(
-  lovableApiKey: string,
+  lovableApiKey: string, // actually openaiApiKey, kept param name for compat
   systemPrompt: string,
   messages: { role: string; content: string }[],
   jsonMode = true,
 ): Promise<string> {
   const body: any = {
-    model: "openai/gpt-5.2",
+    model: "gpt-4o",
     messages: [{ role: "system", content: systemPrompt }, ...messages],
     max_tokens: 4000,
+    temperature: 0.1,
     stream: false,
   };
   if (jsonMode) body.response_format = { type: "json_object" };
 
-  const res = await fetch(AI_GATEWAY, {
+  const res = await fetch(OPENAI_API, {
     method: "POST",
     headers: { Authorization: `Bearer ${lovableApiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -640,7 +641,7 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const LOVABLE_API_KEY = Deno.env.get("OPENAI_API_KEY");
   const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
   if (!BU_API_KEY) {
@@ -649,7 +650,7 @@ serve(async (req) => {
     });
   }
   if (!LOVABLE_API_KEY) {
-    return new Response(JSON.stringify({ error: "LOVABLE_API_KEY not configured" }), {
+    return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
