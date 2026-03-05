@@ -630,6 +630,7 @@ serve(async (req) => {
             lastTurnAt: new Date().toISOString(),
             lastAnalysis: analystReport,
             lastDirective: directorResult,
+            pendingTranscriptBuffer: "",
           },
         }).eq("id", taskId);
 
@@ -653,7 +654,7 @@ serve(async (req) => {
           history.push({ role: "assistant", content: `[SYSTEM: IVR loop detected, pressing 0 for operator]` });
           
           await supabase.from("agent_tasks").update({
-            result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true },
+            result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true, pendingTranscriptBuffer: "" },
           }).eq("id", taskId);
           
           return new Response(buildDtmfTwiml("0", gatherUrl, undefined, voice), {
@@ -685,7 +686,7 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
         history.push({ role: "assistant", content: shortResponse });
         
         await supabase.from("agent_tasks").update({
-          result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true },
+          result: { ...result, conversationHistory: history, analystReports: analystReports.slice(-10), directorDecisions: directorDecisions.slice(-10), operatorInjections: [], consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections], turnCount, lastTurnAt: new Date().toISOString(), lastAnalysis: analystReport, lastDirective: directorResult, ivrDetected: true, pendingTranscriptBuffer: "" },
         }).eq("id", taskId);
         
         return new Response(buildGatherTwiml(shortResponse, gatherUrl, voice), {
@@ -718,6 +719,7 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
           lastTurnAt: new Date().toISOString(),
           lastAnalysis: analystReport,
           lastDirective: directorResult,
+          pendingTranscriptBuffer: "",
         },
       }).eq("id", taskId);
 
