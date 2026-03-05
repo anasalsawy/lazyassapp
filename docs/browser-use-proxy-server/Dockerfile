@@ -16,6 +16,7 @@ RUN /opt/venv/bin/pip install -r requirements.txt
 
 # Install playwright browsers
 RUN /opt/venv/bin/python -m playwright install chromium
+RUN /opt/venv/bin/python -m playwright install-deps
 
 ENV PATH="/opt/venv/bin:$PATH"
 

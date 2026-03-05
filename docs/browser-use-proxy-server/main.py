@@ -4,8 +4,9 @@ import uuid
 import json
 import shutil
 import asyncio
+import base64
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
@@ -15,6 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BRIDGE_API_KEY = os.getenv("BRIDGE_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 RUNS_DIR = Path("./runs")
 SESSIONS_DIR = Path("./sessions")
 PROFILES_DIR = Path("./profiles")
@@ -22,27 +24,26 @@ RUNS_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Browser-Use Bridge")
+app = FastAPI(title="Browser-Use Bridge (AI Agent)")
 
-# Try to import browser_use components; if not available, we will fallback to playwright
+# Import browser_use Agent
 try:
-    from browser_use import Browser
-    from browser_use.browser.profile import BrowserProfile, ProxySettings
+    from browser_use import Agent, Browser, BrowserConfig
+    from langchain_openai import ChatOpenAI
     HAVE_BROWSER_USE = True
-except Exception:
+except ImportError:
     HAVE_BROWSER_USE = False
 
-# Fallback: try playwright directly
+# Fallback: playwright
 try:
     from playwright.async_api import async_playwright
     HAVE_PLAYWRIGHT = True
-except Exception:
+except ImportError:
     HAVE_PLAYWRIGHT = False
 
 
 def check_auth(request: Request):
     if not BRIDGE_API_KEY:
-        # no auth configured, allow
         return
     auth = request.headers.get("Authorization")
     if not auth or not auth.startswith("Bearer "):
@@ -60,285 +61,387 @@ class ProxyModel(BaseModel):
 
 class RunTaskRequest(BaseModel):
     task: str
+    max_steps: Optional[int] = 25
+    start_url: Optional[str] = None
     profile_id: Optional[str] = None
     proxy: Optional[ProxyModel] = None
+    model: Optional[str] = "gpt-4o"
+    extract_schema: Optional[Dict[str, Any]] = None
 
 
-@app.post("/health")
-async def health(req: Request):
-    try:
-        check_auth(req)
-    except HTTPException:
-        # health should be accessible without auth in many setups; return 200
-        return JSONResponse({"status": "ok"})
-    return JSONResponse({"status": "ok"})
+# ═══════════════════════════════════════════════════════════════════════
+# In-memory run store
+# ═══════════════════════════════════════════════════════════════════════
+runs_store: Dict[str, Dict[str, Any]] = {}
 
 
-def _extract_first_url(text: str) -> Optional[str]:
-    m = re.search(r"https?://[\w-.~:/?#\[\]@!$&'()*+,;=%]+", text)
-    if m:
-        return m.group(0)
+def write_run(run_id: str, data: Dict[str, Any]):
+    """Write run status to both memory and disk."""
+    runs_store[run_id] = data
+    outdir = RUNS_DIR / run_id
+    outdir.mkdir(parents=True, exist_ok=True)
+    with open(outdir / "status.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, default=str)
+
+
+def read_run(run_id: str) -> Optional[Dict[str, Any]]:
+    """Read run status from memory or disk."""
+    if run_id in runs_store:
+        return runs_store[run_id]
+    sf = RUNS_DIR / run_id / "status.json"
+    if sf.exists():
+        try:
+            return json.loads(sf.read_text(encoding="utf-8"))
+        except Exception:
+            pass
     return None
 
 
-async def _run_browser_task(task: str, outdir: Path, profile_id: Optional[str], proxy: Optional[Dict[str, Any]]):
-    status_file = outdir / "status.json"
+# ═══════════════════════════════════════════════════════════════════════
+# Browser Use Agent Runner
+# ═══════════════════════════════════════════════════════════════════════
+async def run_browser_use_agent(
+    run_id: str,
+    task: str,
+    max_steps: int = 25,
+    start_url: Optional[str] = None,
+    model_name: str = "gpt-4o",
+    proxy: Optional[Dict[str, Any]] = None,
+):
+    """Run the Browser Use Agent with full AI loop."""
+    write_run(run_id, {
+        "status": "starting",
+        "task": task,
+        "steps_taken": 0,
+        "action_history": [],
+    })
 
-    def write_status(s: Dict[str, Any]):
+    if not HAVE_BROWSER_USE:
+        write_run(run_id, {
+            "status": "error",
+            "error": "browser_use package not installed",
+            "task": task,
+        })
+        return
+
+    openai_key = OPENAI_API_KEY
+    if not openai_key:
+        write_run(run_id, {
+            "status": "error",
+            "error": "OPENAI_API_KEY not configured on bridge server",
+            "task": task,
+        })
+        return
+
+    try:
+        # Set up LLM
+        llm = ChatOpenAI(
+            model=model_name,
+            api_key=openai_key,
+            temperature=0.1,
+        )
+
+        # Set up browser config
+        browser_config = BrowserConfig(headless=True)
+        browser = Browser(config=browser_config)
+
+        # Create the Agent
+        agent = Agent(
+            task=task,
+            llm=llm,
+            browser=browser,
+            max_steps=max_steps,
+        )
+
+        write_run(run_id, {
+            "status": "running",
+            "task": task,
+            "steps_taken": 0,
+            "action_history": [],
+        })
+
+        # Run the agent
+        result = await agent.run()
+
+        # Extract result data
+        final_result = result.final_result() if hasattr(result, 'final_result') else None
+        history = result.history if hasattr(result, 'history') else []
+        
+        # Build action history from agent steps
+        action_history = []
+        for i, step in enumerate(history):
+            step_info = {
+                "step": i + 1,
+                "action": str(step) if step else "unknown",
+            }
+            action_history.append(step_info)
+
+        # Try to get the last screenshot
+        screenshot_path = RUNS_DIR / run_id / "screenshot.png"
         try:
-            with open(status_file, 'w', encoding='utf-8') as f:
-                json.dump(s, f, indent=2)
+            if hasattr(result, 'screenshot') and result.screenshot:
+                screenshot_data = result.screenshot
+                if isinstance(screenshot_data, str):
+                    screenshot_data = base64.b64decode(screenshot_data)
+                with open(screenshot_path, 'wb') as f:
+                    f.write(screenshot_data)
         except Exception:
             pass
 
-    write_status({'status': 'starting', 'task': task})
+        # Get current page info
+        current_url = None
+        page_title = None
+        try:
+            if hasattr(agent, 'browser') and agent.browser:
+                pages = agent.browser.contexts
+                if pages:
+                    current_url = str(pages[-1].url) if hasattr(pages[-1], 'url') else None
+                    page_title = str(pages[-1].title) if hasattr(pages[-1], 'title') else None
+        except Exception:
+            pass
 
-    # Determine URL to visit
-    url = _extract_first_url(task)
+        write_run(run_id, {
+            "status": "completed",
+            "task": task,
+            "result": final_result,
+            "steps_taken": len(action_history),
+            "action_history": action_history,
+            "current_url": current_url,
+            "page_title": page_title,
+            "has_screenshot": screenshot_path.exists(),
+        })
+
+        # Clean up browser
+        try:
+            await browser.close()
+        except Exception:
+            pass
+
+    except Exception as e:
+        write_run(run_id, {
+            "status": "error",
+            "task": task,
+            "error": str(e),
+        })
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Fallback: simple Playwright navigation (no AI)
+# ═══════════════════════════════════════════════════════════════════════
+async def run_playwright_fallback(
+    run_id: str,
+    task: str,
+    start_url: Optional[str] = None,
+    proxy: Optional[Dict[str, Any]] = None,
+):
+    """Simple fallback: navigate + screenshot via Playwright."""
+    write_run(run_id, {"status": "starting", "task": task})
+
+    url = start_url
     if not url:
-        # perform search via DuckDuckGo when no explicit URL
-        q = task.replace('"', '')
-        url = f"https://duckduckgo.com/?q={q}".replace(' ', '+')
+        m = re.search(r"https?://[\w-.~:/?#\[\]@!$&'()*+,;=%]+", task)
+        url = m.group(0) if m else f"https://duckduckgo.com/?q={task.replace(' ', '+')}"
 
-    write_status({'status': 'launching_browser', 'target_url': url})
+    screenshot_path = RUNS_DIR / run_id / "screenshot.png"
 
-    # prepare profile dir
-    profile_dir = None
-    if profile_id:
-        profile_dir = PROFILES_DIR / profile_id
-        profile_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        profile_dir = outdir / 'profile'
-        profile_dir.mkdir(parents=True, exist_ok=True)
+    if not HAVE_PLAYWRIGHT:
+        write_run(run_id, {"status": "error", "error": "No browser backend available"})
+        return
 
-    screenshot_path = outdir / 'screenshot.png'
-
-    # Use browser_use if available
-    if HAVE_BROWSER_USE:
-        try:
-            bp = None
+    try:
+        async with async_playwright() as p:
+            launch_kwargs = {
+                "headless": True,
+                "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+            }
             if proxy:
-                bp = BrowserProfile(proxy=ProxySettings(
-                    server=proxy.get('server'),
-                    username=proxy.get('username'),
-                    password=proxy.get('password')
-                ))
-            # ensure user_data_dir if supported
-            try:
-                bp.user_data_dir = str(profile_dir)
-            except Exception:
-                try:
-                    bp = BrowserProfile(
-                        user_data_dir=str(profile_dir),
-                        proxy=(bp.proxy if bp else None)
-                    )
-                except Exception:
-                    bp = bp
+                launch_kwargs["proxy"] = {"server": proxy.get("server")}
+                if proxy.get("username"):
+                    launch_kwargs["proxy"]["username"] = proxy["username"]
+                if proxy.get("password"):
+                    launch_kwargs["proxy"]["password"] = proxy["password"]
 
-            browser = Browser(headless=True, browser_profile=bp)
-            await browser.start()
-            page = await browser.new_page()
+            browser = await p.chromium.launch(**launch_kwargs)
+            context = await browser.new_context()
+            page = await context.new_page()
             await page.goto(url)
-            # small wait for network
             await asyncio.sleep(2)
-            try:
-                data = await page.screenshot()
-                if isinstance(data, (bytes, bytearray)):
-                    with open(screenshot_path, 'wb') as f:
-                        f.write(data)
-                elif isinstance(data, str):
-                    import base64
-                    s = data
-                    if s.startswith('data:'):
-                        s = s.split(',', 1)[1]
-                    try:
-                        b = base64.b64decode(s)
-                        with open(screenshot_path, 'wb') as f:
-                            f.write(b)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            write_status({'status': 'finished', 'screenshot': str(screenshot_path)})
-            try:
-                await browser.stop()
-            except Exception:
-                pass
-            return
-        except Exception as e:
-            write_status({'status': 'error', 'error': str(e)})
-            return
+            await page.screenshot(path=str(screenshot_path))
 
-    # Fallback to playwright
-    if HAVE_PLAYWRIGHT:
-        try:
-            async with async_playwright() as p:
-                launch_kwargs = {"headless": True}
-                # pass proxy settings to playwright launch if provided
-                if proxy:
-                    # playwright expects proxy dict with server, username, password
-                    launch_kwargs['proxy'] = {
-                        'server': proxy.get('server')
-                    }
-                    if proxy.get('username'):
-                        launch_kwargs['proxy']['username'] = proxy.get('username')
-                    if proxy.get('password'):
-                        launch_kwargs['proxy']['password'] = proxy.get('password')
-                # add common args for containerized env
-                launch_kwargs.setdefault('args', ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'])
-                browser = await p.chromium.launch(**launch_kwargs)
-                context = await browser.new_context(accept_downloads=True)
-                page = await context.new_page()
-                await page.goto(url)
-                await asyncio.sleep(2)
-                try:
-                    await page.screenshot(path=str(screenshot_path))
-                except TypeError:
-                    # some wrappers may return bytes
-                    data = await page.screenshot()
-                    if isinstance(data, (bytes, bytearray)):
-                        with open(screenshot_path, 'wb') as f:
-                            f.write(data)
-                await browser.close()
-                write_status({'status': 'finished', 'screenshot': str(screenshot_path)})
-                return
-        except Exception as e:
-            write_status({'status': 'error', 'error': str(e)})
-            return
+            content = await page.content()
+            title = await page.title()
+            current_url = page.url
 
-    write_status({'status': 'error', 'error': 'no browser backend available'})
+            await browser.close()
+
+            write_run(run_id, {
+                "status": "completed",
+                "task": task,
+                "result": f"Navigated to {current_url}",
+                "current_url": current_url,
+                "page_title": title,
+                "steps_taken": 1,
+                "action_history": [{"step": 1, "action": f"navigate to {current_url}"}],
+                "has_screenshot": True,
+                "page_content": content[:5000] if content else None,
+            })
+    except Exception as e:
+        write_run(run_id, {"status": "error", "error": str(e), "task": task})
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.post("/health")
+@app.get("/health")
+async def health():
+    return JSONResponse({
+        "status": "ok",
+        "has_browser_use": HAVE_BROWSER_USE,
+        "has_playwright": HAVE_PLAYWRIGHT,
+        "has_openai_key": bool(OPENAI_API_KEY),
+    })
 
 
 @app.post("/run-task")
 async def run_task(req: Request, body: RunTaskRequest, background: BackgroundTasks):
     check_auth(req)
     run_id = uuid.uuid4().hex
-    outdir = RUNS_DIR / run_id
-    outdir.mkdir(parents=True, exist_ok=True)
-    # write initial status
-    with open(outdir / 'status.json', 'w', encoding='utf-8') as f:
-        json.dump({'status': 'queued', 'task': body.task}, f)
 
-    proxy_dict = None
-    if body.proxy:
-        proxy_dict = body.proxy.dict()
+    proxy_dict = body.proxy.dict() if body.proxy else None
 
-    # schedule background task
-    background.add_task(_run_browser_task, body.task, outdir, body.profile_id, proxy_dict)
+    if HAVE_BROWSER_USE and OPENAI_API_KEY:
+        # Use full AI agent
+        background.add_task(
+            run_browser_use_agent,
+            run_id=run_id,
+            task=body.task,
+            max_steps=body.max_steps or 25,
+            start_url=body.start_url,
+            model_name=body.model or "gpt-4o",
+            proxy=proxy_dict,
+        )
+        mode = "browser_use_agent"
+    else:
+        # Fallback to simple Playwright
+        background.add_task(
+            run_playwright_fallback,
+            run_id=run_id,
+            task=body.task,
+            start_url=body.start_url,
+            proxy=proxy_dict,
+        )
+        mode = "playwright_fallback"
+
+    write_run(run_id, {"status": "queued", "task": body.task})
 
     return JSONResponse({
-        'run_id': run_id,
-        'status_url': f"/runs/{run_id}/status",
-        'screenshot_url': f"/runs/{run_id}/screenshot"
+        "run_id": run_id,
+        "mode": mode,
+        "status_url": f"/runs/{run_id}/status",
+        "screenshot_url": f"/runs/{run_id}/screenshot",
     })
 
 
-@app.get('/runs/{run_id}/status')
-def run_status(run_id: str):
-    sf = RUNS_DIR / run_id / 'status.json'
-    if sf.exists():
-        try:
-            return JSONResponse(json.loads(open(sf, 'r', encoding='utf-8').read()))
-        except Exception:
-            raise HTTPException(status_code=500, detail='status read error')
-    raise HTTPException(status_code=404, detail='run not found')
+@app.get("/runs/{run_id}/status")
+def run_status(run_id: str, req: Request):
+    check_auth(req)
+    data = read_run(run_id)
+    if data:
+        return JSONResponse(data)
+    raise HTTPException(status_code=404, detail="run not found")
 
 
-@app.get('/runs/{run_id}/screenshot')
+@app.get("/runs/{run_id}/screenshot")
 def run_screenshot(run_id: str):
-    p = RUNS_DIR / run_id / 'screenshot.png'
+    p = RUNS_DIR / run_id / "screenshot.png"
     if p.exists():
-        return FileResponse(str(p), media_type='image/png')
-    raise HTTPException(status_code=404, detail='screenshot not found')
+        return FileResponse(str(p), media_type="image/png")
+    raise HTTPException(status_code=404, detail="screenshot not found")
 
 
-# Sessions endpoints (human-in-the-loop)
+# ═══════════════════════════════════════════════════════════════════════
+# Sessions (kept for human-in-the-loop compatibility)
+# ═══════════════════════════════════════════════════════════════════════
 
-@app.post('/sessions')
-async def create_session(req: Request, background: BackgroundTasks, profile_id: Optional[str] = None, proxy: Optional[ProxyModel] = None):
+@app.post("/sessions")
+async def create_session(req: Request, background: BackgroundTasks, profile_id: Optional[str] = None):
     check_auth(req)
     sid = uuid.uuid4().hex
     sdir = SESSIONS_DIR / sid
     sdir.mkdir(parents=True, exist_ok=True)
-    # spawn a background headless session that saves screenshots for live view
-    task_text = profile_id or 'interactive-session'
-    proxy_dict = proxy.dict() if proxy else None
-    background.add_task(_run_browser_task, task_text, sdir, profile_id, proxy_dict)
-    base = str(req.base_url).rstrip('/')
-    live_url = f"{base}/sessions/{sid}/live"
-    return JSONResponse({'session_id': sid, 'liveViewUrl': live_url})
+    base = str(req.base_url).rstrip("/")
+    return JSONResponse({"session_id": sid, "liveViewUrl": f"{base}/sessions/{sid}/live"})
 
 
-@app.get('/sessions/{sid}/live')
+@app.get("/sessions/{sid}/live")
 def session_live(sid: str):
-    p = SESSIONS_DIR / sid / 'screenshot.png'
+    p = SESSIONS_DIR / sid / "screenshot.png"
     if p.exists():
-        return FileResponse(str(p), media_type='image/png')
-    # show a small JSON status if screenshot missing
-    sf = SESSIONS_DIR / sid / 'status.json'
+        return FileResponse(str(p), media_type="image/png")
+    sf = SESSIONS_DIR / sid / "status.json"
     if sf.exists():
         try:
-            return JSONResponse(json.loads(open(sf, 'r', encoding='utf-8').read()))
+            return JSONResponse(json.loads(sf.read_text(encoding="utf-8")))
         except Exception:
             pass
-    raise HTTPException(status_code=404, detail='session not ready')
+    raise HTTPException(status_code=404, detail="session not ready")
 
 
-@app.post('/sessions/{sid}/complete')
-def complete_session(sid: str, req: Request, body: Optional[Dict[str, Any]] = None):
+@app.post("/sessions/{sid}/complete")
+def complete_session(sid: str, req: Request):
     check_auth(req)
     sdir = SESSIONS_DIR / sid
     if not sdir.exists():
-        raise HTTPException(status_code=404, detail='session not found')
+        raise HTTPException(status_code=404, detail="session not found")
     profile_id = uuid.uuid4().hex
     target = PROFILES_DIR / profile_id
     try:
-        shutil.copytree(sdir / 'profile', target)
+        shutil.copytree(sdir / "profile", target)
     except Exception:
-        # if no profile dir exists, create empty profile
         target.mkdir(parents=True, exist_ok=True)
-    return JSONResponse({'profile_id': profile_id})
+    return JSONResponse({"profile_id": profile_id})
 
 
-# Profiles endpoints (retrieve and delete saved profiles)
+# ═══════════════════════════════════════════════════════════════════════
+# Profiles
+# ═══════════════════════════════════════════════════════════════════════
 
-@app.get('/profiles/{profile_id}')
+@app.get("/profiles/{profile_id}")
 def get_profile(profile_id: str, req: Request):
     check_auth(req)
     pdir = PROFILES_DIR / profile_id
     if not pdir.exists() or not pdir.is_dir():
-        raise HTTPException(status_code=404, detail='profile not found')
-    # Create a ZIP of the profile directory and return it
+        raise HTTPException(status_code=404, detail="profile not found")
     zip_base = PROFILES_DIR / f"{profile_id}"
     zip_path = PROFILES_DIR / f"{profile_id}.zip"
     try:
-        # remove existing zip if present
         if zip_path.exists():
             zip_path.unlink()
-        shutil.make_archive(str(zip_base), 'zip', root_dir=str(pdir))
-        return FileResponse(str(zip_path), media_type='application/zip', filename=f'profile_{profile_id}.zip')
+        shutil.make_archive(str(zip_base), "zip", root_dir=str(pdir))
+        return FileResponse(str(zip_path), media_type="application/zip", filename=f"profile_{profile_id}.zip")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f'failed to create zip: {e}')
+        raise HTTPException(status_code=500, detail=f"failed to create zip: {e}")
 
 
-@app.delete('/profiles/{profile_id}')
+@app.delete("/profiles/{profile_id}")
 def delete_profile(profile_id: str, req: Request):
     check_auth(req)
     pdir = PROFILES_DIR / profile_id
     if not pdir.exists() or not pdir.is_dir():
-        raise HTTPException(status_code=404, detail='profile not found')
+        raise HTTPException(status_code=404, detail="profile not found")
     try:
         shutil.rmtree(pdir)
-        # also remove any zip file
         z = PROFILES_DIR / f"{profile_id}.zip"
         if z.exists():
             z.unlink()
-        return JSONResponse({'deleted': profile_id})
+        return JSONResponse({"deleted": profile_id})
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f'failed to delete profile: {e}')
+        raise HTTPException(status_code=500, detail=f"failed to delete profile: {e}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv('PORT', '8000'))
-    uvicorn.run('main:app', host='0.0.0.0', port=port, log_level='info')
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
