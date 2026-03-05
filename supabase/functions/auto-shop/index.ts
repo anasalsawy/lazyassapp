@@ -55,21 +55,21 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled;
 }
 
-// Skyvern API configuration
-const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
+// Browser Use API configuration
+const BU_API_BASE = "https://api.browser-use.com/api/v2";
 
-async function skyvernApi(
+async function browserUseApi(
   apiKey: string,
   path: string,
   init: RequestInit = {}
 ): Promise<Response> {
-  const url = `${SKYVERN_API_BASE}${path}`;
+  const url = `${BU_API_BASE}${path}`;
   const headers: Record<string, string> = {
-    "x-api-key": apiKey,
+    "X-Browser-Use-API-Key": apiKey,
     "Content-Type": "application/json",
     ...(init.headers as Record<string, string> || {}),
   };
-  console.log(`[Skyvern] ${init.method || "GET"} ${path}`);
+  console.log(`[BrowserUse] ${init.method || "GET"} ${path}`);
   return fetch(url, { ...init, headers });
 }
 
@@ -79,13 +79,13 @@ serve(async (req) => {
   }
 
   try {
-    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
+    const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    if (!SKYVERN_API_KEY) {
-      throw new Error("SKYVERN_API_KEY is not configured");
+    if (!BU_API_KEY) {
+      throw new Error("BROWSER_USE_API_KEY is not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -112,33 +112,33 @@ serve(async (req) => {
         return await handleCreateProfile(supabase, user.id);
       }
       case "start_login": {
-         await cleanupStaleSessions(supabase, user.id, SKYVERN_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", SKYVERN_API_KEY);
+         await cleanupStaleSessions(supabase, user.id, BU_API_KEY);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
       }
       case "confirm_login": {
-        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail", SKYVERN_API_KEY);
+        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
       }
       case "cancel_login": {
-        return await handleCancelLogin(supabase, user.id, SKYVERN_API_KEY);
+        return await handleCancelLogin(supabase, user.id, BU_API_KEY);
       }
       case "restart_session": {
-        await cleanupStaleSessions(supabase, user.id, SKYVERN_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", SKYVERN_API_KEY);
+        await cleanupStaleSessions(supabase, user.id, BU_API_KEY);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
       }
       case "cleanup_sessions": {
-        return await handleCleanupSessions(supabase, user.id, SKYVERN_API_KEY);
+        return await handleCleanupSessions(supabase, user.id, BU_API_KEY);
       }
       case "start_order": {
-        return await handleStartOrder(supabase, user, payload, SKYVERN_API_KEY, LOVABLE_API_KEY || "", supabaseUrl);
+        return await handleStartOrder(supabase, user, payload, BU_API_KEY, LOVABLE_API_KEY || "", supabaseUrl);
       }
       case "check_order_status": {
         return await handleCheckOrderStatus(supabase, user.id, payload.orderId!);
       }
       case "sync_all_orders": {
-        return await handleSyncAllOrders(supabase, user, SKYVERN_API_KEY, supabaseUrl, LOVABLE_API_KEY || "");
+        return await handleSyncAllOrders(supabase, user, BU_API_KEY, supabaseUrl, LOVABLE_API_KEY || "");
       }
       case "sync_order_emails": {
-        return await handleSyncOrderEmails(supabase, user.id, SKYVERN_API_KEY, LOVABLE_API_KEY || "");
+        return await handleSyncOrderEmails(supabase, user.id, BU_API_KEY, LOVABLE_API_KEY || "");
       }
       case "set_proxy": {
         return await handleSetProxy(supabase, user.id, payload);
@@ -210,7 +210,7 @@ async function handleCreateProfile(supabase: any, userId: string) {
     );
   }
 
-  const profileId = `skyvern-shop-${userId.substring(0, 8)}-${Date.now()}`;
+  const profileId = `bu-shop-${userId.substring(0, 8)}-${Date.now()}`;
 
   await supabase.from("browser_profiles").upsert({
     user_id: userId,
@@ -232,12 +232,12 @@ async function handleStartLogin(
   supabase: any,
   userId: string,
   site: string,
-  skyvernApiKey: string
+  buApiKey: string
 ) {
   let { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
 
   if (!profile?.browser_use_profile_id) {
-    const profileId = `skyvern-shop-${userId.substring(0, 8)}-${Date.now()}`;
+    const profileId = `bu-shop-${userId.substring(0, 8)}-${Date.now()}`;
     await supabase.from("browser_profiles").upsert({ user_id: userId, browser_use_profile_id: profileId, status: "ready", shop_sites_logged_in: [] }, { onConflict: "user_id" });
     const { data: newProfile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
     profile = newProfile;
@@ -246,21 +246,58 @@ async function handleStartLogin(
   const siteUrls: Record<string, string> = { gmail: "https://mail.google.com", amazon: "https://www.amazon.com/ap/signin", ebay: "https://signin.ebay.com", walmart: "https://www.walmart.com/account/login" };
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
 
-  console.log(`[AutoShop] Creating Skyvern task for login: ${loginUrl}`);
-  const taskRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
+  console.log(`[AutoShop] Creating Browser Use task for login: ${loginUrl}`);
+
+  // Create session with profile
+  let sessionId: string | undefined;
+  if (profile?.browser_use_profile_id) {
+    try {
+      const sessionRes = await fetch(`${BU_API_BASE}/sessions`, {
+        method: "POST",
+        headers: { "X-Browser-Use-API-Key": buApiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId: profile.browser_use_profile_id }),
+      });
+      if (sessionRes.ok) {
+        const session = await sessionRes.json();
+        sessionId = session.id;
+      }
+    } catch (_) {}
+  }
+
+  const taskBody: any = {
+    task: `Navigate to ${loginUrl} and display the login page.`,
+    startUrl: loginUrl,
+    maxSteps: 30,
+  };
+  if (sessionId) taskBody.sessionId = sessionId;
+
+  const taskRes = await browserUseApi(buApiKey, "/tasks", {
     method: "POST",
-    body: JSON.stringify({ prompt: `Navigate to ${loginUrl} and display the login page.`, url: loginUrl, engine: "skyvern-2.0" }),
+    body: JSON.stringify(taskBody),
   });
 
   if (!taskRes.ok) {
     const err = await taskRes.text();
-    console.error(`[AutoShop] Skyvern task creation failed: ${err}`);
+    console.error(`[AutoShop] Browser Use task creation failed: ${err}`);
     throw new Error(`Failed to create task: ${err}`);
   }
 
   const taskData = await taskRes.json();
-  const runId = taskData.run_id;
-  const liveViewUrl = taskData.app_url || null;
+  const runId = taskData.id;
+
+  // Get live URL
+  let liveViewUrl = null;
+  if (taskData.sessionId) {
+    try {
+      const sessRes = await fetch(`${BU_API_BASE}/sessions/${taskData.sessionId}`, {
+        headers: { "X-Browser-Use-API-Key": buApiKey },
+      });
+      if (sessRes.ok) {
+        const sessData = await sessRes.json();
+        liveViewUrl = sessData.liveUrl || null;
+      }
+    } catch (_) {}
+  }
 
   await supabase.from("browser_profiles").update({ shop_pending_login_site: site, shop_pending_task_id: null, shop_pending_session_id: runId }).eq("user_id", userId);
 
@@ -268,7 +305,7 @@ async function handleStartLogin(
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleConfirmLogin(supabase: any, userId: string, site: string, _skyvernApiKey: string) {
+async function handleConfirmLogin(supabase: any, userId: string, site: string, _buApiKey: string) {
   const { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
   if (!profile) throw new Error("Profile not found");
 
@@ -283,20 +320,20 @@ async function handleConfirmLogin(supabase: any, userId: string, site: string, _
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCancelLogin(supabase: any, userId: string, _skyvernApiKey: string) {
+async function handleCancelLogin(supabase: any, userId: string, _buApiKey: string) {
   await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
   return new Response(JSON.stringify({ success: true, message: "Login session cancelled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
-async function cleanupStaleSessions(supabase: any, userId: string, _skyvernApiKey: string): Promise<{ sessionsKilled: number }> {
+async function cleanupStaleSessions(supabase: any, userId: string, _buApiKey: string): Promise<{ sessionsKilled: number }> {
   await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
   return { sessionsKilled: 0 };
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCleanupSessions(supabase: any, userId: string, skyvernApiKey: string) {
-  const result = await cleanupStaleSessions(supabase, userId, skyvernApiKey);
+async function handleCleanupSessions(supabase: any, userId: string, buApiKey: string) {
+  const result = await cleanupStaleSessions(supabase, userId, buApiKey);
   return new Response(JSON.stringify({ success: true, message: "Sessions cleaned up", ...result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
@@ -322,7 +359,7 @@ async function handleStartOrder(
   supabase: any,
   user: { id: string; email?: string },
   payload: AutoShopPayload,
-  skyvernApiKey: string,
+  buApiKey: string,
   lovableApiKey: string,
   supabaseUrl: string
 ) {
@@ -378,33 +415,33 @@ async function handleStartOrder(
     }
   }
 
-  console.log(`[AutoShop] Starting order via Skyvern: "${productQuery}"`);
+  console.log(`[AutoShop] Starting order via Browser Use: "${productQuery}"`);
   await supabase.from("auto_shop_orders").update({ status: "searching" }).eq("id", orderId);
-  await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Starting product search via Skyvern: "${productQuery}"`, metadata: { orderId, productQuery, maxPrice, quantity, userEmail } });
+  await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Starting product search via Browser Use: "${productQuery}"`, metadata: { orderId, productQuery, maxPrice, quantity, userEmail } });
 
-  // Create a Skyvern task for the shopping task
-  const taskRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
+  // Create a Browser Use task for the shopping task
+  const taskRes = await browserUseApi(buApiKey, "/tasks", {
     method: "POST",
     body: JSON.stringify({
-      prompt: `Search for and purchase "${productQuery}" at the best price${maxPrice ? ` under $${maxPrice}` : ""}. Use guest checkout with email ${userEmail}.`,
-      url: "https://www.amazon.com",
-      engine: "skyvern-2.0",
+      task: `Search for and purchase "${productQuery}" at the best price${maxPrice ? ` under $${maxPrice}` : ""}. Use guest checkout with email ${userEmail}.`,
+      startUrl: "https://www.amazon.com",
+      maxSteps: 80,
     }),
   });
 
   if (!taskRes.ok) {
     const errorData = await taskRes.text();
-    console.error("[AutoShop] Skyvern API error:", taskRes.status, errorData);
-    await supabase.from("auto_shop_orders").update({ status: "failed", error_message: `Skyvern API error: ${taskRes.status}` }).eq("id", orderId);
-    throw new Error(`Skyvern task creation failed: ${taskRes.status} - ${errorData}`);
+    console.error("[AutoShop] Browser Use API error:", taskRes.status, errorData);
+    await supabase.from("auto_shop_orders").update({ status: "failed", error_message: `Browser Use API error: ${taskRes.status}` }).eq("id", orderId);
+    throw new Error(`Browser Use task creation failed: ${taskRes.status} - ${errorData}`);
   }
 
-  const skyvernTask = await taskRes.json();
-  const runId = skyvernTask.run_id;
-  console.log("[AutoShop] Skyvern task created:", runId);
+  const buTask = await taskRes.json();
+  const runId = buTask.id;
+  console.log("[AutoShop] Browser Use task created:", runId);
 
-  await supabase.from("auto_shop_orders").update({ browser_use_task_id: runId, status: "searching", notes: JSON.stringify({ skyvernRunId: runId }) }).eq("id", orderId);
-  await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Skyvern task created: ${runId}`, metadata: { orderId, runId } });
+  await supabase.from("auto_shop_orders").update({ browser_use_task_id: runId, status: "searching", notes: JSON.stringify({ browserUseTaskId: runId }) }).eq("id", orderId);
+  await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Browser Use task created: ${runId}`, metadata: { orderId, runId } });
 
   // Use Lovable AI to orchestrate the shopping task via Skyvern
   if (lovableApiKey) {
@@ -425,7 +462,7 @@ async function handleStartOrder(
           body: JSON.stringify({
             messages: [{
               role: "user",
-              content: `Execute this shopping task using Skyvern (run: ${runId}):\n\n${agentPrompt}\n\nWhen complete, update order ${orderId} status in the database.`,
+            content: `Execute this shopping task using Browser Use (task: ${runId}):\n\n${agentPrompt}\n\nWhen complete, update order ${orderId} status in the database.`,
             }],
           }),
         });
@@ -448,10 +485,9 @@ async function handleStartOrder(
   return new Response(
     JSON.stringify({
       success: true,
-      message: "Shopping agent started via Skyvern",
+      message: "Shopping agent started via Browser Use",
       orderId,
-      taskId: sessionId,
-      debugUrl,
+      taskId: runId,
       status: "searching",
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -540,7 +576,7 @@ function analyzeFailure(errorMessage: string, _order: Record<string, unknown>): 
     return { diagnosis: "Agent ran out of steps.", workaround: "Increasing step limit.", canRetry: true };
   }
   if (err.includes("captcha") || err.includes("bot detection")) {
-    return { diagnosis: "Bot detection triggered.", workaround: "Using Skyvern proxy + captcha solving.", canRetry: true };
+    return { diagnosis: "Bot detection triggered.", workaround: "Using Browser Use with different approach.", canRetry: true };
   }
   if (err.includes("out of stock") || err.includes("unavailable")) {
     return { diagnosis: "Product unavailable.", workaround: "Broadening search.", canRetry: true };
@@ -559,7 +595,7 @@ function analyzeFailure(errorMessage: string, _order: Record<string, unknown>): 
 async function handleSyncAllOrders(
   supabase: any,
   user: { id: string; email?: string },
-  skyvernApiKey: string,
+  buApiKey: string,
   supabaseUrl: string,
   lovableApiKey: string,
 ) {
@@ -592,12 +628,13 @@ async function handleSyncAllOrders(
 
         const analysis = analyzeFailure(order.error_message || "", order);
         if (analysis.canRetry) {
-          // Create new Skyvern task for retry
-          const retryRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
+          // Create new Browser Use task for retry
+          const retryRes = await browserUseApi(buApiKey, "/tasks", {
             method: "POST",
             body: JSON.stringify({
-              prompt: `Retry purchasing: ${order.product_query}. Previous error: ${order.error_message}`,
-              engine: "skyvern-2.0",
+              task: `Retry purchasing: ${order.product_query}. Previous error: ${order.error_message}`,
+              startUrl: "https://www.amazon.com",
+              maxSteps: 80,
             }),
           });
 
@@ -605,12 +642,12 @@ async function handleSyncAllOrders(
             const retryTask = await retryRes.json();
             await supabase.from("auto_shop_orders").update({
               status: "searching",
-              browser_use_task_id: retryTask.run_id,
+              browser_use_task_id: retryTask.id,
               retry_count: (order.retry_count || 0) + 1,
               failure_analysis: `${analysis.diagnosis}\nFix: ${analysis.workaround}`,
               last_retry_at: new Date().toISOString(),
               error_message: null,
-              notes: JSON.stringify({ skyvernRunId: retryTask.run_id }),
+              notes: JSON.stringify({ browserUseTaskId: retryTask.id }),
             }).eq("id", order.id);
             retriedCount++;
           }
@@ -632,7 +669,7 @@ async function handleSyncAllOrders(
 async function handleSyncOrderEmails(
   supabase: any,
   userId: string,
-  skyvernApiKey: string,
+  buApiKey: string,
   lovableApiKey: string,
 ) {
   const { data: profile } = await supabase
@@ -651,24 +688,24 @@ async function handleSyncOrderEmails(
 
   console.log(`[AutoShop] Syncing order emails for user ${userId}`);
 
-  // Create a Skyvern task for email sync
-  const taskRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
+  // Create a Browser Use task for email sync
+  const taskRes = await browserUseApi(buApiKey, "/tasks", {
     method: "POST",
     body: JSON.stringify({
-      prompt: "Navigate to Gmail, find recent order confirmation and shipping emails. Extract order details including order numbers, items, prices, and tracking information.",
-      url: "https://mail.google.com",
-      engine: "skyvern-2.0",
+      task: "Navigate to Gmail, find recent order confirmation and shipping emails. Extract order details including order numbers, items, prices, and tracking information.",
+      startUrl: "https://mail.google.com",
+      maxSteps: 50,
     }),
   });
 
-  let skyvernRunId = "unknown";
+  let buTaskId = "unknown";
   if (taskRes.ok) {
     const taskData = await taskRes.json();
-    skyvernRunId = taskData.run_id || "unknown";
-    console.log(`[AutoShop] Email sync Skyvern task created: ${skyvernRunId}`);
+    buTaskId = taskData.id || "unknown";
+    console.log(`[AutoShop] Email sync Browser Use task created: ${buTaskId}`);
   } else {
     const err = await taskRes.text();
-    console.error(`[AutoShop] Failed to create Skyvern task for email sync: ${err}`);
+    console.error(`[AutoShop] Failed to create Browser Use task for email sync: ${err}`);
   }
 
   // Log the sync attempt
@@ -684,8 +721,8 @@ async function handleSyncOrderEmails(
       user_id: userId,
       agent_name: "auto_shop",
       log_level: "info",
-      message: "Email sync initiated via Skyvern task",
-      metadata: { skyvernRunId },
+      message: "Email sync initiated via Browser Use task",
+      metadata: { buTaskId },
     });
   }
 
@@ -730,7 +767,7 @@ async function handleSetProxy(supabase: any, userId: string, payload: AutoShopPa
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleTestProxy(supabase: any, userId: string, skyvernApiKey: string) {
+async function handleTestProxy(supabase: any, userId: string, buApiKey: string) {
   const { data: profile } = await supabase
     .from("browser_profiles")
     .select("*")
@@ -744,19 +781,14 @@ async function handleTestProxy(supabase: any, userId: string, skyvernApiKey: str
     );
   }
 
-  // Create Skyvern task to test proxy connectivity
-  console.log(`[AutoShop] Testing proxy via Skyvern task...`);
+  console.log(`[AutoShop] Testing proxy via Browser Use task...`);
 
-  const testRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
+  const testRes = await browserUseApi(buApiKey, "/tasks", {
     method: "POST",
     body: JSON.stringify({
-      prompt: "Navigate to https://httpbin.org/ip and extract the visible IP address from the page.",
-      url: "https://httpbin.org/ip",
-      engine: "skyvern-2.0",
-      data_extraction_schema: {
-        type: "object",
-        properties: { ip: { type: "string" } },
-      },
+      task: "Navigate to https://httpbin.org/ip and extract the visible IP address from the page.",
+      startUrl: "https://httpbin.org/ip",
+      maxSteps: 10,
     }),
   });
 
@@ -765,7 +797,7 @@ async function handleTestProxy(supabase: any, userId: string, skyvernApiKey: str
   if (testRes.ok) {
     const taskData = await testRes.json();
     proxyWorking = true;
-    proxyIp = taskData.run_id?.substring(0, 8) || "task-created";
+    proxyIp = taskData.id?.substring(0, 8) || "task-created";
   }
 
   return new Response(
@@ -774,10 +806,10 @@ async function handleTestProxy(supabase: any, userId: string, skyvernApiKey: str
       tested: true,
       proxyWorking,
       allTestsPassed: proxyWorking,
-      baseline1Ip: "skyvern-managed",
+      baseline1Ip: "browser-use-managed",
       proxyIp,
-      baseline2Ip: "skyvern-managed",
-      message: proxyWorking ? "Skyvern proxy test task created successfully" : "Skyvern task creation failed",
+      baseline2Ip: "browser-use-managed",
+      message: proxyWorking ? "Browser Use proxy test task created successfully" : "Browser Use task creation failed",
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );

@@ -7,18 +7,17 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
-const SKYVERN_WORKFLOW_ID = "wpid_498725285882867288";
+const BU_API_BASE = "https://api.browser-use.com/api/v2";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
+  const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
 
-  if (!SKYVERN_API_KEY) {
-    return new Response(JSON.stringify({ error: "SKYVERN_API_KEY not configured" }), {
+  if (!BU_API_KEY) {
+    return new Response(JSON.stringify({ error: "BROWSER_USE_API_KEY not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
@@ -55,41 +54,38 @@ serve(async (req) => {
 
       if (task.status === "running") {
         const payload = task.payload as Record<string, unknown>;
-        const skyvernRunId = payload?.skyvern_run_id as string;
+        const buTaskId = payload?.browser_use_task_id as string;
 
-        if (skyvernRunId) {
+        if (buTaskId) {
           try {
-            const skyvernRes = await fetch(
-              `${SKYVERN_API_BASE}/run/workflows/${skyvernRunId}`,
-              { headers: { "x-api-key": SKYVERN_API_KEY } }
+            const buRes = await fetch(
+              `${BU_API_BASE}/tasks/${buTaskId}`,
+              { headers: { "X-Browser-Use-API-Key": BU_API_KEY } }
             );
 
-            if (skyvernRes.ok) {
-              const runData = await skyvernRes.json();
-              const skyvernStatus = (runData.status || "").toLowerCase();
+            if (buRes.ok) {
+              const runData = await buRes.json();
+              const buStatus = (runData.status || "").toLowerCase();
 
               const liveInfo: Record<string, unknown> = {
                 stage: "searching",
-                skyvern_status: skyvernStatus,
+                browser_use_status: buStatus,
               };
 
-              if (runData.steps_info) {
-                liveInfo.total_steps = runData.steps_info.total;
-                liveInfo.completed_steps = runData.steps_info.completed;
+              if (runData.steps) {
+                liveInfo.total_steps = runData.steps.length;
               }
-              if (runData.recording_url) {
-                liveInfo.recording_url = runData.recording_url;
+              if (runData.liveUrl) {
+                liveInfo.live_url = runData.liveUrl;
               }
 
               // Terminal: completed
-              if (["completed", "finished", "success"].includes(skyvernStatus)) {
+              if (["completed", "finished", "success", "done"].includes(buStatus)) {
                 const output = runData.output || runData.result || "";
                 const outputText = typeof output === "string" ? output : JSON.stringify(output);
 
-                // Try to parse jobs from the output
                 const parsedJobs = parseJobsFromOutput(outputText);
 
-                // Save jobs to the jobs table
                 let savedCount = 0;
                 for (const job of parsedJobs) {
                   const { error: jobErr } = await supabase.from("jobs").upsert({
@@ -122,7 +118,6 @@ serve(async (req) => {
                     jobsFound: parsedJobs.length,
                     jobsSaved: savedCount,
                     rawOutput: outputText.substring(0, 2000),
-                    recording_url: runData.recording_url || null,
                   },
                 }).eq("id", task.id);
 
@@ -132,14 +127,13 @@ serve(async (req) => {
                     stage: "done",
                     jobsFound: parsedJobs.length,
                     jobsSaved: savedCount,
-                    recording_url: runData.recording_url || null,
                   },
                 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
               }
 
               // Terminal: failed
-              if (["failed", "terminated", "timed_out", "canceled"].includes(skyvernStatus)) {
-                const errMsg = runData.failure_reason || runData.error || `Skyvern workflow ${skyvernStatus}`;
+              if (["failed", "terminated", "timed_out", "canceled", "error"].includes(buStatus)) {
+                const errMsg = runData.error || runData.failure_reason || `Browser Use task ${buStatus}`;
                 await supabase.from("agent_tasks").update({
                   status: "failed",
                   error_message: errMsg,
@@ -164,7 +158,7 @@ serve(async (req) => {
               }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
           } catch (e) {
-            console.error("[SearchJobsDeep] Skyvern poll error:", e);
+            console.error("[SearchJobsDeep] Browser Use poll error:", e);
           }
         }
       }
@@ -227,45 +221,37 @@ serve(async (req) => {
         jobPrefs?.salary_max ? `Max salary: $${jobPrefs.salary_max}` : "",
       ].filter(Boolean).join(". ") || "General job search across all industries";
 
-    // Submit to Skyvern workflow — same parameter pattern as optimize-resume
-    const navigationPayload: Record<string, string> = {
-      chatgpt_credentials: "cred_498232209221167088",
-      resume: rawText.substring(0, 8000),
-      job_description: jobDescription,
-      resume_owner_name: userName,
-    };
+    // Submit to Browser Use task
+    const searchTask = `Search for jobs matching this candidate profile. Resume:\n${rawText.substring(0, 4000)}\n\nJob criteria: ${jobDescription}\n\nFind at least 10 relevant job listings. For each job, extract: title, company, location, salary range, description, requirements, and application URL. Return results as a JSON array.`;
 
-    console.log(`[SearchJobsDeep] Submitting to Skyvern workflow ${SKYVERN_WORKFLOW_ID}`);
+    console.log(`[SearchJobsDeep] Submitting to Browser Use`);
 
-    const skyvernRes = await fetch(`${SKYVERN_API_BASE}/run/workflows`, {
+    const buRes = await fetch(`${BU_API_BASE}/tasks`, {
       method: "POST",
       headers: {
-        "x-api-key": SKYVERN_API_KEY,
+        "X-Browser-Use-API-Key": BU_API_KEY,
         "Content-Type": "application/json",
-        "x-max-steps-override": "150",
       },
       body: JSON.stringify({
-        workflow_id: SKYVERN_WORKFLOW_ID,
-        parameters: navigationPayload,
-        proxy_location: "RESIDENTIAL",
-        run_with: "agent",
-        ai_fallback: true,
+        task: searchTask,
+        startUrl: "https://www.google.com/search?q=" + encodeURIComponent(`${jobDescription} jobs`),
+        maxSteps: 100,
       }),
     });
 
-    if (!skyvernRes.ok) {
-      const errText = await skyvernRes.text();
-      throw new Error(`Skyvern workflow submission failed (${skyvernRes.status}): ${errText}`);
+    if (!buRes.ok) {
+      const errText = await buRes.text();
+      throw new Error(`Browser Use task submission failed (${buRes.status}): ${errText}`);
     }
 
-    const skyvernData = await skyvernRes.json();
-    const skyvernRunId = skyvernData.run_id || skyvernData.workflow_run_id || skyvernData.id;
+    const buData = await buRes.json();
+    const buTaskId = buData.id;
 
-    if (!skyvernRunId) {
-      throw new Error("No run ID returned from Skyvern");
+    if (!buTaskId) {
+      throw new Error("No task ID returned from Browser Use");
     }
 
-    console.log(`[SearchJobsDeep] Skyvern workflow started: ${skyvernRunId}`);
+    console.log(`[SearchJobsDeep] Browser Use task started: ${buTaskId}`);
 
     // Create agent task
     const { data: task, error: insertErr } = await supabase.from("agent_tasks").insert({
@@ -273,8 +259,8 @@ serve(async (req) => {
       task_type: "search_jobs_deep",
       status: "running",
       started_at: new Date().toISOString(),
-      payload: { skyvern_run_id: skyvernRunId, resumeSource },
-      result: { stage: "searching", skyvern_status: "running" },
+      payload: { browser_use_task_id: buTaskId, resumeSource },
+      result: { stage: "searching", browser_use_status: "running" },
       priority: 1,
     }).select().single();
 
@@ -286,13 +272,13 @@ serve(async (req) => {
       run_type: "job_agent",
       status: "running",
       started_at: new Date().toISOString(),
-      summary_json: { skyvern_run_id: skyvernRunId, method: "deep_research", resumeSource },
+      summary_json: { browser_use_task_id: buTaskId, method: "deep_research", resumeSource },
     });
 
     return new Response(JSON.stringify({
       status: "started",
       taskId: task.id,
-      skyvernRunId,
+      browserUseTaskId: buTaskId,
       resumeSource,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 

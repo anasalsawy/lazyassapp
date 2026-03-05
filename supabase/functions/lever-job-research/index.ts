@@ -17,7 +17,7 @@ const corsHeaders = {
 // 5. Creates Steel sessions for qualified job applications
 // =============================================
 
-const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
+const BU_API_BASE = "https://api.browser-use.com/api/v2";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -34,9 +34,9 @@ serve(async (req) => {
 
     if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
     if (!FIRECRAWL_API_KEY) throw new Error("FIRECRAWL_API_KEY not configured");
-    if (!STEEL_API_KEY) console.warn("STEEL_API_KEY not configured — using SKYVERN_API_KEY");
-    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
-    if (!SKYVERN_API_KEY) throw new Error("SKYVERN_API_KEY not configured");
+    if (!STEEL_API_KEY) console.warn("STEEL_API_KEY not configured — using BROWSER_USE_API_KEY");
+    const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+    if (!BU_API_KEY) throw new Error("BROWSER_USE_API_KEY not configured");
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -364,7 +364,7 @@ Score HONESTLY. 60+ means reasonable match.`;
         }
       }
 
-      // ---- STEP 8: Submit qualified jobs via Skyvern tasks ----
+      // ---- STEP 8: Submit qualified jobs via Browser Use tasks ----
       const header = redesigned?.header || {};
       const education = redesigned?.education || [];
       const candidateInfo = [
@@ -383,35 +383,34 @@ Score HONESTLY. 60+ means reasonable match.`;
         .filter((j) => j.recommendation === "apply")
         .map((j) => j.url.endsWith("/apply") ? j.url : `${j.url}/apply`);
 
-      const skyvernResults: { url: string; runId?: string; error?: string }[] = [];
+      const buResults: { url: string; taskId?: string; error?: string }[] = [];
 
       for (const jobUrl of applyUrls) {
         try {
-          // Create a Skyvern task for each job application
-          const taskRes = await fetch(`${SKYVERN_API_BASE}/run/tasks`, {
+          const taskRes = await fetch(`${BU_API_BASE}/tasks`, {
             method: "POST",
             headers: {
-              "x-api-key": SKYVERN_API_KEY,
+              "X-Browser-Use-API-Key": BU_API_KEY,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              prompt: `Apply to this job at ${jobUrl}. Fill out the application form with the following candidate info:\n${candidateInfo}\n\nComplete and submit the application.`,
-              url: jobUrl,
-              engine: "skyvern-2.0",
+              task: `Apply to this job at ${jobUrl}. Fill out the application form with the following candidate info:\n${candidateInfo}\n\nComplete and submit the application.`,
+              startUrl: jobUrl,
+              maxSteps: 50,
             }),
           });
 
           if (!taskRes.ok) {
             const errText = await taskRes.text();
-            console.error(`[LeverResearch] Skyvern task error for ${jobUrl}: ${taskRes.status} ${errText}`);
-            skyvernResults.push({ url: jobUrl, error: `${taskRes.status}` });
+            console.error(`[LeverResearch] Browser Use task error for ${jobUrl}: ${taskRes.status} ${errText}`);
+            buResults.push({ url: jobUrl, error: `${taskRes.status}` });
             continue;
           }
 
-          const skyvernTask = await taskRes.json();
-          const runId = skyvernTask.run_id;
-          console.log(`[LeverResearch] Skyvern task created for ${jobUrl}: ${runId}`);
-          skyvernResults.push({ url: jobUrl, runId });
+          const buTask = await taskRes.json();
+          const taskId = buTask.id;
+          console.log(`[LeverResearch] Browser Use task created for ${jobUrl}: ${taskId}`);
+          buResults.push({ url: jobUrl, taskId });
 
           // Create application record
           const matchingJob = qualifiedJobs.find((j) => j.url === jobUrl);
@@ -426,19 +425,19 @@ Score HONESTLY. 60+ means reasonable match.`;
               platform: "lever",
               status: "applying",
               status_source: "system",
-              status_message: `Skyvern task: ${runId}`,
-              extra_metadata: { skyvern_run_id: runId, match_score: matchingJob?.score },
+              status_message: `Browser Use task: ${taskId}`,
+              extra_metadata: { browser_use_task_id: taskId, match_score: matchingJob?.score },
             });
           }
         } catch (e) {
-          console.error(`[LeverResearch] Error creating Skyvern task:`, e);
-          skyvernResults.push({ url: jobUrl, error: String(e) });
+          console.error(`[LeverResearch] Error creating Browser Use task:`, e);
+          buResults.push({ url: jobUrl, error: String(e) });
         }
       }
 
-      await logAgent(supabase, userId, runId, "skyvern_submission", {
-        total_submitted: skyvernResults.filter((r) => r.runId).length,
-        total_errors: skyvernResults.filter((r) => r.error).length,
+      await logAgent(supabase, userId, runId, "browser_use_submission", {
+        total_submitted: buResults.filter((r) => r.taskId).length,
+        total_errors: buResults.filter((r) => r.error).length,
       });
 
       // Update agent run
@@ -446,7 +445,7 @@ Score HONESTLY. 60+ means reasonable match.`;
         jobs_found: allJobs.length,
         jobs_enriched: enrichedJobs.length,
         jobs_qualified: qualifiedJobs.length,
-        jobs_submitted_to_skyvern: skyvernResults.filter((r) => r.runId).length,
+        jobs_submitted_to_browser_use: buResults.filter((r) => r.taskId).length,
         queries_used: queryData.queries,
         target_roles: queryData.targetRoles,
         seniority: queryData.seniorityLevel,
@@ -459,16 +458,16 @@ Score HONESTLY. 60+ means reasonable match.`;
           found: allJobs.length,
           enriched: enrichedJobs.length,
           qualified: qualifiedJobs.length,
-          submittedToSkyvern: skyvernResults.filter((r) => r.runId).length,
+          submittedToBrowserUse: buResults.filter((r) => r.taskId).length,
           queries: queryData.queries,
           targetRoles: queryData.targetRoles,
           seniorityLevel: queryData.seniorityLevel,
         },
-        skyvernTasks: skyvernResults,
+        browserUseTasks: buResults,
       };
 
       console.log(
-        `[LeverResearch] Complete. ${skyvernResults.filter((r) => r.runId).length} jobs submitted via Skyvern`
+        `[LeverResearch] Complete. ${buResults.filter((r) => r.taskId).length} jobs submitted via Browser Use`
       );
 
       return new Response(JSON.stringify(result), {
