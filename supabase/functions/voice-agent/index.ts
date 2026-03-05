@@ -277,12 +277,11 @@ function escapeXml(str: string): string {
 function buildGatherTwiml(speech: string, webhookUrl: string, voice = "Polly.Matthew-Neural"): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST" bargeIn="true">
     <Say voice="${voice}">${escapeXml(speech)}</Say>
   </Gather>
-  <Say voice="${voice}">I didn't catch that. Are you still there?</Say>
-  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
-    <Say voice="${voice}">Hello?</Say>
+  <Gather input="speech dtmf" speechTimeout="4" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
+    <Say voice="${voice}">I didn't catch that. Are you still there?</Say>
   </Gather>
   <Say voice="${voice}">It seems like the connection dropped. Have a great day!</Say>
 </Response>`;
@@ -295,7 +294,7 @@ function buildDtmfTwiml(digit: string, webhookUrl: string, speechAfter?: string,
 <Response>
   <Play digits="${escapeXml(digit)}"/>
   <Pause length="2"/>${sayAfter}
-  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Say voice="${voice}">.</Say>
   </Gather>
 </Response>`;
@@ -306,7 +305,7 @@ function buildWaitTwiml(webhookUrl: string, voice = "Polly.Matthew-Neural"): str
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Pause length="5"/>
-  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Say voice="${voice}">.</Say>
   </Gather>
 </Response>`;
