@@ -326,25 +326,28 @@ async function executeNavigatorAction(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LLM CALL HELPER
+// LLM CALL HELPER — uses Lovable AI Gateway (no external API key needed)
 // ═══════════════════════════════════════════════════════════════════════════
+const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+
 async function callLLM(
-  apiKey: string,
+  lovableApiKey: string,
   systemPrompt: string,
   messages: { role: string; content: string }[],
   jsonMode = true,
 ): Promise<string> {
   const body: any = {
-    model: "gpt-4o",
+    model: "google/gemini-2.5-flash",
     messages: [{ role: "system", content: systemPrompt }, ...messages],
     temperature: 0.1,
     max_tokens: 4000,
+    stream: false,
   };
   if (jsonMode) body.response_format = { type: "json_object" };
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetch(AI_GATEWAY, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${lovableApiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
@@ -633,7 +636,7 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-  const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
   if (!BU_API_KEY) {
@@ -641,8 +644,8 @@ serve(async (req) => {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  if (!OPENAI_KEY) {
-    return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), {
+  if (!LOVABLE_API_KEY) {
+    return new Response(JSON.stringify({ error: "LOVABLE_API_KEY not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
