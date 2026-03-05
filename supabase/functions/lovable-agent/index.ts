@@ -1130,7 +1130,11 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
 
       // Step 2: Create Skyvern task for autonomous execution
       let skyvernResult: any = null;
-      if (SKYVERN_API_KEY) {
+      let skyvernError: { status?: number; message: string } | null = null;
+
+      if (!SKYVERN_API_KEY) {
+        skyvernError = { message: "SKYVERN_API_KEY not configured." };
+      } else {
         try {
           const skyvernRes = await fetch("https://api.skyvern.com/v1/run/tasks", {
             method: "POST",
@@ -1141,34 +1145,50 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
               engine: "skyvern-2.0",
             }),
           });
+
           if (skyvernRes.ok) {
             const skyvernData = await skyvernRes.json();
             skyvernResult = { runId: skyvernData.run_id, status: skyvernData.status };
           } else {
             const errText = await skyvernRes.text();
+            skyvernError = {
+              status: skyvernRes.status,
+              message: errText?.slice(0, 1200) || "Skyvern task creation failed.",
+            };
             console.error(`[browser_task] Skyvern error (${skyvernRes.status}): ${errText}`);
           }
         } catch (err: any) {
+          skyvernError = { message: err?.message || "Skyvern request failed." };
           console.error("[browser_task] Skyvern error:", err);
         }
       }
 
       // Build response
-      const result: any = { success: true, provider: "skyvern", task: taskStr, url: scrapedUrl || startUrl };
+      const result: any = {
+        success: !!skyvernResult,
+        provider: "skyvern",
+        task: taskStr,
+        url: scrapedUrl || startUrl,
+      };
+
       if (pageContent) {
         result.pageTitle = pageTitle;
         result.pageContent = pageContent.substring(0, 6000);
-        result.message = `✅ Browsed to ${pageTitle || scrapedUrl}. Page content retrieved.`;
       }
+
       if (skyvernResult) {
         result.runId = skyvernResult.runId;
         result.taskStatus = skyvernResult.status;
-        result.message = (result.message || "") + ` 🤖 Skyvern task ${skyvernResult.runId} running.`;
+        result.message = `🤖 Skyvern task ${skyvernResult.runId} is running autonomously.`;
+      } else {
+        result.taskStatus = "failed_to_start";
+        result.error = skyvernError?.message || "Skyvern task failed to start.";
+        result.statusCode = skyvernError?.status;
+        result.message = pageContent
+          ? "Page content was retrieved, but Skyvern task creation failed."
+          : "Skyvern task creation failed.";
       }
-      if (!pageContent && !skyvernResult) {
-        result.success = false;
-        result.error = "Browser automation not available — neither SKYVERN_API_KEY nor FIRECRAWL_API_KEY configured.";
-      }
+
       return JSON.stringify(result);
     }
 

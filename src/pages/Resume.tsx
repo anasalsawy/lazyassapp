@@ -178,7 +178,7 @@ export default function Resume() {
               }));
               setOptimizingState(null);
               setExpandedResult(resumeId);
-              toast({ title: "✅ Resume optimized!", description: "ChatGPT Deep Research has finished optimizing your resume." });
+              toast({ title: "✅ Resume optimized!", description: "AI optimization has finished." });
               fetchResumes();
             }
 
@@ -262,7 +262,7 @@ export default function Resume() {
         await supabase.functions.invoke("analyze-resume", { body: { resumeId: newResume.id } });
       }
 
-      toast({ title: "Resume uploaded!", description: "Click Optimize to run AI optimization via ChatGPT Deep Research." });
+      toast({ title: "Resume uploaded!", description: "Click Optimize to run AI optimization." });
       fetchResumes();
     } catch (error: any) {
       toast({ title: "Upload failed", description: error.message, variant: "destructive" });
@@ -331,7 +331,7 @@ export default function Resume() {
             }));
             setOptimizingState(null);
             setExpandedResult(resumeId);
-            toast({ title: "✅ Resume optimized!", description: "ChatGPT Deep Research has finished optimizing your resume." });
+            toast({ title: "✅ Resume optimized!", description: "AI optimization has finished." });
             fetchResumes();
           }
 
@@ -405,7 +405,7 @@ export default function Resume() {
           <div>
             <h1 className="text-3xl font-bold">My Resumes</h1>
             <p className="text-muted-foreground">
-              Upload your resume, then optimize it using ChatGPT Deep Research via our AI agent
+              Upload your resume, then run server-side AI optimization to improve ATS quality.
             </p>
           </div>
           <div>
@@ -431,7 +431,7 @@ export default function Resume() {
           <CardContent className="py-4">
             <div className="flex flex-wrap gap-2 items-center text-sm">
               <span className="font-semibold text-primary">Optimization:</span>
-              {["📄 Upload Resume", "🤖 Agent Signs into ChatGPT", "🔬 Deep Research Mode", "✅ Optimized Resume"].map((step, i) => (
+              {["📄 Parse Resume", "🧠 Optimize Content", "✅ Save Result"].map((step, i) => (
                 <span key={i} className="flex items-center gap-1">
                   {i > 0 && <span className="text-muted-foreground">→</span>}
                   <span className="px-2 py-0.5 rounded bg-primary/10 text-primary font-medium">{step}</span>
@@ -552,8 +552,8 @@ export default function Resume() {
                               <div className="absolute -top-1 -right-1 w-3 h-3 bg-primary rounded-full animate-ping" />
                             </div>
                             <div>
-                              <p className="font-semibold text-sm">AI Agent is optimizing your resume</p>
-                              <p className="text-xs text-muted-foreground">ChatGPT Deep Research mode active</p>
+                              <p className="font-semibold text-sm">AI is optimizing your resume</p>
+                              <p className="text-xs text-muted-foreground">Secure server-side optimization in progress</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-3">
@@ -610,19 +610,21 @@ export default function Resume() {
                             ) : (
                               <span className="animate-pulse">Processing…</span>
                             )}
-                            <span>{elapsedSeconds > 1800 ? "Taking longer than usual…" : "~10–30 min typical (Deep Research)"}</span>
+                            <span>{elapsedSeconds > 300 ? "Taking longer than usual…" : "~30–90 seconds typical"}</span>
                           </div>
                         </div>
 
                         {/* Stage indicators */}
                         <div className="flex gap-2">
                           {[
-                            { key: "login", label: "Login", emoji: "🔑" },
-                            { key: "research", label: "Deep Research", emoji: "🔬" },
-                            { key: "extract", label: "Extract", emoji: "📄" },
+                            { key: "analyzing", label: "Analyze", emoji: "📄" },
+                            { key: "optimizing", label: "Optimize", emoji: "🧠" },
+                            { key: "done", label: "Save", emoji: "✅" },
                           ].map((s, i) => {
-                            const stageOrder = ["login", "research", "extract"];
-                            const currentIdx = currentState.stage === "optimizing" ? 1 : stageOrder.indexOf(currentState.stage);
+                            const stageOrder = ["analyzing", "optimizing", "done"];
+                            const mappedStage = currentState.stage === "completed" ? "done" : currentState.stage;
+                            const rawIdx = stageOrder.indexOf(mappedStage);
+                            const currentIdx = rawIdx === -1 ? 1 : rawIdx;
                             const isActive = i === currentIdx;
                             const isDone = i < currentIdx;
                             return (
