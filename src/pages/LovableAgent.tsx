@@ -25,10 +25,28 @@ type ExecutionPlan = {
   tools: ToolStep[];
 };
 
+type CallTranscriptEntry = {
+  role: string;
+  content: string;
+};
+
+type CallState = {
+  taskId: string;
+  status: "ringing" | "running" | "completed" | "failed" | "error";
+  turnCount: number;
+  transcript: CallTranscriptEntry[];
+  lastAnalysis: string | null;
+  lastDirective: string | null;
+  agentName: string;
+  errorMessage: string | null;
+  recordingUrl: string | null;
+};
+
 type Msg = {
   role: "user" | "assistant";
   content: string;
   executionPlan?: ExecutionPlan[];
+  callState?: CallState;
   isGenerating?: boolean;
 };
 
