@@ -1177,6 +1177,8 @@ serve(async (req) => {
         const sendEvent = (event: string, data: any) => {
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         };
+        // Make sendEvent available to tool executors
+        _sendEventFn = sendEvent;
 
         try {
           let iterations = 0;
