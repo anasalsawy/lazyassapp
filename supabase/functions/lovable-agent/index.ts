@@ -1250,6 +1250,7 @@ function summarizeArgs(toolName: string, args: any): string {
     case "invoke_edge_function": return `${args.function_name}${args.body?.action ? ` (${args.body.action})` : ""}`;
     case "query_database": return `${args.table}${args.filters?.length ? ` (${args.filters.length} filters)` : ""}`;
     case "list_secrets": return "listing available secrets";
+    case "make_phone_call": return `calling ${args.phone_number} — ${(args.objective as string)?.slice(0, 50)}`;
     case "lov-search-files": return `search: "${args.query}"`;
     case "lov-write": return `write: ${args.file_path}`;
     case "lov-view": return `read: ${args.file_path}`;
