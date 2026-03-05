@@ -378,7 +378,7 @@ async function runMultiAgentBrowser(
   userId: string,
   supabase: ReturnType<typeof createClient>,
   buApiKey: string,
-  openaiKey: string,
+  lovableApiKey: string,
   firecrawlKey?: string,
   profileId?: string,
 ): Promise<any> {
