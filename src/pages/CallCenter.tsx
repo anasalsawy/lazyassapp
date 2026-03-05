@@ -400,6 +400,73 @@ export default function CallCenter() {
                       </div>
                     )}
 
+                    {/* Auto-Retry Toggle */}
+                    <div className="rounded-xl border border-border/40 bg-card/30 p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <RefreshCw className="w-4 h-4 text-amber-400" />
+                          <div>
+                            <p className="text-sm font-medium">Auto-Retry on Failure</p>
+                            <p className="text-xs text-muted-foreground">Automatically try backup stores if call fails</p>
+                          </div>
+                        </div>
+                        <Switch
+                          checked={autoRetryEnabled}
+                          onCheckedChange={setAutoRetryEnabled}
+                        />
+                      </div>
+
+                      {autoRetryEnabled && (
+                        <div className="space-y-3 pt-2 border-t border-border/30">
+                          <p className="text-xs text-muted-foreground">
+                            Add backup stores with phone numbers. If the primary call fails, the system will automatically try each one in order.
+                          </p>
+                          
+                          {/* Existing retry stores */}
+                          {retryStores.length > 0 && (
+                            <div className="space-y-1.5">
+                              {retryStores.map((store, i) => (
+                                <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/30 text-sm">
+                                  <span className="text-xs font-mono text-muted-foreground w-5">{i + 1}.</span>
+                                  <span className="flex-1 truncate">{store.name}</span>
+                                  <span className="text-xs text-muted-foreground font-mono">{store.phone}</span>
+                                  <button onClick={() => removeRetryStore(i)} className="text-muted-foreground hover:text-destructive transition-colors">
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Add new store */}
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={newRetryName}
+                              onChange={(e) => setNewRetryName(e.target.value)}
+                              placeholder="Store name"
+                              className="bg-muted/20 text-sm h-8"
+                            />
+                            <Input
+                              value={newRetryPhone}
+                              onChange={(e) => setNewRetryPhone(e.target.value)}
+                              placeholder="+1 555-123-4567"
+                              className="bg-muted/20 text-sm h-8 w-40"
+                              onKeyDown={(e) => e.key === 'Enter' && addRetryStore()}
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={addRetryStore}
+                              disabled={!newRetryName.trim() || !newRetryPhone.trim()}
+                              className="h-8 px-2 shrink-0"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
                     <Button
                       onClick={initiateCall}
                       disabled={!phoneNumber || !objective || isInitiating}
