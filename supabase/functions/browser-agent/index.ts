@@ -697,7 +697,7 @@ serve(async (req) => {
 
         // Get browser profile
         const { data: browserProfile } = await supabase.from("browser_profiles")
-          .select("browser_use_profile_id").eq("user_id", user.id).single();
+          .select("browser_use_profile_id").eq("user_id", userId).single();
 
         // Pre-create browser session so we can return liveUrl immediately
         let sessionId: string | null = null;
@@ -713,7 +713,7 @@ serve(async (req) => {
 
         // Create agent run
         const { data: agentRun } = await supabase.from("agent_runs").insert({
-          user_id: user.id,
+          user_id: userId,
           run_type: "browser_agent",
           status: "running",
           started_at: new Date().toISOString(),
@@ -725,7 +725,7 @@ serve(async (req) => {
           try {
             const result = await runMultiAgentBrowser(
               taskSpec,
-              user.id,
+              userId,
               supabase,
               BU_API_KEY!,
               LOVABLE_API_KEY!,
@@ -785,11 +785,11 @@ serve(async (req) => {
         }
 
         const { data: browserProfile } = await supabase.from("browser_profiles")
-          .select("browser_use_profile_id").eq("user_id", user.id).single();
+          .select("browser_use_profile_id").eq("user_id", userId).single();
 
         const result = await runMultiAgentBrowser(
           taskSpec,
-          user.id,
+          userId,
           supabase,
           BU_API_KEY!,
           LOVABLE_API_KEY!,
@@ -806,12 +806,12 @@ serve(async (req) => {
         const runId = body.run_id;
         if (!runId) throw new Error("run_id required");
         const { data: run } = await supabase.from("agent_runs")
-          .select("*").eq("id", runId).eq("user_id", user.id).single();
+          .select("*").eq("id", runId).eq("user_id", userId).single();
         if (!run) throw new Error("Run not found");
 
         const { data: logs } = await supabase.from("agent_logs")
           .select("message, log_level, created_at, metadata")
-          .eq("user_id", user.id).eq("agent_name", "browser_agent")
+          .eq("user_id", userId).eq("agent_name", "browser_agent")
           .order("created_at", { ascending: false }).limit(20);
 
         return new Response(JSON.stringify({ run, recentLogs: logs || [] }), {
