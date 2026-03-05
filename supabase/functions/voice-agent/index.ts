@@ -64,20 +64,42 @@ async function callAI(
 }
 
 // ── ANALYST AGENT ──────────────────────────────────────────────────────────
-const ANALYST_SYSTEM_PROMPT = `You are the Analyst Agent in a multi-agent phone call system. Your ONLY job is to analyze the human's speech and provide structured intelligence to the Director Agent.
+const ANALYST_SYSTEM_PROMPT = `You are the Analyst Agent in a multi-agent phone call system. Your ONLY job is to analyze speech and provide structured intelligence to the Director Agent.
 
-You receive the full conversation transcript and the latest human utterance.
+CRITICAL: You MUST determine if the speech is from a HUMAN or an AUTOMATED SYSTEM (IVR, voicemail, phone tree, recording).
+
+Signs of AUTOMATED SYSTEM (IVR/voicemail/recording):
+- Repetitive scripted phrases ("Press 1 for...", "Please hold", "Your call is important to us")
+- Menu options with numbers ("For billing press 1, for support press 2")
+- "Please leave a message after the beep"
+- "Thank you for calling [company]"
+- Robotic/consistent pacing with no natural variation
+- Long monologues without pauses for response
+- "Please say or press..."
+- Hold music descriptions or silence references
+- "All representatives are busy"
+- Exact repetition of previous messages verbatim
+
+Signs of HUMAN:
+- Natural speech patterns, hesitations, fillers ("um", "uh", "well")
+- Asks contextual questions
+- Responds to what was said (not scripted)
+- Variable pacing and emotion
 
 Output EXACTLY this JSON format (nothing else):
 {
-  "tone": "neutral|friendly|hostile|impatient|confused|interested|skeptical|stressed|warm",
-  "intent": "brief description of what the human wants or is communicating",
+  "is_automated": true/false,
+  "automated_type": "none|ivr_menu|voicemail|hold_message|greeting_recording|transfer_system",
+  "menu_options_detected": ["list of menu options if IVR, e.g. 'press 1 for sales', 'press 2 for support'"],
+  "dtmf_needed": "digit to press if a specific menu option matches our objective, or 'none'",
+  "tone": "neutral|friendly|hostile|impatient|confused|interested|skeptical|stressed|warm|robotic",
+  "intent": "brief description of what the human/system wants or is communicating",
   "engagement": "low|moderate|high",
   "cooperation": "cooperative|neutral|resistant|hostile",
-  "emotional_state": "calm|stressed|frustrated|happy|anxious|bored|excited",
-  "risks": ["list of risks like 'call_termination', 'confusion', 'objection', 'going_off_topic'"],
-  "opportunities": ["list of opportunities like 'rapport_building', 'closing', 'upsell', 'agreement'"],
-  "key_info_extracted": "any important facts, names, dates, numbers mentioned",
+  "emotional_state": "calm|stressed|frustrated|happy|anxious|bored|excited|automated",
+  "risks": ["list of risks like 'call_termination', 'stuck_in_ivr', 'infinite_loop', 'confusion'"],
+  "opportunities": ["list of opportunities"],
+  "key_info_extracted": "any important facts, names, dates, numbers, menu options mentioned",
   "recommended_approach": "brief tactical suggestion for the Director"
 }
 
@@ -108,13 +130,24 @@ const DIRECTOR_SYSTEM_PROMPT = `You are the Director Agent in a multi-agent phon
 
 You receive:
 1. The call objective and constraints
-2. The Analyst's intelligence report (tone, intent, risks, opportunities)
+2. The Analyst's intelligence report (tone, intent, risks, opportunities, IVR detection)
 3. The conversation history
 4. Any live operator injections/instructions
 
-Your job is to decide the NEXT MOVE for the Caller Agent. Output a concise instruction that tells the Caller exactly what to say and how to say it.
+Your job is to decide the NEXT MOVE for the Caller Agent. Output a concise instruction.
 
-Rules:
+## AUTOMATED SYSTEM / IVR HANDLING (HIGHEST PRIORITY)
+If the Analyst reports is_automated=true:
+- DO NOT instruct the Caller to have a conversation with the automated system
+- If dtmf_needed is a digit: output DTMF: [digit] to press that button
+- If it's a voicemail: decide whether to leave a message or hang up
+- If it's a hold message: output WAIT (the system will wait silently)
+- If it's an IVR menu: analyze which option best matches the call objective and output DTMF: [digit]
+- If no menu option matches: try DTMF: 0 (common for operator/human)
+- If stuck in IVR loop (3+ automated turns): output DTMF: 0 or END_CALL: true
+- NEVER have the Caller try to converse with an IVR as if it were human
+
+## HUMAN CONVERSATION RULES
 - Keep instructions actionable and specific
 - Account for the human's emotional state and adjust approach
 - If the operator injected instructions, prioritize those
@@ -128,6 +161,7 @@ Output format:
 INSTRUCTION: [what the Caller should say/do]
 TONE: [how to say it]
 PRIORITY: [what matters most right now]
+DTMF: [digit to press, or 'none']
 END_CALL: [true/false - should we end the call after this response?]`;
 
 async function runDirector(
@@ -137,7 +171,7 @@ async function runDirector(
   transcript: Array<{ role: string; content: string }>,
   operatorInjections: string[],
   turnCount: number
-): Promise<{ instruction: string; tone: string; priority: string; shouldEnd: boolean }> {
+): Promise<{ instruction: string; tone: string; priority: string; shouldEnd: boolean; dtmf: string }> {
   const injectionText = operatorInjections.length > 0 
     ? `\n\n⚡ LIVE OPERATOR INJECTIONS (HIGHEST PRIORITY):\n${operatorInjections.map((inj, i) => `${i+1}. ${inj}`).join("\n")}`
     : "";
@@ -160,18 +194,23 @@ What should the Caller Agent do next?`;
     
     const instructionMatch = result.match(/INSTRUCTION:\s*(.+?)(?=\nTONE:|$)/s);
     const toneMatch = result.match(/TONE:\s*(.+?)(?=\nPRIORITY:|$)/s);
-    const priorityMatch = result.match(/PRIORITY:\s*(.+?)(?=\nEND_CALL:|$)/s);
+    const priorityMatch = result.match(/PRIORITY:\s*(.+?)(?=\nDTMF:|$)/s);
+    const dtmfMatch = result.match(/DTMF:\s*(\S+)/i);
     const endMatch = result.match(/END_CALL:\s*(true|false)/i);
+    
+    const dtmfRaw = dtmfMatch?.[1]?.trim() || "none";
+    const dtmf = /^[0-9*#]$/.test(dtmfRaw) ? dtmfRaw : "none";
     
     return {
       instruction: instructionMatch?.[1]?.trim() || result,
       tone: toneMatch?.[1]?.trim() || "professional and warm",
       priority: priorityMatch?.[1]?.trim() || "continue conversation",
+      dtmf,
       shouldEnd: endMatch?.[1]?.toLowerCase() === "true" || turnCount >= 25,
     };
   } catch (e) {
     console.error("[director] Error:", e);
-    return { instruction: "Continue the conversation naturally", tone: "professional", priority: "maintain rapport", shouldEnd: false };
+    return { instruction: "Continue the conversation naturally", tone: "professional", priority: "maintain rapport", dtmf: "none", shouldEnd: false };
   }
 }
 
@@ -228,14 +267,38 @@ function escapeXml(str: string): string {
 function buildGatherTwiml(speech: string, webhookUrl: string, voice = "Polly.Matthew-Neural"): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Say voice="${voice}">${escapeXml(speech)}</Say>
   </Gather>
   <Say voice="${voice}">I didn't catch that. Are you still there?</Say>
-  <Gather input="speech" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Say voice="${voice}">Hello?</Say>
   </Gather>
   <Say voice="${voice}">It seems like the connection dropped. Have a great day!</Say>
+</Response>`;
+}
+
+// Build TwiML that sends a DTMF tone (presses a button on an IVR)
+function buildDtmfTwiml(digit: string, webhookUrl: string, speechAfter?: string, voice = "Polly.Matthew-Neural"): string {
+  const sayAfter = speechAfter ? `\n  <Say voice="${voice}">${escapeXml(speechAfter)}</Say>` : "";
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Play digits="${escapeXml(digit)}"/>
+  <Pause length="2"/>${sayAfter}
+  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+    <Say voice="${voice}">.</Say>
+  </Gather>
+</Response>`;
+}
+
+// Build TwiML for waiting silently (hold/transfer)
+function buildWaitTwiml(webhookUrl: string, voice = "Polly.Matthew-Neural"): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="5"/>
+  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+    <Say voice="${voice}">.</Say>
+  </Gather>
 </Response>`;
 }
 
@@ -455,7 +518,7 @@ serve(async (req) => {
       console.log(`[voice-agent] Running Analyst Agent (turn ${turnCount})...`);
       const analystReport = await runAnalyst(history, speechResult);
       analystReports.push(analystReport);
-      console.log(`[voice-agent] Analyst: tone=${analystReport.tone}, intent=${analystReport.intent}, risks=${analystReport.risks}`);
+      console.log(`[voice-agent] Analyst: tone=${analystReport.tone}, intent=${analystReport.intent}, is_automated=${analystReport.is_automated}, risks=${analystReport.risks}`);
 
       // ── STEP 2: DIRECTOR AGENT ──
       console.log(`[voice-agent] Running Director Agent...`);
@@ -463,12 +526,66 @@ serve(async (req) => {
         config.objective, config.constraints || "", analystReport, history, operatorInjections, turnCount
       );
       directorDecisions.push(directorResult);
-      console.log(`[voice-agent] Director: instruction="${directorResult.instruction.substring(0, 80)}...", end=${directorResult.shouldEnd}`);
+      console.log(`[voice-agent] Director: instruction="${directorResult.instruction.substring(0, 80)}...", dtmf=${directorResult.dtmf}, end=${directorResult.shouldEnd}`);
 
       // Clear consumed operator injections
       const consumedInjections = [...operatorInjections];
 
-      // ── STEP 3: CALLER AGENT ──
+      const gatherUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
+
+      // ── HANDLE DTMF (IVR navigation) ──
+      if (directorResult.dtmf !== "none") {
+        console.log(`[voice-agent] 📱 IVR DETECTED — Pressing DTMF: ${directorResult.dtmf}`);
+        history.push({ role: "assistant", content: `[SYSTEM: Pressed ${directorResult.dtmf} to navigate IVR menu]` });
+
+        // Save state
+        await supabase.from("agent_tasks").update({
+          result: {
+            ...result,
+            conversationHistory: history,
+            analystReports: analystReports.slice(-10),
+            directorDecisions: directorDecisions.slice(-10),
+            operatorInjections: [],
+            consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections],
+            turnCount,
+            lastTurnAt: new Date().toISOString(),
+            lastAnalysis: analystReport,
+            lastDirective: directorResult,
+            ivrDetected: true,
+          },
+        }).eq("id", taskId);
+
+        return new Response(buildDtmfTwiml(directorResult.dtmf, gatherUrl, undefined, voice), {
+          headers: { "Content-Type": "text/xml" },
+        });
+      }
+
+      // ── HANDLE WAIT (on hold) ──
+      if (analystReport.is_automated && analystReport.automated_type === "hold_message") {
+        console.log(`[voice-agent] ⏳ ON HOLD — Waiting silently...`);
+        history.push({ role: "assistant", content: `[SYSTEM: Waiting on hold]` });
+
+        await supabase.from("agent_tasks").update({
+          result: {
+            ...result,
+            conversationHistory: history,
+            analystReports: analystReports.slice(-10),
+            directorDecisions: directorDecisions.slice(-10),
+            operatorInjections: [],
+            consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections],
+            turnCount,
+            lastTurnAt: new Date().toISOString(),
+            lastAnalysis: analystReport,
+            lastDirective: directorResult,
+          },
+        }).eq("id", taskId);
+
+        return new Response(buildWaitTwiml(gatherUrl, voice), {
+          headers: { "Content-Type": "text/xml" },
+        });
+      }
+
+      // ── STEP 3: CALLER AGENT (only for human conversation) ──
       console.log(`[voice-agent] Running Caller Agent...`);
       const { speech, shouldEnd: callerWantsEnd } = await runCaller(
         config, directorResult.instruction, directorResult.tone, history
@@ -485,9 +602,9 @@ serve(async (req) => {
         result: {
           ...result,
           conversationHistory: history,
-          analystReports: analystReports.slice(-10), // Keep last 10 reports
+          analystReports: analystReports.slice(-10),
           directorDecisions: directorDecisions.slice(-10),
-          operatorInjections: [], // Clear consumed injections
+          operatorInjections: [],
           consumedInjections: [...(result?.consumedInjections || []), ...consumedInjections],
           turnCount,
           lastTurnAt: new Date().toISOString(),
@@ -502,7 +619,6 @@ serve(async (req) => {
         return new Response(buildEndCallTwiml(speech, voice), { headers: { "Content-Type": "text/xml" } });
       }
 
-      const gatherUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
       return new Response(buildGatherTwiml(speech, gatherUrl, voice), { headers: { "Content-Type": "text/xml" } });
     }
 
