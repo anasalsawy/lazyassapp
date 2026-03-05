@@ -163,7 +163,8 @@ INSTRUCTION: [what the Caller should say/do]
 TONE: [how to say it]
 PRIORITY: [what matters most right now]
 DTMF: [digit to press, or 'none']
-END_CALL: [true/false - should we end the call after this response?]`;
+END_CALL: [true/false - should we end the call after this response?]
+OBJECTIVE_MET: [true/false - was the call objective successfully achieved? Only true if the goal was clearly accomplished (e.g., order confirmed, info obtained, appointment booked). False if the call failed, number was invalid, couldn't reach anyone, or objective was not completed.]`;
 
 async function runDirector(
   objective: string,
@@ -172,7 +173,7 @@ async function runDirector(
   transcript: Array<{ role: string; content: string }>,
   operatorInjections: string[],
   turnCount: number
-): Promise<{ instruction: string; tone: string; priority: string; shouldEnd: boolean; dtmf: string }> {
+): Promise<{ instruction: string; tone: string; priority: string; shouldEnd: boolean; dtmf: string; objectiveMet: boolean }> {
   const injectionText = operatorInjections.length > 0 
     ? `\n\n⚡ LIVE OPERATOR INJECTIONS (HIGHEST PRIORITY):\n${operatorInjections.map((inj, i) => `${i+1}. ${inj}`).join("\n")}`
     : "";
@@ -202,6 +203,7 @@ What should the Caller Agent do next?`;
     const priorityMatch = result.match(/PRIORITY:\s*(.+?)(?=\nDTMF:|$)/s);
     const dtmfMatch = result.match(/DTMF:\s*(\S+)/i);
     const endMatch = result.match(/END_CALL:\s*(true|false)/i);
+    const objectiveMatch = result.match(/OBJECTIVE_MET:\s*(true|false)/i);
     
     const dtmfRaw = dtmfMatch?.[1]?.trim() || "none";
     const dtmf = /^[0-9*#]$/.test(dtmfRaw) ? dtmfRaw : "none";
@@ -212,10 +214,11 @@ What should the Caller Agent do next?`;
       priority: priorityMatch?.[1]?.trim() || "continue conversation",
       dtmf,
       shouldEnd: endMatch?.[1]?.toLowerCase() === "true",
+      objectiveMet: objectiveMatch?.[1]?.toLowerCase() === "true",
     };
   } catch (e) {
     console.error("[director] Error:", e);
-    return { instruction: "Continue the conversation naturally", tone: "professional", priority: "maintain rapport", dtmf: "none", shouldEnd: false };
+    return { instruction: "Continue the conversation naturally", tone: "professional", priority: "maintain rapport", dtmf: "none", shouldEnd: false, objectiveMet: false };
   }
 }
 
@@ -724,7 +727,13 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
 
       // Build TwiML response
       if (shouldEnd) {
-        await supabase.from("agent_tasks").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", taskId);
+        const finalStatus = directorResult.objectiveMet ? "completed" : "failed";
+        const failReason = directorResult.objectiveMet ? null : `Call ended without achieving objective: ${directorResult.priority || directorResult.instruction}`;
+        await supabase.from("agent_tasks").update({ 
+          status: finalStatus, 
+          completed_at: new Date().toISOString(),
+          error_message: failReason,
+        }).eq("id", taskId);
         return new Response(buildEndCallTwiml(speech, voice), { headers: { "Content-Type": "text/xml" } });
       }
 
@@ -860,10 +869,16 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
 
       if (taskId) {
         const supabase = getSupabase();
-        const { data: task } = await supabase.from("agent_tasks").select("result").eq("id", taskId).single();
+        const { data: task } = await supabase.from("agent_tasks").select("result, status").eq("id", taskId).single();
+        // Only update status if not already set by the gather handler (which has objective context)
+        const alreadyResolved = task?.status === "completed" || task?.status === "failed";
+        const twilioFailed = ["busy", "no-answer", "canceled", "failed"].includes(callStatus);
+        const newStatus = alreadyResolved ? task.status : (twilioFailed ? "failed" : "completed");
+        const errorMsg = twilioFailed && !alreadyResolved ? `Call ${callStatus}` : undefined;
         await supabase.from("agent_tasks").update({
-          status: callStatus === "completed" ? "completed" : "failed",
+          status: newStatus,
           completed_at: new Date().toISOString(),
+          ...(errorMsg ? { error_message: errorMsg } : {}),
           result: { ...(task?.result as any || {}), callStatus, callDuration: parseInt(callDuration) },
         }).eq("id", taskId);
       }
