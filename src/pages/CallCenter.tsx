@@ -196,6 +196,17 @@ export default function CallCenter() {
   const initiateCall = async () => {
     if (!phoneNumber || !objective || !session?.access_token) return;
     setIsInitiating(true);
+    setRetryAttempt(0);
+    
+    // Set up retry queue if auto-retry is enabled
+    if (autoRetryEnabled && retryStores.length > 0) {
+      retryQueueRef.current = [...retryStores];
+      setRetryQueue([...retryStores]);
+    } else {
+      retryQueueRef.current = [];
+      setRetryQueue([]);
+    }
+
     try {
       const resp = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=initiate`,
@@ -218,13 +229,29 @@ export default function CallCenter() {
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || "Failed to initiate call");
 
-      toast.success("Call initiated!", { description: `Calling ${phoneNumber}` });
+      const retryMsg = autoRetryEnabled && retryStores.length > 0 
+        ? ` (${retryStores.length} backup stores queued)` 
+        : '';
+      toast.success("Call initiated!", { description: `Calling ${phoneNumber}${retryMsg}` });
       startPolling(data.taskId);
     } catch (e: any) {
       toast.error("Call failed", { description: e.message });
     } finally {
       setIsInitiating(false);
     }
+  };
+
+  // Add retry store helper
+  const addRetryStore = () => {
+    if (!newRetryName.trim() || !newRetryPhone.trim()) return;
+    const phone = newRetryPhone.startsWith('+') ? newRetryPhone : `+1${newRetryPhone.replace(/\D/g, '')}`;
+    setRetryStores(prev => [...prev, { name: newRetryName.trim(), phone }]);
+    setNewRetryName("");
+    setNewRetryPhone("");
+  };
+
+  const removeRetryStore = (index: number) => {
+    setRetryStores(prev => prev.filter((_, i) => i !== index));
   };
 
   // Inject instruction
