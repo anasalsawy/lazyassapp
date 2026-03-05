@@ -339,7 +339,6 @@ async function callLLM(
   const body: any = {
     model: "openai/gpt-5.2",
     messages: [{ role: "system", content: systemPrompt }, ...messages],
-    temperature: 0.1,
     max_tokens: 4000,
     stream: false,
   };
