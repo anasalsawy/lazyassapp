@@ -543,8 +543,8 @@ export default function LovableAgent() {
             status: (data.status === "completed" || data.status === "failed" ? data.status : "running") as CallState["status"],
             turnCount: data.turnCount || prev.turnCount,
             transcript: data.transcript || prev.transcript,
-            lastAnalysis: data.lastAnalysis || prev.lastAnalysis,
-            lastDirective: data.lastDirective || prev.lastDirective,
+            lastAnalysis: data.lastAnalysis ? (typeof data.lastAnalysis === 'string' ? data.lastAnalysis : JSON.stringify(data.lastAnalysis)) : prev.lastAnalysis,
+            lastDirective: data.lastDirective ? (typeof data.lastDirective === 'string' ? data.lastDirective : JSON.stringify(data.lastDirective)) : prev.lastDirective,
             agentName: data.agentName || prev.agentName,
           } : prev;
           callStateRef.current = updated;
@@ -559,7 +559,7 @@ export default function LovableAgent() {
             status: data.status as "completed" | "failed",
             turnCount: data.turnCount || prev.turnCount,
             transcript: data.transcript || prev.transcript,
-            lastAnalysis: data.lastAnalysis || prev.lastAnalysis,
+            lastAnalysis: data.lastAnalysis ? (typeof data.lastAnalysis === 'string' ? data.lastAnalysis : JSON.stringify(data.lastAnalysis)) : prev.lastAnalysis,
             errorMessage: data.errorMessage || null,
             recordingUrl: data.recordingUrl || null,
           } : prev;
