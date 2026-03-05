@@ -6,17 +6,17 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Skyvern API configuration
-const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
+// Browser Use API configuration
+const BU_API_BASE = "https://api.browser-use.com/api/v2";
 
-async function skyvernApi(apiKey: string, path: string, init: RequestInit = {}): Promise<Response> {
-  const url = `${SKYVERN_API_BASE}${path}`;
+async function browserUseApi(apiKey: string, path: string, init: RequestInit = {}): Promise<Response> {
+  const url = `${BU_API_BASE}${path}`;
   const headers: Record<string, string> = {
-    "x-api-key": apiKey,
+    "X-Browser-Use-API-Key": apiKey,
     "Content-Type": "application/json",
     ...(init.headers as Record<string, string> || {}),
   };
-  console.log(`[Skyvern] ${init.method || "GET"} ${path}`);
+  console.log(`[BrowserUse] ${init.method || "GET"} ${path}`);
   return fetch(url, { ...init, headers });
 }
 
@@ -30,11 +30,11 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
+  const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
 
-  if (!SKYVERN_API_KEY) {
+  if (!BU_API_KEY) {
     return new Response(
-      JSON.stringify({ error: "SKYVERN_API_KEY not configured" }),
+      JSON.stringify({ error: "BROWSER_USE_API_KEY not configured" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
@@ -103,24 +103,35 @@ serve(async (req) => {
 
         const startUrl = siteUrls[site] || `https://${site}.com`;
 
-        // Create a Skyvern task for login
-        const taskRes = await skyvernApi(SKYVERN_API_KEY, "/run/tasks", {
+        // Create a Browser Use task for login
+        const taskRes = await browserUseApi(BU_API_KEY, "/tasks", {
           method: "POST",
           body: JSON.stringify({
-            prompt: `Navigate to ${startUrl} and display the login page. Wait for user interaction.`,
-            url: startUrl,
-            engine: "skyvern-2.0",
+            task: `Navigate to ${startUrl} and display the login page. Wait for user interaction.`,
+            startUrl: startUrl,
+            maxSteps: 30,
           }),
         });
 
         if (!taskRes.ok) {
           const error = await taskRes.text();
-          throw new Error(`Failed to create Skyvern task (${taskRes.status}): ${error}`);
+          throw new Error(`Failed to create Browser Use task (${taskRes.status}): ${error}`);
         }
 
         const taskData = await taskRes.json();
-        const runId = taskData.run_id;
-        const liveViewUrl = taskData.app_url || null;
+        const runId = taskData.id;
+        let liveViewUrl = null;
+        if (taskData.sessionId) {
+          try {
+            const sessRes = await fetch(`${BU_API_BASE}/sessions/${taskData.sessionId}`, {
+              headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+            });
+            if (sessRes.ok) {
+              const sessData = await sessRes.json();
+              liveViewUrl = sessData.liveUrl || null;
+            }
+          } catch (_) {}
+        }
 
         await supabase.from("browser_profiles").update({
           pending_login_site: site, pending_session_id: runId, status: "pending_login",

@@ -725,9 +725,9 @@ async function executeTool(
 
       // ── Browser: view / navigate / restart (FUNCTIONAL) ───────────────
       case "browser_view": {
-        const SKYVERN_KEY = Deno.env.get("SKYVERN_API_KEY");
-        if (!SKYVERN_KEY) return JSON.stringify({ error: "Browser automation not configured — SKYVERN_API_KEY needed." });
-        return JSON.stringify({ status: "ready", provider: "skyvern", message: "Skyvern browser automation is available. Use browser_task to start a task." });
+        const BU_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+        if (!BU_KEY) return JSON.stringify({ error: "Browser automation not configured — BROWSER_USE_API_KEY needed." });
+        return JSON.stringify({ status: "ready", provider: "browser_use", message: "Browser Use automation is available. Use browser_task to start a task." });
       }
 
       case "browser_navigate": {
@@ -902,8 +902,8 @@ async function executeTool(
         return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
-        // Skyvern is the primary browser automation engine
-        const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
+        // Browser Use is the primary browser automation engine
+        const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
         const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
         const taskStr = (args.task as string) || "";
         const startUrl = (args.start_url as string) || "";
@@ -930,39 +930,75 @@ async function executeTool(
           }
         }
 
-        // Step 2: Create Skyvern task for autonomous execution
-        let skyvernResult: any = null;
-        let skyvernError: { status?: number; message: string } | null = null;
+        // Step 2: Create Browser Use task for autonomous execution
+        let buResult: any = null;
+        let buError: { status?: number; message: string } | null = null;
 
-        if (!SKYVERN_API_KEY) {
-          skyvernError = { message: "SKYVERN_API_KEY not configured." };
+        if (!BU_API_KEY) {
+          buError = { message: "BROWSER_USE_API_KEY not configured." };
         } else {
           try {
-            const skyvernRes = await fetch("https://api.skyvern.com/v1/run/tasks", {
+            // Get browser profile for session persistence
+            const { data: browserProfile } = await supabase.from("browser_profiles")
+              .select("browser_use_profile_id").eq("user_id", userId).single();
+
+            const taskBody: any = {
+              task: taskStr,
+              maxSteps: (args.max_steps as number) || 50,
+            };
+            if (startUrl) taskBody.startUrl = startUrl;
+
+            // Create session with profile if available
+            if (browserProfile?.browser_use_profile_id) {
+              try {
+                const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
+                  method: "POST",
+                  headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+                  body: JSON.stringify({ profileId: browserProfile.browser_use_profile_id }),
+                });
+                if (sessionRes.ok) {
+                  const session = await sessionRes.json();
+                  taskBody.sessionId = session.id;
+                }
+              } catch (e) {
+                console.error("[browser_task] Session creation failed:", e);
+              }
+            }
+
+            const buRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
               method: "POST",
-              headers: { "x-api-key": SKYVERN_API_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                prompt: taskStr,
-                url: startUrl || undefined,
-                engine: "skyvern-2.0",
-              }),
+              headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify(taskBody),
             });
 
-            if (skyvernRes.ok) {
-              const skyvernData = await skyvernRes.json();
-              skyvernResult = { runId: skyvernData.run_id, status: skyvernData.status };
-              console.log(`[browser_task] Skyvern task created: ${skyvernData.run_id}`);
+            if (buRes.ok) {
+              const buData = await buRes.json();
+              buResult = { runId: buData.id, sessionId: buData.sessionId, status: "running" };
+              console.log(`[browser_task] Browser Use task created: ${buData.id}`);
+
+              // Get live URL
+              if (buData.sessionId) {
+                try {
+                  const sessInfoRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${buData.sessionId}`, {
+                    headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+                  });
+                  if (sessInfoRes.ok) {
+                    const sessInfo = await sessInfoRes.json();
+                    buResult.liveUrl = sessInfo.liveUrl || null;
+                  }
+                } catch (_) {}
+              }
             } else {
-              const errText = await skyvernRes.text();
-              skyvernError = {
-                status: skyvernRes.status,
-                message: errText?.slice(0, 1200) || "Skyvern task creation failed.",
+              const errText = await buRes.text();
+              buError = {
+                status: buRes.status,
+                message: errText?.slice(0, 1200) || "Browser Use task creation failed.",
               };
-              console.error(`[browser_task] Skyvern error (${skyvernRes.status}): ${errText}`);
+              console.error(`[browser_task] Browser Use error (${buRes.status}): ${errText}`);
             }
           } catch (err: any) {
-            skyvernError = { message: err?.message || "Skyvern request failed." };
-            console.error("[browser_task] Skyvern error:", err);
+            buError = { message: err?.message || "Browser Use request failed." };
+            console.error("[browser_task] Browser Use error:", err);
           }
         }
 
@@ -970,23 +1006,23 @@ async function executeTool(
         await supabase.from("agent_logs").insert({
           user_id: userId,
           agent_name: "manus",
-          log_level: skyvernResult ? "info" : "error",
+          log_level: buResult ? "info" : "error",
           message: `Browser task: ${taskStr.substring(0, 200)}`,
           metadata: {
             task: taskStr,
             start_url: startUrl,
-            skyvernRunId: skyvernResult?.runId,
-            skyvernStatus: skyvernResult?.status,
-            skyvernError: skyvernError?.message || null,
-            skyvernStatusCode: skyvernError?.status || null,
+            browserUseTaskId: buResult?.runId,
+            browserUseStatus: buResult?.status,
+            browserUseError: buError?.message || null,
+            browserUseStatusCode: buError?.status || null,
             hasContent: !!pageContent,
           },
         });
 
         // Build response
         const result: any = {
-          success: !!skyvernResult,
-          provider: "skyvern",
+          success: !!buResult,
+          provider: "browser_use",
           task: taskStr,
           url: scrapedUrl || startUrl,
         };
@@ -996,17 +1032,20 @@ async function executeTool(
           result.pageContent = pageContent.substring(0, 6000);
         }
 
-        if (skyvernResult) {
-          result.runId = skyvernResult.runId;
-          result.taskStatus = skyvernResult.status;
-          result.message = `🤖 Skyvern task ${skyvernResult.runId} is running autonomously.`;
+        if (buResult) {
+          result.runId = buResult.runId;
+          result.taskId = buResult.runId;
+          result.sessionId = buResult.sessionId;
+          result.liveUrl = buResult.liveUrl;
+          result.taskStatus = buResult.status;
+          result.message = `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
         } else {
           result.taskStatus = "failed_to_start";
-          result.error = skyvernError?.message || "Skyvern task failed to start.";
-          result.statusCode = skyvernError?.status;
+          result.error = buError?.message || "Browser Use task failed to start.";
+          result.statusCode = buError?.status;
           result.message = pageContent
-            ? "Page content was retrieved, but Skyvern task creation failed."
-            : "Skyvern task creation failed.";
+            ? "Page content was retrieved, but Browser Use task creation failed."
+            : "Browser Use task creation failed.";
         }
 
         return JSON.stringify(result);
