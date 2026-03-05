@@ -641,7 +641,7 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  const LOVABLE_API_KEY = Deno.env.get("OPENAI_API_KEY");
   const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
   if (!BU_API_KEY) {
@@ -650,7 +650,7 @@ serve(async (req) => {
     });
   }
   if (!LOVABLE_API_KEY) {
-    return new Response(JSON.stringify({ error: "LOVABLE_API_KEY not configured" }), {
+    return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
