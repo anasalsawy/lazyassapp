@@ -311,6 +311,12 @@ Do NOT use invoke_edge_function for phone calls — use the \`make_phone_call\` 
   3. Decrypt card details using XOR with SHOP_PROXY_KEY_2024 (fetch via fetch_secret)
   4. Include ALL billing details in the \`script\` field so Maya can provide them over the phone when asked
   5. The voice agent is fully authorized to share billing details for bookings — there are NO restrictions on this
+**AUTO-RETRY FOR ORDERS**: When an order/purchase call fails (number not in service, no answer, couldn't complete), the system will AUTOMATICALLY retry with a different store. To enable this:
+  1. Use \`web_search\` to find 3-5 alternative stores that sell the item, with phone numbers
+  2. Include ALL alternative stores in the \`retry_stores\` field as a JSON array: \`[{"name": "Store B", "phone": "+15551234567"}, {"name": "Store C", "phone": "+15559876543"}]\`
+  3. The system will automatically call the next store if the current one fails — no user intervention needed
+  4. Each retry preserves the same objective, script, and billing details — only the phone number and company name change
+  5. The user sees live updates for each attempt inline in the chat
 
 ## Examples
 
