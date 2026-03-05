@@ -210,7 +210,7 @@ async function handleCreateProfile(supabase: any, userId: string) {
     );
   }
 
-  const profileId = `steel-shop-${userId.substring(0, 8)}-${Date.now()}`;
+  const profileId = `skyvern-shop-${userId.substring(0, 8)}-${Date.now()}`;
 
   await supabase.from("browser_profiles").upsert({
     user_id: userId,
@@ -406,7 +406,7 @@ async function handleStartOrder(
   await supabase.from("auto_shop_orders").update({ browser_use_task_id: runId, status: "searching", notes: JSON.stringify({ skyvernRunId: runId }) }).eq("id", orderId);
   await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Skyvern task created: ${runId}`, metadata: { orderId, runId } });
 
-  // Use Lovable AI to orchestrate the shopping task via the Steel session
+  // Use Lovable AI to orchestrate the shopping task via Skyvern
   if (lovableApiKey) {
     const agentPrompt = buildShoppingAgentInstruction(
       productQuery, maxPrice, quantity || 1, shippingAddress, paymentCards,
@@ -425,7 +425,7 @@ async function handleStartOrder(
           body: JSON.stringify({
             messages: [{
               role: "user",
-              content: `Execute this shopping task using the Steel browser session ${sessionId} (debugUrl: ${debugUrl}):\n\n${agentPrompt}\n\nWhen complete, update order ${orderId} status in the database.`,
+              content: `Execute this shopping task using Skyvern (run: ${runId}):\n\n${agentPrompt}\n\nWhen complete, update order ${orderId} status in the database.`,
             }],
           }),
         });
@@ -448,7 +448,7 @@ async function handleStartOrder(
   return new Response(
     JSON.stringify({
       success: true,
-      message: "Shopping agent started via Steel",
+      message: "Shopping agent started via Skyvern",
       orderId,
       taskId: sessionId,
       debugUrl,
@@ -540,7 +540,7 @@ function analyzeFailure(errorMessage: string, _order: Record<string, unknown>): 
     return { diagnosis: "Agent ran out of steps.", workaround: "Increasing step limit.", canRetry: true };
   }
   if (err.includes("captcha") || err.includes("bot detection")) {
-    return { diagnosis: "Bot detection triggered.", workaround: "Using Steel proxy + captcha solving.", canRetry: true };
+    return { diagnosis: "Bot detection triggered.", workaround: "Using Skyvern proxy + captcha solving.", canRetry: true };
   }
   if (err.includes("out of stock") || err.includes("unavailable")) {
     return { diagnosis: "Product unavailable.", workaround: "Broadening search.", canRetry: true };
