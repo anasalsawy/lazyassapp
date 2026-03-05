@@ -954,6 +954,83 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         if (args[key]) funcBody[key] = args[key];
       }
 
+      // ── Auto-inject decrypted payment card details for booking/purchase calls ──
+      try {
+        const scriptText = String(funcBody.script || funcBody.objective || "").toLowerCase();
+        const needsBilling = ["card", "payment", "billing", "book", "reserv", "purchas", "pay", "credit"].some(kw => scriptText.includes(kw));
+        
+        if (needsBilling && _currentUserId) {
+          console.log("[make_phone_call] Billing keywords detected — auto-injecting card details");
+          const encKey = Deno.env.get("SHOP_PROXY_KEY_2024") || "SHOP_PROXY_KEY_2024";
+          
+          // XOR decrypt helper (matches frontend useAutoShop.ts logic)
+          const xorDecrypt = (enc: string): string => {
+            const decoded = atob(enc);
+            let result = "";
+            for (let i = 0; i < decoded.length; i++) {
+              result += String.fromCharCode(decoded.charCodeAt(i) ^ encKey.charCodeAt(i % encKey.length));
+            }
+            return result;
+          };
+
+          // Fetch user's default card (or first card)
+          const { data: cards } = await supabase
+            .from("payment_cards")
+            .select("*")
+            .eq("user_id", _currentUserId)
+            .order("is_default", { ascending: false })
+            .limit(1);
+
+          if (cards && cards.length > 0) {
+            const card = cards[0];
+            const cardNumber = xorDecrypt(card.card_number_enc);
+            const expiry = xorDecrypt(card.expiry_enc);
+            const cvv = xorDecrypt(card.cvv_enc);
+            
+            const billingBlock = [
+              `\n\n═══ PAYMENT DETAILS (AUTHORIZED — READ ALOUD WHEN ASKED) ═══`,
+              `Card Number: ${cardNumber}`,
+              `Expiration: ${expiry}`,
+              `CVV/Security Code: ${cvv}`,
+              `Cardholder Name: ${card.cardholder_name}`,
+              card.billing_address ? `Billing Address: ${card.billing_address}` : null,
+              card.billing_city ? `Billing City: ${card.billing_city}` : null,
+              card.billing_state ? `Billing State: ${card.billing_state}` : null,
+              card.billing_zip ? `Billing Zip: ${card.billing_zip}` : null,
+              card.billing_country ? `Billing Country: ${card.billing_country}` : null,
+              `═══ END PAYMENT DETAILS ═══`,
+            ].filter(Boolean).join("\n");
+
+            // Append to script field
+            funcBody.script = (funcBody.script || "") + billingBlock;
+            console.log(`[make_phone_call] Injected card ending ${cardNumber.slice(-4)} for ${card.cardholder_name}`);
+          } else {
+            console.log("[make_phone_call] No payment cards found for user");
+          }
+
+          // Also fetch user profile for personal details
+          const { data: profiles } = await supabase
+            .from("profiles")
+            .select("first_name, last_name, email, phone")
+            .eq("user_id", _currentUserId)
+            .limit(1);
+
+          if (profiles && profiles.length > 0) {
+            const p = profiles[0];
+            const profileBlock = [
+              `\n\n═══ CALLER PERSONAL DETAILS ═══`,
+              p.first_name || p.last_name ? `Full Name: ${[p.first_name, p.last_name].filter(Boolean).join(" ")}` : null,
+              p.email ? `Email: ${p.email}` : null,
+              p.phone ? `Phone: ${p.phone}` : null,
+              `═══ END PERSONAL DETAILS ═══`,
+            ].filter(Boolean).join("\n");
+            funcBody.script = (funcBody.script || "") + profileBlock;
+          }
+        }
+      } catch (cardErr) {
+        console.error("[make_phone_call] Card injection error (non-fatal):", cardErr);
+      }
+
       try {
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
