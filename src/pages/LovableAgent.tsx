@@ -334,6 +334,7 @@ export default function LovableAgent() {
     setIsLoading(true);
     setPhase("thinking");
     setCurrentPlans([]);
+    setCurrentCallState(null);
 
     let assistantSoFar = "";
 
@@ -444,12 +445,12 @@ export default function LovableAgent() {
         upsertAssistant("I processed your request. Let me know what you'd like to do next.");
       }
 
-      // Attach execution plans to the final message
+      // Attach execution plans and call state to the final message
       setMessages(prev => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
           return prev.map((m, i) => i === prev.length - 1
-            ? { ...m, executionPlan: currentPlans.length ? [...currentPlans] : undefined, isGenerating: false }
+            ? { ...m, executionPlan: currentPlans.length ? [...currentPlans] : undefined, callState: currentCallState || undefined, isGenerating: false }
             : m
           );
         }
@@ -463,7 +464,7 @@ export default function LovableAgent() {
       setIsLoading(false);
       setPhase("idle");
     }
-  }, [input, isLoading, session, messages, currentPlans, phase]);
+  }, [input, isLoading, session, messages, currentPlans, currentCallState, phase]);
 
   const handleAgentEvent = useCallback((eventType: string, data: any) => {
     switch (eventType) {
@@ -512,6 +513,46 @@ export default function LovableAgent() {
         break;
 
       case "tools_complete":
+        setPhase("generating");
+        break;
+
+      case "call_started":
+        setPhase("on_call");
+        setCurrentCallState({
+          taskId: data.taskId,
+          status: "ringing",
+          turnCount: 0,
+          transcript: [],
+          lastAnalysis: null,
+          lastDirective: null,
+          agentName: "Maya",
+          errorMessage: null,
+          recordingUrl: null,
+        });
+        break;
+
+      case "call_update":
+        setCurrentCallState(prev => prev ? {
+          ...prev,
+          status: data.status === "completed" || data.status === "failed" ? data.status : "running",
+          turnCount: data.turnCount || prev.turnCount,
+          transcript: data.transcript || prev.transcript,
+          lastAnalysis: data.lastAnalysis || prev.lastAnalysis,
+          lastDirective: data.lastDirective || prev.lastDirective,
+          agentName: data.agentName || prev.agentName,
+        } : prev);
+        break;
+
+      case "call_ended":
+        setCurrentCallState(prev => prev ? {
+          ...prev,
+          status: data.status as "completed" | "failed",
+          turnCount: data.turnCount || prev.turnCount,
+          transcript: data.transcript || prev.transcript,
+          lastAnalysis: data.lastAnalysis || prev.lastAnalysis,
+          errorMessage: data.errorMessage || null,
+          recordingUrl: data.recordingUrl || null,
+        } : prev);
         setPhase("generating");
         break;
 
