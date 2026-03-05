@@ -176,7 +176,11 @@ async function runDirector(
     ? `\n\n⚡ LIVE OPERATOR INJECTIONS (HIGHEST PRIORITY):\n${operatorInjections.map((inj, i) => `${i+1}. ${inj}`).join("\n")}`
     : "";
 
-  const prompt = `CALL OBJECTIVE: ${objective}
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Chicago' });
+
+  const prompt = `TODAY'S DATE: ${dateStr}
+CALL OBJECTIVE: ${objective}
 CONSTRAINTS: ${constraints}
 TURN COUNT: ${turnCount}
 
