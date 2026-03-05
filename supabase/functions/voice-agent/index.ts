@@ -401,15 +401,14 @@ serve(async (req) => {
       const taskId = task?.id || "unknown";
       const gatherUrl = `${SUPABASE_URL}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
 
-      // Generate initial greeting using the full multi-agent pipeline
-      const analystReport = { tone: "neutral", intent: "call_start", engagement: "unknown", cooperation: "unknown", emotional_state: "unknown", risks: [], opportunities: ["rapport_building", "first_impression"], key_info_extracted: "", recommended_approach: "warm, professional greeting" };
+      // Generate initial greeting — KEEP IT SHORT AND RELAXED
+      // Don't dump all info at once. Just introduce and ask if it's a good time.
+      const analystReport = { tone: "neutral", intent: "call_start", engagement: "unknown", cooperation: "unknown", emotional_state: "unknown", risks: [], opportunities: ["rapport_building", "first_impression"], key_info_extracted: "", recommended_approach: "warm, brief greeting only" };
       
-      const directorResult = await runDirector(
-        objective, callConfig.constraints, analystReport, [], [], 0
-      );
+      const greetingInstruction = `Say a SHORT, relaxed greeting. ONLY introduce yourself by first name and company. Then ask if it's a good time. That's it. DO NOT state the purpose of the call yet. DO NOT mention the objective. Just: "Hi, this is [name] with [company]. Hope I'm not catching you at a bad time?" Keep it to ONE sentence plus the question. Be warm and casual.`;
       
       const { speech: greeting } = await runCaller(
-        callConfig, directorResult.instruction, directorResult.tone, []
+        callConfig, greetingInstruction, "warm, casual, unhurried", []
       );
 
       // Build TwiML
