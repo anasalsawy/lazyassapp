@@ -171,7 +171,7 @@ async function runDirector(
   transcript: Array<{ role: string; content: string }>,
   operatorInjections: string[],
   turnCount: number
-): Promise<{ instruction: string; tone: string; priority: string; shouldEnd: boolean }> {
+): Promise<{ instruction: string; tone: string; priority: string; shouldEnd: boolean; dtmf: string }> {
   const injectionText = operatorInjections.length > 0 
     ? `\n\n⚡ LIVE OPERATOR INJECTIONS (HIGHEST PRIORITY):\n${operatorInjections.map((inj, i) => `${i+1}. ${inj}`).join("\n")}`
     : "";
@@ -194,18 +194,23 @@ What should the Caller Agent do next?`;
     
     const instructionMatch = result.match(/INSTRUCTION:\s*(.+?)(?=\nTONE:|$)/s);
     const toneMatch = result.match(/TONE:\s*(.+?)(?=\nPRIORITY:|$)/s);
-    const priorityMatch = result.match(/PRIORITY:\s*(.+?)(?=\nEND_CALL:|$)/s);
+    const priorityMatch = result.match(/PRIORITY:\s*(.+?)(?=\nDTMF:|$)/s);
+    const dtmfMatch = result.match(/DTMF:\s*(\S+)/i);
     const endMatch = result.match(/END_CALL:\s*(true|false)/i);
+    
+    const dtmfRaw = dtmfMatch?.[1]?.trim() || "none";
+    const dtmf = /^[0-9*#]$/.test(dtmfRaw) ? dtmfRaw : "none";
     
     return {
       instruction: instructionMatch?.[1]?.trim() || result,
       tone: toneMatch?.[1]?.trim() || "professional and warm",
       priority: priorityMatch?.[1]?.trim() || "continue conversation",
+      dtmf,
       shouldEnd: endMatch?.[1]?.toLowerCase() === "true" || turnCount >= 25,
     };
   } catch (e) {
     console.error("[director] Error:", e);
-    return { instruction: "Continue the conversation naturally", tone: "professional", priority: "maintain rapport", shouldEnd: false };
+    return { instruction: "Continue the conversation naturally", tone: "professional", priority: "maintain rapport", dtmf: "none", shouldEnd: false };
   }
 }
 
@@ -262,14 +267,38 @@ function escapeXml(str: string): string {
 function buildGatherTwiml(speech: string, webhookUrl: string, voice = "Polly.Matthew-Neural"): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Say voice="${voice}">${escapeXml(speech)}</Say>
   </Gather>
   <Say voice="${voice}">I didn't catch that. Are you still there?</Say>
-  <Gather input="speech" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Say voice="${voice}">Hello?</Say>
   </Gather>
   <Say voice="${voice}">It seems like the connection dropped. Have a great day!</Say>
+</Response>`;
+}
+
+// Build TwiML that sends a DTMF tone (presses a button on an IVR)
+function buildDtmfTwiml(digit: string, webhookUrl: string, speechAfter?: string, voice = "Polly.Matthew-Neural"): string {
+  const sayAfter = speechAfter ? `\n  <Say voice="${voice}">${escapeXml(speechAfter)}</Say>` : "";
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Play digits="${escapeXml(digit)}"/>
+  <Pause length="2"/>${sayAfter}
+  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+    <Say voice="${voice}">.</Say>
+  </Gather>
+</Response>`;
+}
+
+// Build TwiML for waiting silently (hold/transfer)
+function buildWaitTwiml(webhookUrl: string, voice = "Polly.Matthew-Neural"): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="5"/>
+  <Gather input="speech dtmf" speechTimeout="auto" speechModel="experimental_conversations" enhanced="true" action="${escapeXml(webhookUrl)}" method="POST">
+    <Say voice="${voice}">.</Say>
+  </Gather>
 </Response>`;
 }
 
