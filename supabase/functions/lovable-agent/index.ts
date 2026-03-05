@@ -316,6 +316,12 @@ Report progress between each stage.
 **Phone format**: E.164 (e.g., +15551234567). International requires Twilio Geo-Permissions.
 **After call starts**: The inline call monitor automatically streams the live transcript, analyst reports, and director strategies right here in the chat. Do NOT tell users to visit /call-center or any other page — everything is visible inline.
 Do NOT use invoke_edge_function for phone calls — use the \`make_phone_call\` tool directly.
+**FOLLOW-UP CALLS**: When the user says "call back", "call them again", "follow up", or references a previous call:
+  1. Query \`agent_tasks\` table: \`SELECT result FROM agent_tasks WHERE user_id = '<user_id>' AND task_type = 'voice_call_multi_agent' ORDER BY created_at DESC LIMIT 1\`
+  2. Extract the \`conversationHistory\` array from \`result\` JSON — this is the full transcript of the previous call
+  3. Include a summary of the previous conversation in the new call's \`script\` field, e.g.: "This is a follow-up call. In our previous conversation, we discussed: [key points from transcript]. Now we need to: [new objective]."
+  4. Also carry over the same \`phone_number\` from the previous call's \`payload\` if the user doesn't specify a new one
+  5. This ensures Maya has full context and can reference prior discussions naturally
 **BILLING/BOOKING**: When the user asks to book, reserve, or purchase something via phone call, you MUST:
   1. Query the \`payment_cards\` table for the user's card details (card_number_enc, expiry_enc, cvv_enc, cardholder_name, billing address fields)
   2. Query the \`profiles\` table for the user's personal details (name, phone, email)
