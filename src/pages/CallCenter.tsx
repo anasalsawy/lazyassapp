@@ -49,12 +49,21 @@ export default function CallCenter() {
   const [constraints, setConstraints] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Auto-retry state
+  const [autoRetryEnabled, setAutoRetryEnabled] = useState(false);
+  const [retryStores, setRetryStores] = useState<Array<{ name: string; phone: string }>>([]);
+  const [newRetryName, setNewRetryName] = useState("");
+  const [newRetryPhone, setNewRetryPhone] = useState("");
+
   // Active call state
   const [activeCall, setActiveCall] = useState<CallState | null>(null);
   const [injection, setInjection] = useState("");
   const [isInitiating, setIsInitiating] = useState(false);
   const [isInjecting, setIsInjecting] = useState(false);
   const [recentCalls, setRecentCalls] = useState<RecentCall[]>([]);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [retryQueue, setRetryQueue] = useState<Array<{ name: string; phone: string }>>([]);
+  const retryQueueRef = useRef<Array<{ name: string; phone: string }>>([]);
 
   // Polling
   const pollRef = useRef<number | null>(null);
