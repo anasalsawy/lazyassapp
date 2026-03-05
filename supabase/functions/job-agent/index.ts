@@ -6,48 +6,39 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Browser Use Cloud v2 API base URL (used for profile/login management only)
-const BROWSER_USE_BASE_URL = "https://api.browser-use.com";
-
-// Lever job research is handled by the lever-job-research edge function
-// Unified profile naming - shared between job-agent and auto-shop
-// This ensures authentication cookies (Gmail, etc.) are shared across features
-const getProfileName = (userId: string) => `user-${userId.substring(0, 8)}`;
-
-// Browser Use API v2 status values (per official API spec)
-// Task status: started, paused, finished, stopped
-// Session status: active, stopped
+// Steel.dev API configuration
+const STEEL_API_BASE = "https://api.steel.dev/v1";
 
 /**
- * Helper to call Browser Use Cloud v2 API
- * Uses X-Browser-Use-API-Key header for authentication
+ * Helper to call Steel.dev API
  */
-async function browserUseApi(
+async function steelApi(
   apiKey: string,
   path: string,
   init: RequestInit = {}
 ): Promise<Response> {
-  const url = `${BROWSER_USE_BASE_URL}${path}`;
-  const headers = {
-    "X-Browser-Use-API-Key": apiKey,
+  const url = `${STEEL_API_BASE}${path}`;
+  const headers: Record<string, string> = {
+    "steel-api-key": apiKey,
     "Content-Type": "application/json",
-    ...init.headers,
+    ...(init.headers as Record<string, string> || {}),
   };
   
-  console.log(`[BrowserUse] ${init.method || "GET"} ${path}`);
+  console.log(`[Steel] ${init.method || "GET"} ${path}`);
   
   return fetch(url, { ...init, headers });
 }
 
 /**
- * JOB AGENT - Simplified job automation using Browser Use persistent profiles
+ * JOB AGENT - Job automation using Steel.dev browser sessions
  * 
  * Actions:
- * - create_profile: Creates a Browser Use profile for the user
- * - start_login: Opens live browser for user to log into accounts
+ * - create_profile: Creates a browser profile record for the user
+ * - start_login: Opens live Steel browser for user to log into accounts
  * - confirm_login: Mark site as logged in
- * - run_agent: Background task to scrape jobs, apply, monitor emails
+ * - run_agent: Background task to scrape jobs and apply
  * - get_status: Check agent status and profile health
+ * - cleanup_sessions: Close active Steel sessions
  */
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -56,11 +47,11 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+  const STEEL_API_KEY = Deno.env.get("STEEL_API_KEY");
 
-  if (!BROWSER_USE_API_KEY) {
+  if (!STEEL_API_KEY) {
     return new Response(
-      JSON.stringify({ error: "BROWSER_USE_API_KEY not configured" }),
+      JSON.stringify({ error: "STEEL_API_KEY not configured" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
@@ -95,9 +86,8 @@ serve(async (req) => {
       // CREATE PROFILE - One-time setup
       // ============================================
       case "create_profile": {
-        await log("Creating Browser Use profile...");
+        await log("Creating browser profile...");
 
-        // Check if user already has a profile
         const { data: existingProfile } = await supabase
           .from("browser_profiles")
           .select("*")
@@ -115,24 +105,9 @@ serve(async (req) => {
           );
         }
 
-        // Create profile in Browser Use Cloud v2 API
-        const profileResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/profiles", {
-          method: "POST",
-          body: JSON.stringify({
-            name: getProfileName(user.id),
-          }),
-        });
+        // Create a profile record (Steel doesn't need a separate profile API call)
+        const profileId = `steel-${user.id.substring(0, 8)}-${Date.now()}`;
 
-        if (!profileResponse.ok) {
-          const error = await profileResponse.text();
-          console.error("Profile creation failed:", profileResponse.status, error);
-          throw new Error(`Failed to create profile (${profileResponse.status}): ${error}`);
-        }
-
-        const profileData = await profileResponse.json();
-        const profileId = profileData.id;
-
-        // Store profile reference
         await supabase.from("browser_profiles").upsert({
           user_id: user.id,
           browser_use_profile_id: profileId,
@@ -152,7 +127,7 @@ serve(async (req) => {
       // START LOGIN SESSION - User logs in to accounts
       // ============================================
       case "start_login": {
-        const { site } = body; // 'gmail', 'linkedin', 'indeed', etc.
+        const { site } = body;
         
         await log("Starting login session...", { site });
 
@@ -163,32 +138,19 @@ serve(async (req) => {
           .eq("user_id", user.id)
           .single();
 
-        // Auto-create profile if it doesn't exist
         if (!browserProfile?.browser_use_profile_id) {
           await log("No profile found, creating one...");
           
-          const profileResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/profiles", {
-            method: "POST",
-            body: JSON.stringify({
-              name: getProfileName(user.id),
-            }),
-          });
-
-          if (!profileResponse.ok) {
-            const error = await profileResponse.text();
-            throw new Error(`Failed to create profile: ${error}`);
-          }
-
-          const profileData = await profileResponse.json();
+          const profileId = `steel-${user.id.substring(0, 8)}-${Date.now()}`;
           
           await supabase.from("browser_profiles").upsert({
             user_id: user.id,
-            browser_use_profile_id: profileData.id,
+            browser_use_profile_id: profileId,
             status: "pending_login",
             sites_logged_in: [],
           });
 
-          browserProfile = { browser_use_profile_id: profileData.id };
+          browserProfile = { browser_use_profile_id: profileId };
         }
 
         const siteUrls: Record<string, string> = {
@@ -200,34 +162,30 @@ serve(async (req) => {
 
         const startUrl = siteUrls[site] || `https://${site}.com`;
 
-        // Create a session with the profile for persistent login state
-        // Using keepAlive=true so the session stays open for manual login
-        console.log("Creating Browser Use session with profile:", browserProfile.browser_use_profile_id);
+        // Create a Steel session for manual login
+        console.log("Creating Steel session for login:", startUrl);
         
-        const sessionResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions", {
+        const sessionResponse = await steelApi(STEEL_API_KEY, "/sessions", {
           method: "POST",
           body: JSON.stringify({
-            profileId: browserProfile.browser_use_profile_id,
-            startUrl: startUrl,
-            keepAlive: true,
-            browserScreenWidth: 1280,
-            browserScreenHeight: 800,
+            useProxy: true,
+            solveCaptcha: true,
           }),
         });
 
-        console.log("Session response status:", sessionResponse.status);
+        console.log("Steel session response status:", sessionResponse.status);
 
         if (!sessionResponse.ok) {
           const error = await sessionResponse.text();
-          console.error("Session creation failed:", error);
+          console.error("Steel session creation failed:", error);
           throw new Error(`Failed to create session (${sessionResponse.status}): ${error}`);
         }
 
         const sessionData = await sessionResponse.json();
-        console.log("Session created:", JSON.stringify(sessionData));
+        console.log("Steel session created:", JSON.stringify(sessionData));
         
         const sessionId = sessionData.id;
-        const liveViewUrl = sessionData.liveUrl;
+        const liveViewUrl = sessionData.debugUrl;
 
         // Store pending login
         await supabase.from("browser_profiles").update({
@@ -264,17 +222,15 @@ serve(async (req) => {
 
         if (!profile) throw new Error("No profile found");
 
-        // Stop the session to save the profile state
-        // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
+        // Release the Steel session
         if (profile.pending_session_id) {
           try {
-            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${profile.pending_session_id}`, {
-              method: "PATCH",
-              body: JSON.stringify({ action: "stop" }),
+            await steelApi(STEEL_API_KEY, `/sessions/${profile.pending_session_id}`, {
+              method: "DELETE",
             });
-            await log("Session stopped, profile state saved", { sessionId: profile.pending_session_id });
+            await log("Steel session released", { sessionId: profile.pending_session_id });
           } catch (e) {
-            console.error("Failed to stop session:", e);
+            console.error("Failed to release Steel session:", e);
           }
         }
 
@@ -301,9 +257,8 @@ serve(async (req) => {
       // RUN AGENT - Background job scraping & applying
       // ============================================
       case "run_agent": {
-        await log("🚀 Starting job agent pipeline: Lever Research → Skyvern Apply");
+        await log("🚀 Starting job agent pipeline: Lever Research → Steel Apply");
 
-        // Get user's primary resume
         const { data: resume } = await supabase
           .from("resumes")
           .select("*")
@@ -315,7 +270,6 @@ serve(async (req) => {
           throw new Error("No primary resume found. Please upload and optimize your resume first.");
         }
 
-        // Create an agent run record immediately so the frontend can poll it
         const { data: agentRun } = await supabase
           .from("agent_runs")
           .insert({
@@ -330,7 +284,6 @@ serve(async (req) => {
         const runId = agentRun?.id;
         await log("Delegating to lever-job-research pipeline (background)", { resumeId: resume.id, runId });
 
-        // Run lever-job-research in the background so we don't timeout
         const backgroundWork = async () => {
           try {
             const leverResponse = await fetch(
@@ -357,7 +310,7 @@ serve(async (req) => {
               summary_json: {
                 jobsFound: stats.found || 0,
                 jobsQualified: stats.qualified || 0,
-                submittedToSkyvern: stats.submittedToSkyvern || 0,
+                submittedToSteel: stats.submittedToSteel || 0,
               },
             }).eq("id", runId);
 
@@ -372,11 +325,9 @@ serve(async (req) => {
           }
         };
 
-        // Fire-and-forget: return immediately, process in background
         if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
           (EdgeRuntime as any).waitUntil(backgroundWork());
         } else {
-          // Fallback: still run but won't await
           backgroundWork().catch(console.error);
         }
 
@@ -392,7 +343,7 @@ serve(async (req) => {
       }
 
       // ============================================
-      // GET STATUS - Check profile and recent runs
+      // GET STATUS
       // ============================================
       case "get_status": {
         const { data: profile } = await supabase
@@ -441,42 +392,29 @@ serve(async (req) => {
       }
 
       // ============================================
-      // CLEANUP SESSIONS - Close active sessions to free up quota
+      // CLEANUP SESSIONS - Close active Steel sessions
       // ============================================
       case "cleanup_sessions": {
-        await log("Cleaning up active Browser Use sessions...");
+        await log("Cleaning up active Steel sessions...");
 
-        // List all active sessions - Browser Use v2 API uses filterBy=active
-        const listResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions?filterBy=active", {
-          method: "GET",
-        });
-
-        if (!listResponse.ok) {
-          const error = await listResponse.text();
-          throw new Error(`Failed to list sessions: ${error}`);
-        }
-
-        const sessionsData = await listResponse.json();
-        console.log("Sessions response:", JSON.stringify(sessionsData));
-        
-        // Response format per v2 API: { items: [...], totalItems, pageNumber, pageSize }
-        const sessionsList = sessionsData.items || [];
-        
-        // Sessions returned by filterBy=active are already active
-        const activeSessions = sessionsList;
+        // Release the pending session if any
+        const { data: profile } = await supabase
+          .from("browser_profiles")
+          .select("pending_session_id")
+          .eq("user_id", user.id)
+          .single();
 
         let closedCount = 0;
-        for (const session of activeSessions) {
+
+        if (profile?.pending_session_id) {
           try {
-            // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
-            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${session.id}`, {
-              method: "PATCH",
-              body: JSON.stringify({ action: "stop" }),
+            await steelApi(STEEL_API_KEY, `/sessions/${profile.pending_session_id}`, {
+              method: "DELETE",
             });
             closedCount++;
-            console.log(`Closed session: ${session.id}`);
+            console.log(`Released Steel session: ${profile.pending_session_id}`);
           } catch (e) {
-            console.error(`Failed to close session ${session.id}:`, e);
+            console.error("Failed to release Steel session:", e);
           }
         }
 
@@ -486,7 +424,7 @@ serve(async (req) => {
           pending_task_id: null,
         }).eq("user_id", user.id);
 
-        await log("Sessions cleaned up", { closedCount, totalActive: activeSessions.length });
+        await log("Sessions cleaned up", { closedCount });
 
         return new Response(
           JSON.stringify({
