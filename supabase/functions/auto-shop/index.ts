@@ -55,21 +55,21 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled;
 }
 
-// Skyvern API configuration
-const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
+// Browser Use API configuration
+const BU_API_BASE = "https://api.browser-use.com/api/v2";
 
-async function skyvernApi(
+async function browserUseApi(
   apiKey: string,
   path: string,
   init: RequestInit = {}
 ): Promise<Response> {
-  const url = `${SKYVERN_API_BASE}${path}`;
+  const url = `${BU_API_BASE}${path}`;
   const headers: Record<string, string> = {
-    "x-api-key": apiKey,
+    "X-Browser-Use-API-Key": apiKey,
     "Content-Type": "application/json",
     ...(init.headers as Record<string, string> || {}),
   };
-  console.log(`[Skyvern] ${init.method || "GET"} ${path}`);
+  console.log(`[BrowserUse] ${init.method || "GET"} ${path}`);
   return fetch(url, { ...init, headers });
 }
 
@@ -79,13 +79,13 @@ serve(async (req) => {
   }
 
   try {
-    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
+    const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    if (!SKYVERN_API_KEY) {
-      throw new Error("SKYVERN_API_KEY is not configured");
+    if (!BU_API_KEY) {
+      throw new Error("BROWSER_USE_API_KEY is not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -112,33 +112,33 @@ serve(async (req) => {
         return await handleCreateProfile(supabase, user.id);
       }
       case "start_login": {
-         await cleanupStaleSessions(supabase, user.id, SKYVERN_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", SKYVERN_API_KEY);
+         await cleanupStaleSessions(supabase, user.id, BU_API_KEY);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
       }
       case "confirm_login": {
-        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail", SKYVERN_API_KEY);
+        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
       }
       case "cancel_login": {
-        return await handleCancelLogin(supabase, user.id, SKYVERN_API_KEY);
+        return await handleCancelLogin(supabase, user.id, BU_API_KEY);
       }
       case "restart_session": {
-        await cleanupStaleSessions(supabase, user.id, SKYVERN_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", SKYVERN_API_KEY);
+        await cleanupStaleSessions(supabase, user.id, BU_API_KEY);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
       }
       case "cleanup_sessions": {
-        return await handleCleanupSessions(supabase, user.id, SKYVERN_API_KEY);
+        return await handleCleanupSessions(supabase, user.id, BU_API_KEY);
       }
       case "start_order": {
-        return await handleStartOrder(supabase, user, payload, SKYVERN_API_KEY, LOVABLE_API_KEY || "", supabaseUrl);
+        return await handleStartOrder(supabase, user, payload, BU_API_KEY, LOVABLE_API_KEY || "", supabaseUrl);
       }
       case "check_order_status": {
         return await handleCheckOrderStatus(supabase, user.id, payload.orderId!);
       }
       case "sync_all_orders": {
-        return await handleSyncAllOrders(supabase, user, SKYVERN_API_KEY, supabaseUrl, LOVABLE_API_KEY || "");
+        return await handleSyncAllOrders(supabase, user, BU_API_KEY, supabaseUrl, LOVABLE_API_KEY || "");
       }
       case "sync_order_emails": {
-        return await handleSyncOrderEmails(supabase, user.id, SKYVERN_API_KEY, LOVABLE_API_KEY || "");
+        return await handleSyncOrderEmails(supabase, user.id, BU_API_KEY, LOVABLE_API_KEY || "");
       }
       case "set_proxy": {
         return await handleSetProxy(supabase, user.id, payload);
@@ -210,7 +210,7 @@ async function handleCreateProfile(supabase: any, userId: string) {
     );
   }
 
-  const profileId = `skyvern-shop-${userId.substring(0, 8)}-${Date.now()}`;
+  const profileId = `bu-shop-${userId.substring(0, 8)}-${Date.now()}`;
 
   await supabase.from("browser_profiles").upsert({
     user_id: userId,
@@ -232,12 +232,12 @@ async function handleStartLogin(
   supabase: any,
   userId: string,
   site: string,
-  skyvernApiKey: string
+  buApiKey: string
 ) {
   let { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
 
   if (!profile?.browser_use_profile_id) {
-    const profileId = `skyvern-shop-${userId.substring(0, 8)}-${Date.now()}`;
+    const profileId = `bu-shop-${userId.substring(0, 8)}-${Date.now()}`;
     await supabase.from("browser_profiles").upsert({ user_id: userId, browser_use_profile_id: profileId, status: "ready", shop_sites_logged_in: [] }, { onConflict: "user_id" });
     const { data: newProfile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
     profile = newProfile;
@@ -246,21 +246,58 @@ async function handleStartLogin(
   const siteUrls: Record<string, string> = { gmail: "https://mail.google.com", amazon: "https://www.amazon.com/ap/signin", ebay: "https://signin.ebay.com", walmart: "https://www.walmart.com/account/login" };
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
 
-  console.log(`[AutoShop] Creating Skyvern task for login: ${loginUrl}`);
-  const taskRes = await skyvernApi(skyvernApiKey, "/run/tasks", {
+  console.log(`[AutoShop] Creating Browser Use task for login: ${loginUrl}`);
+
+  // Create session with profile
+  let sessionId: string | undefined;
+  if (profile?.browser_use_profile_id) {
+    try {
+      const sessionRes = await fetch(`${BU_API_BASE}/sessions`, {
+        method: "POST",
+        headers: { "X-Browser-Use-API-Key": buApiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId: profile.browser_use_profile_id }),
+      });
+      if (sessionRes.ok) {
+        const session = await sessionRes.json();
+        sessionId = session.id;
+      }
+    } catch (_) {}
+  }
+
+  const taskBody: any = {
+    task: `Navigate to ${loginUrl} and display the login page.`,
+    startUrl: loginUrl,
+    maxSteps: 30,
+  };
+  if (sessionId) taskBody.sessionId = sessionId;
+
+  const taskRes = await browserUseApi(buApiKey, "/tasks", {
     method: "POST",
-    body: JSON.stringify({ prompt: `Navigate to ${loginUrl} and display the login page.`, url: loginUrl, engine: "skyvern-2.0" }),
+    body: JSON.stringify(taskBody),
   });
 
   if (!taskRes.ok) {
     const err = await taskRes.text();
-    console.error(`[AutoShop] Skyvern task creation failed: ${err}`);
+    console.error(`[AutoShop] Browser Use task creation failed: ${err}`);
     throw new Error(`Failed to create task: ${err}`);
   }
 
   const taskData = await taskRes.json();
-  const runId = taskData.run_id;
-  const liveViewUrl = taskData.app_url || null;
+  const runId = taskData.id;
+
+  // Get live URL
+  let liveViewUrl = null;
+  if (taskData.sessionId) {
+    try {
+      const sessRes = await fetch(`${BU_API_BASE}/sessions/${taskData.sessionId}`, {
+        headers: { "X-Browser-Use-API-Key": buApiKey },
+      });
+      if (sessRes.ok) {
+        const sessData = await sessRes.json();
+        liveViewUrl = sessData.liveUrl || null;
+      }
+    } catch (_) {}
+  }
 
   await supabase.from("browser_profiles").update({ shop_pending_login_site: site, shop_pending_task_id: null, shop_pending_session_id: runId }).eq("user_id", userId);
 
@@ -268,7 +305,7 @@ async function handleStartLogin(
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleConfirmLogin(supabase: any, userId: string, site: string, _skyvernApiKey: string) {
+async function handleConfirmLogin(supabase: any, userId: string, site: string, _buApiKey: string) {
   const { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
   if (!profile) throw new Error("Profile not found");
 
@@ -283,20 +320,20 @@ async function handleConfirmLogin(supabase: any, userId: string, site: string, _
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCancelLogin(supabase: any, userId: string, _skyvernApiKey: string) {
+async function handleCancelLogin(supabase: any, userId: string, _buApiKey: string) {
   await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
   return new Response(JSON.stringify({ success: true, message: "Login session cancelled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
-async function cleanupStaleSessions(supabase: any, userId: string, _skyvernApiKey: string): Promise<{ sessionsKilled: number }> {
+async function cleanupStaleSessions(supabase: any, userId: string, _buApiKey: string): Promise<{ sessionsKilled: number }> {
   await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
   return { sessionsKilled: 0 };
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCleanupSessions(supabase: any, userId: string, skyvernApiKey: string) {
-  const result = await cleanupStaleSessions(supabase, userId, skyvernApiKey);
+async function handleCleanupSessions(supabase: any, userId: string, buApiKey: string) {
+  const result = await cleanupStaleSessions(supabase, userId, buApiKey);
   return new Response(JSON.stringify({ success: true, message: "Sessions cleaned up", ...result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
