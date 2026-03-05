@@ -871,6 +871,11 @@ export default function LovableAgent() {
                         <CallMonitorPanel callState={msg.callState} isLive={false} />
                       ) : null}
 
+                      {/* Secret input panel */}
+                      {msg.role === "assistant" && msg.secretRequest ? (
+                        <SecretInputPanel secretRequest={msg.secretRequest} onSubmit={submitSecret} />
+                      ) : null}
+
                       <div
                         className={`rounded-2xl px-4 py-3 ${
                           msg.role === "user"
