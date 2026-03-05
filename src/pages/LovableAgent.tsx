@@ -682,6 +682,24 @@ export default function LovableAgent() {
         if (data.status === "generating") setPhase("generating");
         break;
 
+      case "secret_request":
+        // Add a message with a secret input panel
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "",
+            secretRequest: {
+              secret_name: data.secret_name,
+              display_label: data.display_label,
+              description: data.description || "",
+              placeholder: data.placeholder || "",
+              status: "pending",
+            },
+          },
+        ]);
+        break;
+
       case "error":
         console.error("[agent event] Error:", data.message);
         break;
