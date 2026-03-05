@@ -418,6 +418,53 @@ const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "make_phone_call",
+      description: `Initiate a REAL AI-powered phone call using the multi-agent voice system. This places an actual outbound call via Twilio where an AI agent (Maya) conducts a live, multi-turn conversation.
+
+ARCHITECTURE: Three AI agents collaborate on every call turn:
+1. ANALYST AGENT — Evaluates the other party's tone, intent, emotional state, and detects automated systems (IVR/voicemail)
+2. DIRECTOR AGENT — Sets conversational strategy based on the analyst's report, the call objective, and any live operator injections
+3. CALLER AGENT (Maya) — Generates natural speech following the director's instructions. Uses short sentences (5-14 words), contractions, and light fillers for human-like delivery.
+
+CAPABILITIES:
+- Real multi-turn phone conversations with humans
+- Automatic IVR/phone tree navigation (detects menus, presses DTMF buttons)
+- Voicemail detection and handling
+- Hold/transfer detection (waits silently)
+- Barge-in support (yields when interrupted)
+- Live transcript stored in agent_tasks table
+- Call recording via Twilio
+- Neural voice synthesis (Polly.Matthew-Neural default)
+
+PHONE NUMBER FORMAT: Must be E.164 format (e.g., +15551234567 for US numbers — exactly +1 followed by 10 digits). International numbers require Twilio Geo-Permissions to be enabled.
+
+AFTER INITIATING: The call runs autonomously. You'll get back a callSid and taskId. Use query_database on agent_tasks (filter by the taskId) to check the live transcript, analyst reports, and director decisions. The call ends when the Director determines the objective is complete or the other party hangs up — there is NO time limit.
+
+The user can also monitor calls in real-time at /call-center, where they can inject mid-call instructions to the Director Agent.`,
+      parameters: {
+        type: "object",
+        properties: {
+          phone_number: { type: "string", description: "Target phone number in E.164 format, e.g. '+15551234567'" },
+          objective: { type: "string", description: "What the call should accomplish — be specific and detailed" },
+          company_name: { type: "string", description: "Company or organization the agent represents" },
+          agent_name: { type: "string", description: "Name the AI agent uses on the call (default: Maya)" },
+          agent_role: { type: "string", description: "Role/title the agent introduces themselves as (default: AI Assistant)" },
+          tone: { type: "string", description: "Conversation tone: professional, friendly, authoritative, casual, warm (default: professional)" },
+          voice: { type: "string", description: "Voice style: friendly (Matthew), warm/female (Joanna), british (Amy), authoritative (Stephen). Default: friendly" },
+          script: { type: "string", description: "Detailed talking points, key questions to ask, information to gather, and strategy notes" },
+          success_criteria: { type: "string", description: "How to determine if the call objective was achieved" },
+          constraints: { type: "string", description: "Hard rules — things the agent must NOT do or say" },
+          disclosure_policy: { type: "string", description: "AI disclosure policy: 'disclose_if_asked' (default), 'always_disclose', or 'never_disclose'" },
+          call_type: { type: "string", description: "Type of call: outbound (default), follow_up, cold_call, appointment, inquiry" },
+          allowed_actions: { type: "string", description: "What the agent is permitted to do: converse, negotiate, gather info, confirm details, schedule, etc." },
+        },
+        required: ["phone_number", "objective"],
+      },
+    },
+  },
 
   // ========== ALL 16 TOOLS FROM AgentTools-2.json (verbatim) ==========
   {
