@@ -558,11 +558,16 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **browser_view** — checks if Browser Use automation is available and ready.
 - **browser_restart** — navigates to a URL using Firecrawl.
 
-### Autonomous Browser Automation (works via Browser Use API)
-- **browser_task** — YOUR MOST POWERFUL TOOL. Creates a Browser Use task that runs a real remote browser autonomously AND scrapes the page content via Firecrawl. It returns REAL page content (pageContent field) that you MUST use to answer the user — never say you "can't access" a site if pageContent is returned. For complex interactions (form filling, purchasing, etc.), the Browser Use task handles it autonomously in the background.
-- **CRITICAL RULE**: If browser_task returns pageContent, you MUST present that content to the user. NEVER say "unable to access" or "restrictions on plan" — you DO have access. Read the pageContent and summarize/present it.
+### Autonomous Browser Automation (Multi-Agent: Analyst→Director→Navigator via Browser Use)
+- **browser_task** — YOUR MOST POWERFUL TOOL. Triggers a state-of-the-art 3-agent browser automation pipeline:
+  - **ANALYST**: Grounded page-state critic that identifies elements, blockers, and risks with evidence-based confidence scores.
+  - **DIRECTOR**: Strategy planner with loop prevention (URL stack, visited signatures, failure budget), milestone tracking, and recovery patterns (modal cleanup, branch-and-backtrack, CAPTCHA solving).
+  - **NAVIGATOR**: Deterministic executor that performs exactly one atomic action per directive — never improvises or invents selectors.
+  The pipeline runs fully autonomously — handles CAPTCHAs, payments, logins, form fills, downloads, everything. Human intervention = failure.
+  It also scrapes page content via Firecrawl for immediate results. Returns REAL page content (pageContent field) that you MUST use to answer the user.
+- **CRITICAL RULE**: If browser_task returns pageContent, you MUST present that content to the user. NEVER say "unable to access" or "restrictions on plan" — you DO have access.
 - **INLINE BROWSER VIEW**: When browser_task returns a liveUrl, you MUST output a [BROWSER_EMBED] block so the user can see the live browser session inline. Format: [BROWSER_EMBED]{"debugUrl":"THE_LIVE_URL","sessionId":"SESSION_ID","interactive":true}[/BROWSER_EMBED]
-- When the response includes a runId, mention it so the user knows a background Browser Use task is executing.
+- When the response includes a runId, mention it so the user knows a background multi-agent task is executing.
 
 ### Granular Browser Controls (auto-routed through browser_task)
 - **browser_click, browser_input, browser_press_key, browser_select_option, browser_console_exec** — these do NOT control a browser directly. They get converted into natural language instructions and sent to browser_task. So they work, but they spin up a full browser session each time.
@@ -903,7 +908,7 @@ async function executeTool(
         return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
-        // Browser Use is the primary browser automation engine
+        // Multi-agent browser system: Analyst→Director→Navigator via Browser Use
         const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
         const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
         const taskStr = (args.task as string) || "";
@@ -931,75 +936,43 @@ async function executeTool(
           }
         }
 
-        // Step 2: Create Browser Use task for autonomous execution
-        let buResult: any = null;
-        let buError: { status?: number; message: string } | null = null;
+        // Step 2: Delegate to multi-agent browser-agent function
+        let agentResult: any = null;
+        let agentError: string | null = null;
 
         if (!BU_API_KEY) {
-          buError = { message: "BROWSER_USE_API_KEY not configured." };
+          agentError = "BROWSER_USE_API_KEY not configured.";
         } else {
           try {
-            // Get browser profile for session persistence
-            const { data: browserProfile } = await supabase.from("browser_profiles")
-              .select("browser_use_profile_id").eq("user_id", userId).single();
+            const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+            const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-            const taskBody: any = {
-              task: taskStr,
-              maxSteps: (args.max_steps as number) || 50,
-            };
-            if (startUrl) taskBody.startUrl = startUrl;
-
-            // Create session with profile if available
-            if (browserProfile?.browser_use_profile_id) {
-              try {
-                const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
-                  method: "POST",
-                  headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
-                  body: JSON.stringify({ profileId: browserProfile.browser_use_profile_id }),
-                });
-                if (sessionRes.ok) {
-                  const session = await sessionRes.json();
-                  taskBody.sessionId = session.id;
-                }
-              } catch (e) {
-                console.error("[browser_task] Session creation failed:", e);
-              }
-            }
-
-            const buRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
+            const agentRes = await fetch(`${supabaseUrl}/functions/v1/browser-agent`, {
               method: "POST",
-              headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify(taskBody),
+              headers: {
+                Authorization: `Bearer ${serviceKey}`,
+                "Content-Type": "application/json",
+                apikey: serviceKey,
+              },
+              body: JSON.stringify({
+                action: "run",
+                goal: taskStr,
+                start_url: startUrl || undefined,
+                context: { userId, source: "manus_agent" },
+              }),
             });
 
-            if (buRes.ok) {
-              const buData = await buRes.json();
-              buResult = { runId: buData.id, sessionId: buData.sessionId, status: "running" };
-              console.log(`[browser_task] Browser Use task created: ${buData.id}`);
-
-              // Get live URL
-              if (buData.sessionId) {
-                try {
-                  const sessInfoRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${buData.sessionId}`, {
-                    headers: { "X-Browser-Use-API-Key": BU_API_KEY },
-                  });
-                  if (sessInfoRes.ok) {
-                    const sessInfo = await sessInfoRes.json();
-                    buResult.liveUrl = sessInfo.liveUrl || null;
-                  }
-                } catch (_) {}
-              }
+            if (agentRes.ok) {
+              agentResult = await agentRes.json();
+              console.log(`[browser_task] Multi-agent browser task started: ${agentResult.runId}`);
             } else {
-              const errText = await buRes.text();
-              buError = {
-                status: buRes.status,
-                message: errText?.slice(0, 1200) || "Browser Use task creation failed.",
-              };
-              console.error(`[browser_task] Browser Use error (${buRes.status}): ${errText}`);
+              const errText = await agentRes.text();
+              agentError = `Browser agent failed (${agentRes.status}): ${errText.slice(0, 500)}`;
+              console.error(`[browser_task] Browser agent error: ${agentError}`);
             }
           } catch (err: any) {
-            buError = { message: err?.message || "Browser Use request failed." };
-            console.error("[browser_task] Browser Use error:", err);
+            agentError = err?.message || "Browser agent request failed.";
+            console.error("[browser_task] Browser agent error:", err);
           }
         }
 
@@ -1007,23 +980,23 @@ async function executeTool(
         await supabase.from("agent_logs").insert({
           user_id: userId,
           agent_name: "manus",
-          log_level: buResult ? "info" : "error",
+          log_level: agentResult ? "info" : "error",
           message: `Browser task: ${taskStr.substring(0, 200)}`,
           metadata: {
             task: taskStr,
             start_url: startUrl,
-            browserUseTaskId: buResult?.runId,
-            browserUseStatus: buResult?.status,
-            browserUseError: buError?.message || null,
-            browserUseStatusCode: buError?.status || null,
+            multiAgentRunId: agentResult?.runId,
+            multiAgentStatus: agentResult?.status,
+            agentError: agentError,
             hasContent: !!pageContent,
           },
         });
 
         // Build response
         const result: any = {
-          success: !!buResult,
-          provider: "browser_use",
+          success: !!agentResult,
+          provider: "multi_agent_browser",
+          architecture: "analyst_director_navigator",
           task: taskStr,
           url: scrapedUrl || startUrl,
         };
@@ -1033,20 +1006,16 @@ async function executeTool(
           result.pageContent = pageContent.substring(0, 6000);
         }
 
-        if (buResult) {
-          result.runId = buResult.runId;
-          result.taskId = buResult.runId;
-          result.sessionId = buResult.sessionId;
-          result.liveUrl = buResult.liveUrl;
-          result.taskStatus = buResult.status;
-          result.message = `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
+        if (agentResult) {
+          result.runId = agentResult.runId;
+          result.taskStatus = agentResult.status || "running";
+          result.message = `🤖 Multi-agent browser task ${agentResult.runId} is running (Analyst→Director→Navigator loop active).`;
         } else {
           result.taskStatus = "failed_to_start";
-          result.error = buError?.message || "Browser Use task failed to start.";
-          result.statusCode = buError?.status;
+          result.error = agentError || "Multi-agent browser task failed to start.";
           result.message = pageContent
-            ? "Page content was retrieved, but Browser Use task creation failed."
-            : "Browser Use task creation failed.";
+            ? "Page content was retrieved via Firecrawl, but the multi-agent browser task failed to start."
+            : "Multi-agent browser task failed to start.";
         }
 
         return JSON.stringify(result);
