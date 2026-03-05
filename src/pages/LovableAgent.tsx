@@ -706,6 +706,48 @@ export default function LovableAgent() {
     }
   }, []);
 
+  // ── Secret Submission ─────────────────────────────────────────────────────
+  const submitSecret = useCallback(async (secretName: string, secretValue: string) => {
+    if (!session?.access_token) return;
+
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/lovable-agent?action=store_secret`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ secret_name: secretName, secret_value: secretValue }),
+        }
+      );
+
+      const data = await resp.json();
+      if (data.success) {
+        // Update the message's secretRequest status to "submitted"
+        setMessages(prev =>
+          prev.map(m =>
+            m.secretRequest?.secret_name === secretName
+              ? { ...m, secretRequest: { ...m.secretRequest, status: "submitted" as const } }
+              : m
+          )
+        );
+      } else {
+        setMessages(prev =>
+          prev.map(m =>
+            m.secretRequest?.secret_name === secretName
+              ? { ...m, secretRequest: { ...m.secretRequest, status: "error" as const } }
+              : m
+          )
+        );
+      }
+    } catch (e) {
+      console.error("[submitSecret]", e);
+    }
+  }, [session]);
+
   // ── Operator Injection (mid-call instructions) ───────────────────────────
   const [isInjecting, setIsInjecting] = useState(false);
 
