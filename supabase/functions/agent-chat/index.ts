@@ -555,12 +555,13 @@ Current date: ${new Date().toISOString().split("T")[0]}
 
 ### Web Browsing (works via Firecrawl API)
 - **browser_navigate** — fetches and reads any webpage, returning its content as markdown. This is NOT a live browser — it scrapes the page content. Requires FIRECRAWL_API_KEY.
-- **browser_view** — checks if there's an active Browser Use Cloud session running and returns its status/live URL. Requires BROWSER_USE_API_KEY.
-- **browser_restart** — stops all active browser sessions and then navigates to a URL.
+- **browser_view** — checks if Skyvern browser automation is available and ready.
+- **browser_restart** — navigates to a URL using Firecrawl.
 
-### Autonomous Browser Automation (works via Steel.dev + Firecrawl)
-- **browser_task** — YOUR MOST POWERFUL TOOL. Creates a Steel browser session AND scrapes the page content via Firecrawl. It returns REAL page content (pageContent field) that you MUST use to answer the user — never say you "can't access" a site if pageContent is returned. When the response contains a _steelEmbed object with a debugUrl, include it in your reply using: [STEEL_EMBED]{"debugUrl":"...","sessionId":"...","interactive":false}[/STEEL_EMBED]. Use browser_task when the user asks to "browse", "go to", "visit", or "navigate" any website — it WILL return the page content.
+### Autonomous Browser Automation (works via Skyvern + Firecrawl)
+- **browser_task** — YOUR MOST POWERFUL TOOL. Creates a Skyvern task that runs a real remote browser autonomously AND scrapes the page content via Firecrawl. It returns REAL page content (pageContent field) that you MUST use to answer the user — never say you "can't access" a site if pageContent is returned. For complex interactions (form filling, purchasing, etc.), the Skyvern task handles it autonomously in the background.
 - **CRITICAL RULE**: If browser_task returns pageContent, you MUST present that content to the user. NEVER say "unable to access" or "restrictions on plan" — you DO have access. Read the pageContent and summarize/present it.
+- When the response includes a runId, mention it so the user knows a background Skyvern task is executing.
 
 ### Granular Browser Controls (auto-routed through browser_task)
 - **browser_click, browser_input, browser_press_key, browser_select_option, browser_console_exec** — these do NOT control a browser directly. They get converted into natural language instructions and sent to browser_task. So they work, but they spin up a full browser session each time.
