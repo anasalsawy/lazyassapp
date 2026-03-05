@@ -466,6 +466,7 @@ export default function CallCenter() {
                           </div>
                         </div>
                       )}
+                    </div>
 
                     <Button
                       onClick={initiateCall}
