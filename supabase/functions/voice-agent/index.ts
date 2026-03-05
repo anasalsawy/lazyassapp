@@ -460,7 +460,7 @@ serve(async (req) => {
           callSid: callData.sid,
           conversationHistory: [{ role: "assistant", content: greeting }],
           analystReports: [analystReport],
-          directorDecisions: [directorResult],
+          directorDecisions: [{ instruction: greetingInstruction, tone: "warm, casual, unhurried", priority: "first impression", dtmf: "none", shouldEnd: false }],
           operatorInjections: [],
           turnCount: 0,
           config: callConfig,
