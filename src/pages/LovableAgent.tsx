@@ -315,6 +315,7 @@ export default function LovableAgent() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentPlans, setCurrentPlans] = useState<ExecutionPlan[]>([]);
   const [currentCallState, setCurrentCallState] = useState<CallState | null>(null);
+  const callStateRef = useRef<CallState | null>(null);
   const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -335,7 +336,7 @@ export default function LovableAgent() {
     setPhase("thinking");
     setCurrentPlans([]);
     setCurrentCallState(null);
-
+    callStateRef.current = null;
     let assistantSoFar = "";
 
     const upsertAssistant = (chunk: string) => {
@@ -446,11 +447,12 @@ export default function LovableAgent() {
       }
 
       // Attach execution plans and call state to the final message
+      // Use callStateRef to get the latest value (avoids stale closure)
       setMessages(prev => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
           return prev.map((m, i) => i === prev.length - 1
-            ? { ...m, executionPlan: currentPlans.length ? [...currentPlans] : undefined, callState: currentCallState || undefined, isGenerating: false }
+            ? { ...m, executionPlan: currentPlans.length ? [...currentPlans] : undefined, callState: callStateRef.current || undefined, isGenerating: false }
             : m
           );
         }
@@ -464,7 +466,7 @@ export default function LovableAgent() {
       setIsLoading(false);
       setPhase("idle");
     }
-  }, [input, isLoading, session, messages, currentPlans, currentCallState, phase]);
+  }, [input, isLoading, session, messages, currentPlans, phase]);
 
   const handleAgentEvent = useCallback((eventType: string, data: any) => {
     switch (eventType) {
@@ -516,9 +518,9 @@ export default function LovableAgent() {
         setPhase("generating");
         break;
 
-      case "call_started":
+      case "call_started": {
         setPhase("on_call");
-        setCurrentCallState({
+        const initial: CallState = {
           taskId: data.taskId,
           status: "ringing",
           turnCount: 0,
@@ -528,31 +530,42 @@ export default function LovableAgent() {
           agentName: "Maya",
           errorMessage: null,
           recordingUrl: null,
+        };
+        setCurrentCallState(initial);
+        callStateRef.current = initial;
+        break;
+      }
+
+      case "call_update":
+        setCurrentCallState(prev => {
+          const updated = prev ? {
+            ...prev,
+            status: (data.status === "completed" || data.status === "failed" ? data.status : "running") as CallState["status"],
+            turnCount: data.turnCount || prev.turnCount,
+            transcript: data.transcript || prev.transcript,
+            lastAnalysis: data.lastAnalysis || prev.lastAnalysis,
+            lastDirective: data.lastDirective || prev.lastDirective,
+            agentName: data.agentName || prev.agentName,
+          } : prev;
+          callStateRef.current = updated;
+          return updated;
         });
         break;
 
-      case "call_update":
-        setCurrentCallState(prev => prev ? {
-          ...prev,
-          status: data.status === "completed" || data.status === "failed" ? data.status : "running",
-          turnCount: data.turnCount || prev.turnCount,
-          transcript: data.transcript || prev.transcript,
-          lastAnalysis: data.lastAnalysis || prev.lastAnalysis,
-          lastDirective: data.lastDirective || prev.lastDirective,
-          agentName: data.agentName || prev.agentName,
-        } : prev);
-        break;
-
       case "call_ended":
-        setCurrentCallState(prev => prev ? {
-          ...prev,
-          status: data.status as "completed" | "failed",
-          turnCount: data.turnCount || prev.turnCount,
-          transcript: data.transcript || prev.transcript,
-          lastAnalysis: data.lastAnalysis || prev.lastAnalysis,
-          errorMessage: data.errorMessage || null,
-          recordingUrl: data.recordingUrl || null,
-        } : prev);
+        setCurrentCallState(prev => {
+          const updated = prev ? {
+            ...prev,
+            status: data.status as "completed" | "failed",
+            turnCount: data.turnCount || prev.turnCount,
+            transcript: data.transcript || prev.transcript,
+            lastAnalysis: data.lastAnalysis || prev.lastAnalysis,
+            errorMessage: data.errorMessage || null,
+            recordingUrl: data.recordingUrl || null,
+          } : prev;
+          callStateRef.current = updated;
+          return updated;
+        });
         setPhase("generating");
         break;
 
