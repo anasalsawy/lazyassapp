@@ -843,8 +843,8 @@ async function handleSyncAllOrders(
 
   for (const order of orders) {
     try {
-      // For failed orders with retries remaining, attempt auto-retry
-      if (order.status === "failed" && (order.retry_count || 0) < (order.max_retries || 3)) {
+      // For failed orders with retries remaining, attempt auto-retry via bridge-first
+      if (order.status === "failed" && (order.retry_count || 0) < (order.max_retries || MAX_MISSION_RETRIES)) {
         const lastRetry = order.last_retry_at ? new Date(order.last_retry_at).getTime() : 0;
         if (Date.now() - lastRetry < 30000) {
           updatedOrders.push(order);
@@ -853,26 +853,26 @@ async function handleSyncAllOrders(
 
         const analysis = analyzeFailure(order.error_message || "", order);
         if (analysis.canRetry) {
-          // Create new Browser Use task for retry
-          const retryRes = await browserUseApi(buApiKey, "/tasks", {
-            method: "POST",
-            body: JSON.stringify({
-              task: `Retry purchasing: ${order.product_query}. Previous error: ${order.error_message}`,
-              startUrl: "https://www.amazon.com",
-              maxSteps: 80,
-            }),
-          });
+          // Rotate site for retry
+          const attemptNum = (order.retry_count || 0) + 1;
+          const siteUrl = RETRY_SITES[attemptNum % RETRY_SITES.length];
+          const siteName = new URL(siteUrl).hostname.replace("www.", "");
 
-          if (retryRes.ok) {
-            const retryTask = await retryRes.json();
+          const retryResult = await runBridgeTask(
+            `Retry purchasing: ${order.product_query}. Previous error: ${order.error_message}\n\nSTART ON: ${siteUrl}. If blocked, report FAILED immediately.`,
+            siteUrl,
+            80
+          );
+
+          if (retryResult.success) {
             await supabase.from("auto_shop_orders").update({
               status: "searching",
-              browser_use_task_id: retryTask.id,
-              retry_count: (order.retry_count || 0) + 1,
-              failure_analysis: `${analysis.diagnosis}\nFix: ${analysis.workaround}`,
+              browser_use_task_id: retryResult.taskId,
+              retry_count: attemptNum,
+              failure_analysis: `Attempt ${attemptNum} (${siteName}): ${analysis.diagnosis}\nFix: ${analysis.workaround}`,
               last_retry_at: new Date().toISOString(),
               error_message: null,
-              notes: JSON.stringify({ browserUseTaskId: retryTask.id }),
+              notes: JSON.stringify({ taskId: retryResult.taskId, source: retryResult.source, site: siteName }),
             }).eq("id", order.id);
             retriedCount++;
           }
