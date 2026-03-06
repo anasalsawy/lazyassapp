@@ -1342,10 +1342,27 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         result.liveUrl = buResult.liveUrl;
         result.taskStatus = buResult.status;
         if (buResult.statusUrl) result.statusUrl = buResult.statusUrl;
-        if (buResult.screenshotUrl) result.screenshotUrl = buResult.screenshotUrl;
-        result.message = usedProvider === "self_hosted_bridge"
-          ? `🔧 Self-hosted bridge task ${buResult.runId} is running. Poll status at ${buResult.statusUrl}`
-          : `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
+        if (buResult.screenshotUrl && buResult.hasScreenshot) {
+          result.screenshotUrl = buResult.screenshotUrl;
+        }
+        // Include bridge completion data
+        if (buResult.bridgeOutput) result.bridgeOutput = buResult.bridgeOutput;
+        if (buResult.currentUrl) result.currentUrl = buResult.currentUrl;
+        if (buResult.pageTitle && !result.pageTitle) result.pageTitle = buResult.pageTitle;
+        if (buResult.pageContent && !result.pageContent) result.pageContent = buResult.pageContent?.substring(0, 6000);
+        if (buResult.stepsTaken) result.stepsTaken = buResult.stepsTaken;
+        if (buResult.actionHistory) result.actionHistory = buResult.actionHistory;
+
+        if (usedProvider === "self_hosted_bridge" && buResult.status === "completed") {
+          result.message = `✅ Bridge task completed in ${buResult.stepsTaken || '?'} steps. URL: ${buResult.currentUrl || 'N/A'}`;
+          if (buResult.hasScreenshot) {
+            result.message += `\n\n📸 Screenshot: ${buResult.screenshotUrl}`;
+          }
+        } else if (usedProvider === "self_hosted_bridge") {
+          result.message = `🔧 Bridge task ${buResult.runId} is still running. Poll: ${buResult.statusUrl}`;
+        } else {
+          result.message = `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
+        }
       } else {
         result.taskStatus = "failed_to_start";
         result.error = buError?.message || "All browser providers failed.";
