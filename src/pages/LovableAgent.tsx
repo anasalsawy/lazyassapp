@@ -1307,14 +1307,26 @@ export default function LovableAgent() {
                   </div>
                 )}
 
-                {/* Live browser panel */}
-                {isLoading && browserLiveState && (
+                {/* Live browser panel — persists after SSE ends for ongoing tasks */}
+                {browserLiveState && (
                   <div className="flex gap-3">
                     <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
                       <Bot className="w-4 h-4 text-white" />
                     </div>
                     <div className="max-w-[85%] min-w-0 w-full">
                       <BrowserLivePanel state={browserLiveState} isLive={browserLiveState.status === "running" || browserLiveState.status === "starting"} />
+                      {!isLoading && (browserLiveState.status === "running" || browserLiveState.status === "starting") && (
+                        <div className="flex items-center gap-2 mt-1.5 px-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="text-[11px] text-muted-foreground">Persistent monitoring active — polling every 5s</span>
+                          <button
+                            onClick={() => { setBrowserLiveState(null); browserUrlsRef.current = null; }}
+                            className="ml-auto text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
