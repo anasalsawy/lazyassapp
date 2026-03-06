@@ -14,7 +14,7 @@ import {
   Phone, PhoneOff, Send, Activity, Brain, Eye, Mic,
   AlertTriangle, CheckCircle, Clock, MessageSquare,
   Zap, Users, BarChart3, Radio, Loader2, ChevronDown,
-  ChevronUp, Volume2, RefreshCw, Plus, X,
+  ChevronUp, Volume2, RefreshCw, Plus, X, Sparkles, Search,
 } from "lucide-react";
 
 type CallState = {
