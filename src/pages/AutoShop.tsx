@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useAutoShop } from "@/hooks/useAutoShop";
 import { useShopProfile } from "@/hooks/useShopProfile";
 import { useAuth } from "@/hooks/useAuth";
