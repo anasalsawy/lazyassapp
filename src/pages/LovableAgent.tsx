@@ -644,6 +644,8 @@ export default function LovableAgent() {
     setCurrentPlans([]);
     setCurrentCallState(null);
     callStateRef.current = null;
+    setBrowserLiveState(null);
+    browserLiveRef.current = null;
     let assistantSoFar = "";
 
     const upsertAssistant = (chunk: string) => {
