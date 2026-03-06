@@ -1301,23 +1301,86 @@ const AutoShop = () => {
                               try {
                                 const meta = JSON.parse(order.notes);
                                 return (
-                                  <div className="mt-2 space-y-2">
+                                  <div className="mt-3 space-y-2 p-3 rounded-lg border border-border/60 bg-muted/30">
+                                    {/* Status header */}
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                                        <span className="text-xs font-medium text-foreground">
+                                          {meta.taskStatus === "running" ? "Agent Active" : meta.taskStatus || "Working..."}
+                                        </span>
+                                      </div>
+                                      {meta.lastPollAt && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          Updated {new Date(meta.lastPollAt).toLocaleTimeString()}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Current site */}
                                     {meta.currentSite && (
-                                      <p className="text-xs text-muted-foreground">
-                                        Currently on: <span className="font-medium text-foreground">{meta.currentSite}</span>
-                                      </p>
+                                      <div className="flex items-center gap-2 text-xs">
+                                        <Globe className="h-3 w-3 text-muted-foreground" />
+                                        <span className="text-muted-foreground">Site:</span>
+                                        <span className="font-medium text-foreground">{meta.currentSite}</span>
+                                      </div>
                                     )}
-                                    {meta.current_step_description && (
-                                      <p className="text-xs text-primary flex items-center gap-1">
-                                        <Loader2 className="h-3 w-3 animate-spin" />
-                                        {String(meta.current_step_description).substring(0, 120)}
-                                      </p>
+
+                                    {/* Current URL the agent is on */}
+                                    {meta.currentUrl && (
+                                      <div className="flex items-center gap-2 text-xs">
+                                        <LinkIcon className="h-3 w-3 text-muted-foreground" />
+                                        <span className="text-muted-foreground truncate max-w-[300px]" title={meta.currentUrl}>
+                                          {meta.currentUrl.length > 60 ? meta.currentUrl.substring(0, 60) + "…" : meta.currentUrl}
+                                        </span>
+                                      </div>
                                     )}
-                                    {meta.total_steps && (
-                                      <p className="text-xs text-muted-foreground">
-                                        Step {meta.completed_steps || meta.total_steps}/{meta.total_steps}
-                                      </p>
+
+                                    {/* Step progress */}
+                                    {(meta.currentStep || meta.totalSteps) && (
+                                      <div className="space-y-1">
+                                        <div className="flex items-center justify-between text-xs">
+                                          <span className="text-muted-foreground">Progress</span>
+                                          <span className="font-mono text-foreground">
+                                            Step {meta.currentStep || "?"}/{meta.totalSteps || "?"}
+                                          </span>
+                                        </div>
+                                        {meta.currentStep && meta.totalSteps && (
+                                          <div className="w-full h-1.5 rounded-full bg-muted">
+                                            <div
+                                              className="h-full rounded-full bg-primary transition-all"
+                                              style={{ width: `${Math.min(100, (meta.currentStep / meta.totalSteps) * 100)}%` }}
+                                            />
+                                          </div>
+                                        )}
+                                      </div>
                                     )}
+
+                                    {/* What the agent is doing right now */}
+                                    {meta.stepDescription && (
+                                      <div className="flex items-start gap-2 text-xs">
+                                        <Loader2 className="h-3 w-3 animate-spin text-primary mt-0.5 flex-shrink-0" />
+                                        <span className="text-primary">{String(meta.stepDescription).substring(0, 150)}</span>
+                                      </div>
+                                    )}
+
+                                    {/* Mission attempt info */}
+                                    {meta.missionState && (
+                                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                                        <Zap className="h-3 w-3" />
+                                        Attempt {meta.missionState.totalAttempts || 1} • Site rotation #{(meta.missionState.currentSiteIndex || 0) + 1}
+                                      </div>
+                                    )}
+
+                                    {/* Screenshot if available */}
+                                    {meta.screenshotUrl && (
+                                      <img
+                                        src={meta.screenshotUrl}
+                                        alt="Agent screenshot"
+                                        className="rounded-md border border-border/40 max-h-40 w-full object-contain bg-background"
+                                      />
+                                    )}
+
                                     {/* Inline Live Browser Embed */}
                                     {meta.liveViewUrl && (
                                       <SteelSessionEmbed
