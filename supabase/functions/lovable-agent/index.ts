@@ -1143,7 +1143,9 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
     }
 
     case "browser_task": {
-      // Browser Use is the primary browser automation engine
+      // Self-hosted Bridge is the PRIMARY browser engine; Cloud API is fallback
+      const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL");
+      const BRIDGE_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY");
       const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
       const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
       const taskStr = (args.task as string) || "";
@@ -1171,75 +1173,31 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         }
       }
 
-      // Step 2: Try Browser Use Cloud API first, fallback to self-hosted bridge
+      // Load proxy config from browser_profiles
+      let proxyConfig: { server: string; username?: string; password?: string } | null = null;
+      try {
+        const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+        const { data: browserProfile } = await supabase.from("browser_profiles")
+          .select("proxy_server, proxy_username, proxy_password_enc, browser_use_profile_id")
+          .eq("user_id", _currentUserId || "").single();
+
+        if (browserProfile?.proxy_server) {
+          proxyConfig = {
+            server: browserProfile.proxy_server,
+            username: browserProfile.proxy_username || undefined,
+            password: browserProfile.proxy_password_enc || undefined,
+          };
+          console.log(`[browser_task] Proxy configured: ${proxyConfig.server}`);
+        }
+      } catch (_) {}
+
       let buResult: any = null;
       let buError: { status?: number; message: string } | null = null;
-      let usedProvider = "browser_use_cloud";
+      let usedProvider = "self_hosted_bridge";
 
-      // --- Attempt 1: Browser Use Cloud API ---
-      if (BU_API_KEY) {
-        try {
-          const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-          const { data: browserProfile } = await supabase.from("browser_profiles")
-            .select("browser_use_profile_id").eq("user_id", _currentUserId || "").single();
-
-          const taskBody: any = { task: taskStr, maxSteps: 50 };
-          if (startUrl) taskBody.startUrl = startUrl;
-
-          if (browserProfile?.browser_use_profile_id) {
-            try {
-              const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
-                method: "POST",
-                headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
-                body: JSON.stringify({ profileId: browserProfile.browser_use_profile_id }),
-              });
-              if (sessionRes.ok) {
-                const session = await sessionRes.json();
-                taskBody.sessionId = session.id;
-              }
-            } catch (_) {}
-          }
-
-          const buRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
-            method: "POST",
-            headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify(taskBody),
-          });
-
-          if (buRes.ok) {
-            const buData = await buRes.json();
-            buResult = { runId: buData.id, sessionId: buData.sessionId, status: "running" };
-
-            if (buData.sessionId) {
-              try {
-                const sessInfoRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${buData.sessionId}`, {
-                  headers: { "X-Browser-Use-API-Key": BU_API_KEY },
-                });
-                if (sessInfoRes.ok) {
-                  const sessInfo = await sessInfoRes.json();
-                  buResult.liveUrl = sessInfo.liveUrl || null;
-                }
-              } catch (_) {}
-            }
-          } else {
-            const errText = await buRes.text();
-            buError = { status: buRes.status, message: errText?.slice(0, 1200) || "Browser Use Cloud task failed." };
-            console.warn(`[browser_task] Cloud API failed (${buRes.status}): ${errText?.slice(0, 200)}`);
-          }
-        } catch (err: any) {
-          buError = { message: err?.message || "Browser Use Cloud request failed." };
-          console.warn("[browser_task] Cloud API error:", err?.message);
-        }
-      } else {
-        buError = { message: "BROWSER_USE_API_KEY not configured." };
-      }
-
-      // --- Attempt 2: Self-hosted Bridge fallback ---
-      const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL");
-      const BRIDGE_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY");
-
-      if (!buResult && BRIDGE_URL) {
-        console.log(`[browser_task] Cloud failed, falling back to self-hosted bridge: ${BRIDGE_URL}`);
+      // --- Attempt 1: Self-hosted Bridge (PRIMARY) ---
+      if (BRIDGE_URL) {
+        console.log(`[browser_task] Using self-hosted bridge (primary): ${BRIDGE_URL}`);
         usedProvider = "self_hosted_bridge";
         try {
           const bridgeHeaders: Record<string, string> = { "Content-Type": "application/json" };
@@ -1247,6 +1205,7 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
 
           const bridgeBody: any = { task: taskStr, max_steps: 50 };
           if (startUrl) bridgeBody.start_url = startUrl;
+          if (proxyConfig) bridgeBody.proxy = proxyConfig;
 
           const bridgeRes = await fetch(`${BRIDGE_URL}/run-task`, {
             method: "POST",
@@ -1362,6 +1321,62 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         } catch (err: any) {
           buError = { status: 0, message: `Bridge unreachable: ${err?.message}` };
           console.error("[browser_task] Bridge unreachable:", err?.message);
+        }
+      }
+
+      // --- Attempt 2: Browser Use Cloud API (FALLBACK) ---
+      if (!buResult && BU_API_KEY) {
+        console.log(`[browser_task] Bridge failed/unavailable, falling back to Browser Use Cloud API`);
+        usedProvider = "browser_use_cloud";
+        try {
+          const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+          const { data: browserProfile } = await supabase.from("browser_profiles")
+            .select("browser_use_profile_id").eq("user_id", _currentUserId || "").single();
+
+          const taskBody: any = { task: taskStr, maxSteps: 50 };
+          if (startUrl) taskBody.startUrl = startUrl;
+
+          if (browserProfile?.browser_use_profile_id) {
+            try {
+              const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
+                method: "POST",
+                headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+                body: JSON.stringify({ profileId: browserProfile.browser_use_profile_id }),
+              });
+              if (sessionRes.ok) {
+                const sess = await sessionRes.json();
+                taskBody.sessionId = sess.id;
+              }
+            } catch (_) {}
+          }
+
+          const buRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
+            method: "POST",
+            headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify(taskBody),
+          });
+
+          if (buRes.ok) {
+            const buData = await buRes.json();
+            buResult = { runId: buData.id, sessionId: buData.sessionId, status: "running" };
+            if (buData.sessionId) {
+              try {
+                const sessInfoRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${buData.sessionId}`, {
+                  headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+                });
+                if (sessInfoRes.ok) {
+                  const sessInfo = await sessInfoRes.json();
+                  buResult.liveUrl = sessInfo.liveUrl || null;
+                }
+              } catch (_) {}
+            }
+          } else {
+            const errText = await buRes.text();
+            buError = { status: buRes.status, message: errText?.slice(0, 1200) || "Cloud API failed." };
+            console.warn(`[browser_task] Cloud API failed (${buRes.status}): ${errText?.slice(0, 200)}`);
+          }
+        } catch (err: any) {
+          buError = { message: err?.message || "Cloud API request failed." };
         }
       }
 
