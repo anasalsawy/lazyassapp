@@ -246,9 +246,9 @@ export default function CallCenter() {
       setRetryQueue([...backupStores]);
       setRetryStores(stores);
 
-      // Step 2: Call the first store
+      // Step 2: Start a mission with ALL stores for auto-retry
       const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=initiate`,
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=initiate-mission`,
         {
           method: "POST",
           headers: {
@@ -257,21 +257,27 @@ export default function CallCenter() {
             apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
           body: JSON.stringify({
-            phone_number: primaryStore.phone,
             objective: prompt,
             caller_name: callerName || "Maya",
-            company_name: primaryStore.name,
             constraints: constraints || undefined,
+            retry_stores: stores.map((s: any) => ({
+              phone: s.phone,
+              name: s.name,
+              address: s.address,
+              department_hint: s.department_hint,
+            })),
+            max_attempts: stores.length,
           }),
         }
       );
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || "Failed to initiate call");
+      if (!resp.ok) throw new Error(data.error || "Failed to initiate mission");
 
-      toast.success("Call initiated!", {
-        description: `Calling ${primaryStore.name} (${primaryStore.phone})${backupStores.length > 0 ? ` · ${backupStores.length} backups queued` : ""}`,
+      toast.success("Mission started!", {
+        description: `Calling ${primaryStore.name} (${primaryStore.phone}) · ${stores.length} stores in retry queue`,
       });
-      startPolling(data.taskId);
+      // Poll the first child call task, or the mission task
+      startPolling(data.firstCall?.taskId || data.missionId);
     } catch (e: any) {
       toast.error("Smart call failed", { description: e.message });
     } finally {
