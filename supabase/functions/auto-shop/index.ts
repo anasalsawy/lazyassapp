@@ -554,23 +554,46 @@ async function handleStartOrder(
         console.log(`[AutoShop] Mission attempt ${mission.totalAttempts}/${MAX_MISSION_RETRIES} → ${siteName}`);
         await supabase.from("agent_logs").insert({
           user_id: user.id, agent_name: "auto_shop", log_level: "info",
-          message: `Attempt ${mission.totalAttempts}/${MAX_MISSION_RETRIES}: trying ${siteName}`,
+          message: `Attempt ${mission.totalAttempts}/${MAX_MISSION_RETRIES}: trying ${siteName} via browser-agent`,
           metadata: { orderId, attempt: mission.totalAttempts, site: siteName },
         });
 
-        // Run task via bridge-first
-        const taskResult = await runBridgeTask(
-          `${agentPrompt}\n\nSTART ON: ${siteUrl}\nIf blocked or items unavailable on this site, report FAILED immediately — do NOT navigate to other sites.`,
-          siteUrl,
-          80,
-          proxy
-        );
+        // ── Invoke browser-agent (Researcher → Planner → Bridge) ──
+        let browserRunId: string | null = null;
+        try {
+          const browserAgentResp = await fetch(`${supabaseUrl}/functions/v1/browser-agent`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${supabaseServiceKey}`,
+            },
+            body: JSON.stringify({
+              action: "run",
+              goal: `${agentPrompt}\n\nSTART ON: ${siteUrl}\nIf blocked or items unavailable on this site, report FAILED immediately — do NOT navigate to other sites.`,
+              start_url: siteUrl,
+              success_criteria: ["Order placed successfully", "Order confirmation number obtained"],
+              hard_constraints: [`Stay on ${siteName}`, "Do not navigate to other retailer sites"],
+              context: { orderId, attempt: mission.totalAttempts, site: siteName, proxy },
+            }),
+          });
 
-        if (!taskResult.success) {
-          mission.attempts.push({ site: siteName, attemptNum: mission.totalAttempts, outcome: "task_creation_failed", error: taskResult.error, timestamp: new Date().toISOString() });
+          if (browserAgentResp.ok) {
+            const browserData = await browserAgentResp.json();
+            browserRunId = browserData.runId;
+            console.log(`[AutoShop] browser-agent run started: ${browserRunId}`);
+          } else {
+            const errText = await browserAgentResp.text();
+            console.error(`[AutoShop] browser-agent invocation failed (${browserAgentResp.status}): ${errText}`);
+          }
+        } catch (e) {
+          console.error(`[AutoShop] browser-agent invocation error:`, e);
+        }
+
+        if (!browserRunId) {
+          mission.attempts.push({ site: siteName, attemptNum: mission.totalAttempts, outcome: "agent_invocation_failed", error: "Failed to start browser-agent", timestamp: new Date().toISOString() });
           await supabase.from("auto_shop_orders").update({
             retry_count: mission.totalAttempts,
-            failure_analysis: `Attempt ${mission.totalAttempts}: ${taskResult.error}`,
+            failure_analysis: `Attempt ${mission.totalAttempts}: browser-agent invocation failed`,
             last_retry_at: new Date().toISOString(),
           }).eq("id", orderId);
           mission.currentSiteIndex++;
@@ -578,14 +601,14 @@ async function handleStartOrder(
           continue;
         }
 
-        // Update order with current task + live view URL
+        // Update order with current run info
         await supabase.from("auto_shop_orders").update({
-          browser_use_task_id: taskResult.taskId,
+          browser_use_task_id: browserRunId,
           status: "searching",
-          notes: JSON.stringify({ missionState: mission, currentTaskId: taskResult.taskId, source: taskResult.source, liveViewUrl: taskResult.liveViewUrl || null, currentSite: siteName }),
+          notes: JSON.stringify({ missionState: mission, browserRunId, currentSite: siteName, architecture: "researcher-planner-bridge" }),
         }).eq("id", orderId);
 
-        // Poll until complete (max 10 min per attempt)
+        // ── Poll agent_runs for completion (max 10 min per attempt) ──
         const pollDeadline = Date.now() + 10 * 60 * 1000;
         let finalStatus = "unknown";
         let finalResult = "";
@@ -595,7 +618,6 @@ async function handleStartOrder(
           await sleep(15000); // poll every 15s
 
           // ── HUMAN STRATEGIC INJECTION ──
-          // Check agent_tasks for mid-run instructions from the user
           try {
             const { data: injections } = await supabase
               .from("agent_tasks")
@@ -616,10 +638,8 @@ async function handleStartOrder(
                     message: `Human injection applied: ${instruction}`,
                     metadata: { orderId, injectionId: inj.id, attempt: mission.totalAttempts },
                   });
-                  // Mark injection as consumed
                   await supabase.from("agent_tasks").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", inj.id);
 
-                  // If instruction says to skip/abandon current site, break polling early
                   const instrLower = instruction.toLowerCase();
                   if (instrLower.includes("skip") || instrLower.includes("abandon") || instrLower.includes("next site") || instrLower.includes("try another")) {
                     console.log(`[AutoShop] Injection: abandoning current site per user instruction`);
@@ -635,33 +655,37 @@ async function handleStartOrder(
             console.warn("[AutoShop] Injection check failed:", injErr);
           }
 
-          const status = await pollTaskStatus(taskResult.taskId!, taskResult.source);
+          // ── Poll agent_runs table ──
+          const { data: run } = await supabase
+            .from("agent_runs")
+            .select("status, summary_json, error_message")
+            .eq("id", browserRunId)
+            .single();
 
-          // ── WRITE LIVE PROGRESS TELEMETRY TO ORDER ──
+          if (!run) continue;
+
+          // ── Write live progress telemetry ──
+          const summaryJson = run.summary_json as any;
           const progressNotes = JSON.stringify({
             missionState: { totalAttempts: mission.totalAttempts, currentSiteIndex: mission.currentSiteIndex },
-            currentTaskId: taskResult.taskId,
-            source: taskResult.source,
-            liveViewUrl: status.live_url || taskResult.liveViewUrl || null,
+            browserRunId,
             currentSite: siteName,
-            taskStatus: status.status,
-            currentUrl: status.current_url || null,
-            currentStep: status.current_step || null,
-            totalSteps: status.total_steps || null,
-            stepDescription: status.step_description || null,
-            screenshotUrl: status.screenshot_url || null,
+            architecture: "researcher-planner-bridge",
+            agentStatus: run.status,
+            stepsCompleted: summaryJson?.steps_taken || null,
+            phasesCompleted: summaryJson?.phases_completed || null,
             lastPollAt: new Date().toISOString(),
           });
           await supabase.from("auto_shop_orders").update({ notes: progressNotes }).eq("id", orderId);
-          
-          if (status.status === "completed" || status.status === "finished" || status.status === "done") {
+
+          if (run.status === "completed") {
             finalStatus = "completed";
-            finalResult = status.result || JSON.stringify(status);
+            finalResult = summaryJson?.summary || JSON.stringify(summaryJson) || "";
             break;
           }
-          if (status.status === "failed" || status.status === "error") {
+          if (run.status === "failed") {
             finalStatus = "failed";
-            finalError = status.error || status.result || "Task failed";
+            finalError = run.error_message || summaryJson?.summary || "Browser agent failed";
             break;
           }
           // still running...
