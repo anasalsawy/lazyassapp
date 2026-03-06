@@ -602,9 +602,10 @@ async function handleStartOrder(
           continue;
         }
 
-        // Update order with current run info
+        // Update order with current run info + link source_run_id
         await supabase.from("auto_shop_orders").update({
           browser_use_task_id: browserRunId,
+          source_run_id: browserRunId,
           status: "searching",
           notes: JSON.stringify({ missionState: mission, browserRunId, currentSite: siteName, architecture: "researcher-planner-bridge" }),
         }).eq("id", orderId);

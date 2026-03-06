@@ -390,6 +390,7 @@ export type Database = {
           selected_deal_url: string | null
           shipping_address_id: string | null
           sites_tried: string[] | null
+          source_run_id: string | null
           status: string
           updated_at: string
           user_id: string
@@ -415,6 +416,7 @@ export type Database = {
           selected_deal_url?: string | null
           shipping_address_id?: string | null
           sites_tried?: string[] | null
+          source_run_id?: string | null
           status?: string
           updated_at?: string
           user_id: string
@@ -440,6 +442,7 @@ export type Database = {
           selected_deal_url?: string | null
           shipping_address_id?: string | null
           sites_tried?: string[] | null
+          source_run_id?: string | null
           status?: string
           updated_at?: string
           user_id?: string
@@ -567,6 +570,90 @@ export type Database = {
           status?: string
           updated_at?: string
           use_browserstack?: boolean
+          user_id?: string
+        }
+        Relationships: []
+      }
+      browser_steps: {
+        Row: {
+          action_results: Json | null
+          actions: Json | null
+          completed_at: string | null
+          created_at: string
+          duration_ms: number | null
+          error_message: string | null
+          expected_outcome: string | null
+          extracted_data: Json | null
+          final_url: string | null
+          human_injection: string | null
+          id: string
+          page_content_preview: string | null
+          page_title: string | null
+          phase_id: string | null
+          phase_name: string | null
+          planner_decision_type: string | null
+          researcher_reroute: boolean | null
+          result_status: string
+          risk_level: string | null
+          run_id: string
+          selector: string | null
+          started_at: string | null
+          step_number: number
+          url: string
+          user_id: string
+        }
+        Insert: {
+          action_results?: Json | null
+          actions?: Json | null
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          expected_outcome?: string | null
+          extracted_data?: Json | null
+          final_url?: string | null
+          human_injection?: string | null
+          id?: string
+          page_content_preview?: string | null
+          page_title?: string | null
+          phase_id?: string | null
+          phase_name?: string | null
+          planner_decision_type?: string | null
+          researcher_reroute?: boolean | null
+          result_status?: string
+          risk_level?: string | null
+          run_id: string
+          selector?: string | null
+          started_at?: string | null
+          step_number: number
+          url: string
+          user_id: string
+        }
+        Update: {
+          action_results?: Json | null
+          actions?: Json | null
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          expected_outcome?: string | null
+          extracted_data?: Json | null
+          final_url?: string | null
+          human_injection?: string | null
+          id?: string
+          page_content_preview?: string | null
+          page_title?: string | null
+          phase_id?: string | null
+          phase_name?: string | null
+          planner_decision_type?: string | null
+          researcher_reroute?: boolean | null
+          result_status?: string
+          risk_level?: string | null
+          run_id?: string
+          selector?: string | null
+          started_at?: string | null
+          step_number?: number
+          url?: string
           user_id?: string
         }
         Relationships: []

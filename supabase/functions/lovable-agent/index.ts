@@ -1261,6 +1261,29 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
           _sendEventFn("browser_progress", { runId, status: "running", step: 0 });
         }
 
+        // Auto-detect shopping tasks and create auto_shop_orders for tracking
+        const taskLower = taskStr.toLowerCase();
+        const isShoppingTask = ["buy", "purchase", "order", "checkout", "add to cart", "shop for", "find a deal"].some(kw => taskLower.includes(kw));
+        let linkedOrderId: string | null = null;
+        if (isShoppingTask && runId && _currentUserId) {
+          try {
+            const { data: newOrder } = await supabaseAdmin.from("auto_shop_orders").insert({
+              user_id: _currentUserId,
+              product_query: taskStr.slice(0, 500),
+              status: "searching",
+              source_run_id: runId,
+              browser_use_task_id: runId,
+              notes: JSON.stringify({ source: "lovable_agent", architecture: "researcher-planner-bridge" }),
+            }).select("id").single();
+            if (newOrder) {
+              linkedOrderId = newOrder.id;
+              console.log(`[browser_task] Created auto_shop_orders entry: ${linkedOrderId} for run: ${runId}`);
+            }
+          } catch (e) {
+            console.warn("[browser_task] Failed to create auto_shop_orders entry:", e);
+          }
+        }
+
         // Poll agent_runs for completion (up to 4 minutes)
         if (runId) {
           for (let attempt = 0; attempt < 60; attempt++) {
@@ -1288,11 +1311,30 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
                   summary: agentResult.finalResult?.summary || "Task completed",
                 });
               }
+              // Update linked order if exists
+              if (linkedOrderId) {
+                const fr = agentResult.finalResult;
+                const resultText = (fr?.summary || "").toLowerCase();
+                const isSuccess = ["confirmation", "order placed", "success", "order #"].some(k => resultText.includes(k));
+                await supabaseAdmin.from("auto_shop_orders").update({
+                  status: isSuccess ? "completed" : "failed",
+                  completed_at: new Date().toISOString(),
+                  order_confirmation: fr?.extracted_data?.confirmation_number || fr?.summary?.match(/(?:confirmation|order)\s*(?:#|number|:)\s*([A-Z0-9-]+)/i)?.[1] || null,
+                  notes: JSON.stringify({ source: "lovable_agent", finalResult: fr }),
+                }).eq("id", linkedOrderId).then(() => {}, () => {});
+              }
               break;
             } else if (run.status === "failed") {
               agentError = run.error_message || "Browser agent task failed";
               if (_sendEventFn) {
                 _sendEventFn("browser_error", { runId, error: agentError });
+              }
+              // Update linked order if exists
+              if (linkedOrderId) {
+                await supabaseAdmin.from("auto_shop_orders").update({
+                  status: "failed",
+                  error_message: agentError,
+                }).eq("id", linkedOrderId).then(() => {}, () => {});
               }
               break;
             }
