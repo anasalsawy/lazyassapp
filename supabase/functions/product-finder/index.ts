@@ -113,7 +113,19 @@ async function findCandidates(input: FinderInput) {
 
   const extractedRaw = await callAI(extractSystem, extractUser);
   const extractedJson = extractedRaw.match(/\{[\s\S]*\}/)?.[0] || "{}";
-  const extracted = JSON.parse(extractedJson);
+  let extracted: any = {};
+  try {
+    extracted = JSON.parse(extractedJson);
+  } catch (parseErr) {
+    // Attempt basic repair: strip trailing commas before ] or }
+    try {
+      const repaired = extractedJson.replace(/,\s*([}\]])/g, "$1");
+      extracted = JSON.parse(repaired);
+    } catch {
+      console.error("[product-finder]", parseErr);
+      extracted = { candidates: [] };
+    }
+  }
   const dedupe = new Set<string>();
 
   const candidates = (extracted.candidates || [])
