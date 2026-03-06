@@ -288,9 +288,8 @@ CANDIDATE NAME: ${userName}`;
       }
     })();
 
-    // @ts-ignore - EdgeRuntime.waitUntil exists in Supabase Edge Functions
-    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
-      EdgeRuntime.waitUntil(bgPromise);
+    if (typeof (globalThis as any).EdgeRuntime !== "undefined" && (globalThis as any).EdgeRuntime.waitUntil) {
+      (globalThis as any).EdgeRuntime.waitUntil(bgPromise);
     } else {
       // Fallback: await inline (won't time out for short AI calls)
       await bgPromise;
