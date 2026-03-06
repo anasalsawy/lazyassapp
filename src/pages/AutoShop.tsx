@@ -44,6 +44,7 @@ import {
   Eye
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { SteelSessionEmbed } from "@/components/chat/SteelSessionEmbed";
 
 const SHOP_SITES = [
   { key: "gmail", name: "Gmail", icon: Mail, color: "bg-red-500", description: "Access inbox for codes & shipping updates" },
@@ -51,6 +52,55 @@ const SHOP_SITES = [
   { key: "ebay", name: "eBay", icon: Package, color: "bg-blue-500", description: "Bid and buy items" },
   { key: "walmart", name: "Walmart", icon: ShoppingCart, color: "bg-blue-600", description: "Everyday low prices" },
 ];
+
+// Inline component for human mid-run injection
+function OrderInjectionInput({ orderId, userId }: { orderId: string; userId: string }) {
+  const [injection, setInjection] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const sendInjection = async () => {
+    if (!injection.trim()) return;
+    setSending(true);
+    try {
+      const { error } = await supabase.from("agent_tasks").insert({
+        user_id: userId,
+        task_type: "shop_injection",
+        status: "pending",
+        payload: { instruction: injection.trim(), orderId, injected_at: new Date().toISOString() },
+      });
+      if (error) throw error;
+      toast.success("Instruction sent to shopping agent");
+      setInjection("");
+    } catch (e: any) {
+      toast.error("Failed to send instruction");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 flex gap-2 items-end">
+      <div className="flex-1">
+        <Input
+          placeholder="e.g., Try Walmart instead, Skip this site, Use guest checkout..."
+          value={injection}
+          onChange={(e) => setInjection(e.target.value)}
+          className="text-xs h-8"
+          onKeyDown={(e) => e.key === "Enter" && sendInjection()}
+        />
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-8 text-xs"
+        onClick={sendInjection}
+        disabled={sending || !injection.trim()}
+      >
+        {sending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Inject"}
+      </Button>
+    </div>
+  );
+}
 
 const AutoShop = () => {
   const { user, loading: authLoading } = useAuth();
@@ -1246,12 +1296,17 @@ const AutoShop = () => {
                                 Auto-retrying with adjusted strategy...
                               </div>
                             )}
-                            {/* Live Agent Info from notes */}
+                            {/* Live Agent Info + Browser Embed + Injection */}
                             {order.notes && ["pending", "searching", "found_deals", "ordering"].includes(order.status) && (() => {
                               try {
                                 const meta = JSON.parse(order.notes);
                                 return (
-                                  <div className="mt-2 space-y-1">
+                                  <div className="mt-2 space-y-2">
+                                    {meta.currentSite && (
+                                      <p className="text-xs text-muted-foreground">
+                                        Currently on: <span className="font-medium text-foreground">{meta.currentSite}</span>
+                                      </p>
+                                    )}
                                     {meta.current_step_description && (
                                       <p className="text-xs text-primary flex items-center gap-1">
                                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -1263,11 +1318,19 @@ const AutoShop = () => {
                                         Step {meta.completed_steps || meta.total_steps}/{meta.total_steps}
                                       </p>
                                     )}
-                                    {meta.recording_url && (
+                                    {/* Inline Live Browser Embed */}
+                                    {meta.liveViewUrl && (
+                                      <SteelSessionEmbed
+                                        debugUrl={meta.liveViewUrl}
+                                        sessionId={meta.currentTaskId}
+                                        interactive={false}
+                                      />
+                                    )}
+                                    {meta.recording_url && !meta.liveViewUrl && (
                                       <Button size="sm" variant="outline" asChild className="h-7 text-xs">
                                         <a href={meta.recording_url} target="_blank" rel="noopener noreferrer">
                                           <Eye className="h-3 w-3 mr-1" />
-                                          Watch Live
+                                          Watch Recording
                                         </a>
                                       </Button>
                                     )}
@@ -1275,6 +1338,10 @@ const AutoShop = () => {
                                 );
                               } catch { return null; }
                             })()}
+                            {/* Human Mid-Run Injection Input */}
+                            {["searching", "found_deals", "ordering"].includes(order.status) && (
+                              <OrderInjectionInput orderId={order.id} userId={user!.id} />
+                            )}
                             <p className="text-xs text-muted-foreground">
                               {new Date(order.created_at).toLocaleString()}
                               {order.completed_at && ` • Completed: ${new Date(order.completed_at).toLocaleString()}`}
