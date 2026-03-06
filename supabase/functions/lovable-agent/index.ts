@@ -1171,13 +1171,13 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         }
       }
 
-      // Step 2: Create Browser Use task for autonomous execution
+      // Step 2: Try Browser Use Cloud API first, fallback to self-hosted bridge
       let buResult: any = null;
       let buError: { status?: number; message: string } | null = null;
+      let usedProvider = "browser_use_cloud";
 
-      if (!BU_API_KEY) {
-        buError = { message: "BROWSER_USE_API_KEY not configured." };
-      } else {
+      // --- Attempt 1: Browser Use Cloud API ---
+      if (BU_API_KEY) {
         try {
           const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
           const { data: browserProfile } = await supabase.from("browser_profiles")
@@ -1223,19 +1223,63 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
             }
           } else {
             const errText = await buRes.text();
-            buError = { status: buRes.status, message: errText?.slice(0, 1200) || "Browser Use task creation failed." };
-            console.error(`[browser_task] Browser Use error (${buRes.status}): ${errText}`);
+            buError = { status: buRes.status, message: errText?.slice(0, 1200) || "Browser Use Cloud task failed." };
+            console.warn(`[browser_task] Cloud API failed (${buRes.status}): ${errText?.slice(0, 200)}`);
           }
         } catch (err: any) {
-          buError = { message: err?.message || "Browser Use request failed." };
-          console.error("[browser_task] Browser Use error:", err);
+          buError = { message: err?.message || "Browser Use Cloud request failed." };
+          console.warn("[browser_task] Cloud API error:", err?.message);
+        }
+      } else {
+        buError = { message: "BROWSER_USE_API_KEY not configured." };
+      }
+
+      // --- Attempt 2: Self-hosted Bridge fallback ---
+      const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL");
+      const BRIDGE_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY");
+
+      if (!buResult && BRIDGE_URL) {
+        console.log(`[browser_task] Cloud failed, falling back to self-hosted bridge: ${BRIDGE_URL}`);
+        usedProvider = "self_hosted_bridge";
+        try {
+          const bridgeHeaders: Record<string, string> = { "Content-Type": "application/json" };
+          if (BRIDGE_KEY) bridgeHeaders["Authorization"] = `Bearer ${BRIDGE_KEY}`;
+
+          const bridgeBody: any = { task: taskStr, max_steps: 50 };
+          if (startUrl) bridgeBody.start_url = startUrl;
+
+          const bridgeRes = await fetch(`${BRIDGE_URL}/run-task`, {
+            method: "POST",
+            headers: bridgeHeaders,
+            body: JSON.stringify(bridgeBody),
+          });
+
+          if (bridgeRes.ok) {
+            const bridgeData = await bridgeRes.json();
+            buResult = {
+              runId: bridgeData.run_id,
+              status: "running",
+              statusUrl: `${BRIDGE_URL}/runs/${bridgeData.run_id}/status`,
+              screenshotUrl: `${BRIDGE_URL}/runs/${bridgeData.run_id}/screenshot`,
+              mode: bridgeData.mode || "bridge",
+            };
+            buError = null;
+            console.log(`[browser_task] Bridge task started: ${bridgeData.run_id} (mode: ${bridgeData.mode})`);
+          } else {
+            const errText = await bridgeRes.text();
+            buError = { status: bridgeRes.status, message: `Bridge failed (${bridgeRes.status}): ${errText?.slice(0, 500)}` };
+            console.error(`[browser_task] Bridge error: ${errText?.slice(0, 200)}`);
+          }
+        } catch (err: any) {
+          buError = { status: 0, message: `Bridge unreachable: ${err?.message}` };
+          console.error("[browser_task] Bridge unreachable:", err?.message);
         }
       }
 
       // Build response
       const result: any = {
         success: !!buResult,
-        provider: "browser_use",
+        provider: usedProvider,
         task: taskStr,
         url: scrapedUrl || startUrl,
       };
@@ -1251,14 +1295,18 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         result.sessionId = buResult.sessionId;
         result.liveUrl = buResult.liveUrl;
         result.taskStatus = buResult.status;
-        result.message = `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
+        if (buResult.statusUrl) result.statusUrl = buResult.statusUrl;
+        if (buResult.screenshotUrl) result.screenshotUrl = buResult.screenshotUrl;
+        result.message = usedProvider === "self_hosted_bridge"
+          ? `🔧 Self-hosted bridge task ${buResult.runId} is running. Poll status at ${buResult.statusUrl}`
+          : `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
       } else {
         result.taskStatus = "failed_to_start";
-        result.error = buError?.message || "Browser Use task failed to start.";
+        result.error = buError?.message || "All browser providers failed.";
         result.statusCode = buError?.status;
         result.message = pageContent
-          ? "Page content was retrieved, but Browser Use task creation failed."
-          : "Browser Use task creation failed.";
+          ? "Page content was retrieved via Firecrawl, but browser task creation failed on both Cloud and Bridge."
+          : "Browser task creation failed on all providers (Cloud API out of credits, Bridge not available).";
       }
 
       return JSON.stringify(result);
