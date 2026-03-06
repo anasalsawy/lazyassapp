@@ -477,6 +477,16 @@ function LovableMessageContent({ content, role }: { content: string; role: "user
           interactive={embed.interactive}
         />
       ))}
+      {screenshots.map((ss, i) => (
+        <div key={`ss-${i}`} className="mt-2 rounded-lg overflow-hidden border border-border/40 bg-muted/30">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/60 border-b border-border/30">
+            <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground font-medium">Browser Screenshot</span>
+            <a href={ss.url} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-primary hover:underline">Open</a>
+          </div>
+          <img src={ss.url} alt={ss.alt || "Screenshot"} className="w-full max-h-96 object-contain" loading="lazy" />
+        </div>
+      ))}
     </>
   );
 }
