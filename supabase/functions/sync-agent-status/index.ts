@@ -230,10 +230,11 @@ serve(async (req) => {
       console.log(`[SyncAgentStatus] Killed orphan task: ${task.id} (${task.task_type})`);
     }
 
-    console.log(`[SyncAgentStatus] Sync complete:`, { ...results, staleRuns: staleRunCount, staleTasks: staleTaskCount });
+    const finalResults = { ...results, staleRuns: staleRunCount, staleTasks: staleTaskCount };
+    console.log(`[SyncAgentStatus] Sync complete:`, finalResults);
 
     return new Response(
-      JSON.stringify({ success: true, results }),
+      JSON.stringify({ success: true, results: finalResults }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
