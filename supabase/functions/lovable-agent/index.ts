@@ -1279,7 +1279,7 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
       // Build response
       const result: any = {
         success: !!buResult,
-        provider: "browser_use",
+        provider: usedProvider,
         task: taskStr,
         url: scrapedUrl || startUrl,
       };
@@ -1295,14 +1295,18 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         result.sessionId = buResult.sessionId;
         result.liveUrl = buResult.liveUrl;
         result.taskStatus = buResult.status;
-        result.message = `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
+        if (buResult.statusUrl) result.statusUrl = buResult.statusUrl;
+        if (buResult.screenshotUrl) result.screenshotUrl = buResult.screenshotUrl;
+        result.message = usedProvider === "self_hosted_bridge"
+          ? `🔧 Self-hosted bridge task ${buResult.runId} is running. Poll status at ${buResult.statusUrl}`
+          : `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
       } else {
         result.taskStatus = "failed_to_start";
-        result.error = buError?.message || "Browser Use task failed to start.";
+        result.error = buError?.message || "All browser providers failed.";
         result.statusCode = buError?.status;
         result.message = pageContent
-          ? "Page content was retrieved, but Browser Use task creation failed."
-          : "Browser Use task creation failed.";
+          ? "Page content was retrieved via Firecrawl, but browser task creation failed on both Cloud and Bridge."
+          : "Browser task creation failed on all providers (Cloud API out of credits, Bridge not available).";
       }
 
       return JSON.stringify(result);
