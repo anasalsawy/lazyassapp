@@ -534,20 +534,20 @@ async function runTwoAgentLoop(
         continue;
       }
 
-      // ── BROWSER_COMMANDS — send to bridge ───────────────────────
-      const browserCmds = plannerDecision.BROWSER_COMMANDS;
-      if (!browserCmds || !browserCmds.commands || browserCmds.commands.length === 0) {
-        await log("error", "Planner produced no commands");
-        failureBudget["no_commands"] = (failureBudget["no_commands"] || 0) + 1;
-        if (failureBudget["no_commands"] >= 3) {
-          return { success: false, error: "Planner repeatedly failed to produce commands", stepsUsed: stepCount, milestones };
+      // ── BROWSER_TASK — send to bridge ───────────────────────────
+      const browserTask = plannerDecision.BROWSER_TASK;
+      if (!browserTask || !browserTask.url) {
+        await log("error", "Planner produced no task or missing URL");
+        failureBudget["no_task"] = (failureBudget["no_task"] || 0) + 1;
+        if (failureBudget["no_task"] >= 3) {
+          return { success: false, error: "Planner repeatedly failed to produce a task", stepsUsed: stepCount, milestones };
         }
         continue;
       }
 
       // Track phase advancement
-      if (browserCmds.current_phase_id && currentPhase && browserCmds.current_phase_id !== currentPhase.phase_id) {
-        const newIdx = researcherRoute.phases.findIndex((p: any) => p.phase_id === browserCmds.current_phase_id);
+      if (browserTask.current_phase_id && currentPhase && browserTask.current_phase_id !== currentPhase.phase_id) {
+        const newIdx = researcherRoute.phases.findIndex((p: any) => p.phase_id === browserTask.current_phase_id);
         if (newIdx >= 0 && newIdx !== currentPhaseIndex) {
           phasesCompleted.push(currentPhase.phase_id);
           currentPhaseIndex = newIdx;
@@ -555,40 +555,38 @@ async function runTwoAgentLoop(
         }
       }
 
-      const cmdCount = browserCmds.commands.length;
-      await log("info", `Planner → Bridge: ${cmdCount} commands`, {
+      await log("info", `Planner → Bridge: ${browserTask.url}`, {
         phase: currentPhase?.phase_name,
-        risk: browserCmds.risk_level,
-        actions: browserCmds.commands.map((c: any) => c.action),
+        risk: browserTask.risk_level,
+        actions: browserTask.actions?.map((a: any) => a.action) || [],
+        selector: browserTask.selector,
       });
 
       // ── SEND TO BRIDGE ──────────────────────────────────────────
       try {
-        const bridgeResult = await runBridgeCommands(
+        const bridgeResult = await callBridge(
           bridgeUrl,
           bridgeKey,
-          browserCmds.commands,
+          browserTask.url,
+          browserTask.actions,
+          browserTask.extract_text !== false,
+          browserTask.selector,
         );
 
-        const resultData = bridgeResult.result || {};
         lastExecutionResult = {
-          status: bridgeResult.status === "completed" || bridgeResult.status === "finished" ? "success" : "failed",
-          commands_sent: cmdCount,
-          commands_executed: resultData.steps_taken || 0,
-          action_history: resultData.action_history || [],
-          current_url: resultData.current_url || null,
-          page_title: resultData.page_title || null,
-          extracted_data: resultData.extracted_data || [],
-          page_content: resultData.page_content || null,
-          errors: resultData.errors || null,
-          result: resultData.result || resultData.error || "No output",
+          status: bridgeResult.status === "success" ? "success" : "failed",
+          current_url: bridgeResult.url || browserTask.url,
+          page_title: bridgeResult.title || null,
+          page_content: bridgeResult.content || null,
+          extracted: bridgeResult.extracted || null,
+          action_results: bridgeResult.action_results || null,
         };
 
         await log("info", `Bridge → ${lastExecutionResult.status}`, {
           url: lastExecutionResult.current_url,
-          commands_executed: lastExecutionResult.commands_executed,
-          extracted_items: (lastExecutionResult.extracted_data || []).length,
-          errors: lastExecutionResult.errors ? lastExecutionResult.errors.length : 0,
+          title: lastExecutionResult.page_title,
+          content_length: (lastExecutionResult.page_content || "").length,
+          has_extracted: !!lastExecutionResult.extracted,
         });
 
         // Track URLs
@@ -603,7 +601,6 @@ async function runTwoAgentLoop(
         await log("error", `Bridge call failed: ${err.message}`);
         lastExecutionResult = {
           status: "failed",
-          commands_sent: cmdCount,
           result: `Bridge error: ${err.message}`,
           current_url: null,
         };
