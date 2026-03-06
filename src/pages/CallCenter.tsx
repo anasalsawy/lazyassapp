@@ -467,20 +467,31 @@ export default function CallCenter() {
                     </div>
                     <h2 className="text-2xl font-bold">New Call</h2>
                     <p className="text-muted-foreground text-sm">
-                      3-agent pipeline: Analyst evaluates, Director strategizes, Caller speaks.
+                      Just say what you need — or switch to manual mode for full control.
                     </p>
                   </div>
 
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium mb-1.5 block">Phone Number</label>
-                      <Input
-                        value={phoneNumber}
-                        onChange={(e) => setPhoneNumber(e.target.value)}
-                        placeholder="+1 (555) 123-4567"
-                        className="bg-muted/30"
-                      />
-                    </div>
+                  {/* Mode Toggle */}
+                  <div className="flex items-center justify-center gap-2 p-1 rounded-lg bg-muted/30 border border-border/40">
+                    <button
+                      onClick={() => setSmartMode(true)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-all ${
+                        smartMode ? "bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30" : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Smart Mode
+                    </button>
+                    <button
+                      onClick={() => setSmartMode(false)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-all ${
+                        !smartMode ? "bg-muted/50 text-foreground border border-border/40" : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <Phone className="w-3.5 h-3.5" />
+                      Manual
+                    </button>
+                  </div>
                     <div>
                       <label className="text-sm font-medium mb-1.5 block">Call Objective</label>
                       <Textarea
