@@ -1189,12 +1189,12 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
     }
 
     case "browser_task": {
-      // Self-hosted Bridge is the ONLY browser engine — no cloud fallback
-      const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL");
-      const BRIDGE_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY");
-      const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+      // Route through the browser-agent edge function (Researcher → Planner → Bridge)
       const taskStr = (args.task as string) || "";
       const startUrl = (args.start_url as string) || "";
+      const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+      const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
       // Step 1: Scrape page content via Firecrawl for immediate results
       let pageContent = "";
@@ -1218,185 +1218,104 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         }
       }
 
-      // Load proxy config from browser_profiles
-      let proxyConfig: { server: string; username?: string; password?: string } | null = null;
+      // Step 2: Invoke browser-agent edge function (Researcher→Planner→Bridge loop, async)
+      let agentResult: any = null;
+      let agentError: string | null = null;
+
       try {
-        const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-        const { data: browserProfile } = await supabase.from("browser_profiles")
-          .select("proxy_server, proxy_username, proxy_password_enc, browser_use_profile_id")
-          .eq("user_id", _currentUserId || "").single();
+        console.log(`[browser_task] Invoking browser-agent for: ${taskStr.slice(0, 100)}`);
 
-        if (browserProfile?.proxy_server) {
-          proxyConfig = {
-            server: browserProfile.proxy_server,
-            username: browserProfile.proxy_username || undefined,
-            password: browserProfile.proxy_password_enc || undefined,
-          };
-          console.log(`[browser_task] Proxy configured: ${proxyConfig.server}`);
+        if (_sendEventFn) {
+          _sendEventFn("browser_started", { provider: "browser_agent", task: taskStr });
         }
-      } catch (_) {}
 
-      let buResult: any = null;
-      let buError: { status?: number; message: string } | null = null;
-      let usedProvider = "self_hosted_bridge";
+        const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_KEY);
 
-      // --- Attempt 1: Self-hosted Bridge (PRIMARY) ---
-      if (BRIDGE_URL) {
-        console.log(`[browser_task] Using self-hosted bridge (primary): ${BRIDGE_URL}`);
-        usedProvider = "self_hosted_bridge";
-        try {
-          const bridgeHeaders: Record<string, string> = { "Content-Type": "application/json" };
-          if (BRIDGE_KEY) bridgeHeaders["Authorization"] = `Bearer ${BRIDGE_KEY}`;
+        // Start async run
+        const agentRes = await fetch(`${SUPABASE_URL}/functions/v1/browser-agent`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${SERVICE_KEY}`,
+            apikey: SERVICE_KEY,
+          },
+          body: JSON.stringify({
+            action: "run",
+            goal: taskStr,
+            start_url: startUrl || undefined,
+            user_id: _currentUserId,
+            context: { userId: _currentUserId },
+          }),
+        });
 
-          const bridgeBody: any = { task: taskStr, max_steps: 50 };
-          if (startUrl) bridgeBody.start_url = startUrl;
-          if (proxyConfig) bridgeBody.proxy = proxyConfig;
+        if (!agentRes.ok) {
+          const errText = await agentRes.text();
+          throw new Error(`browser-agent returned ${agentRes.status}: ${errText.slice(0, 300)}`);
+        }
 
-          const bridgeRes = await fetch(`${BRIDGE_URL}/run-task`, {
-            method: "POST",
-            headers: bridgeHeaders,
-            body: JSON.stringify(bridgeBody),
-          });
+        const startData = await agentRes.json();
+        const runId = startData.runId;
+        console.log(`[browser_task] browser-agent started, runId: ${runId}`);
 
-          if (bridgeRes.ok) {
-            const bridgeData = await bridgeRes.json();
-            const bridgeRunId = bridgeData.run_id;
-            const statusUrl = `${BRIDGE_URL}/runs/${bridgeRunId}/status`;
-            const screenshotUrl = `${BRIDGE_URL}/runs/${bridgeRunId}/screenshot`;
-            console.log(`[browser_task] Bridge task started: ${bridgeRunId} (mode: ${bridgeData.mode})`);
+        if (_sendEventFn) {
+          _sendEventFn("browser_progress", { runId, status: "running", step: 0 });
+        }
 
-            // Send initial browser_started event so frontend shows live panel
-            if (_sendEventFn) {
-              _sendEventFn("browser_started", {
-                runId: bridgeRunId,
-                provider: "self_hosted_bridge",
-                task: taskStr,
-                screenshotUrl,
-                statusUrl,
+        // Poll agent_runs for completion (up to 4 minutes)
+        if (runId) {
+          for (let attempt = 0; attempt < 60; attempt++) {
+            await new Promise(r => setTimeout(r, 4000));
+            const { data: run } = await supabaseAdmin.from("agent_runs")
+              .select("*").eq("id", runId).single();
+
+            if (!run) continue;
+
+            if (_sendEventFn && (attempt % 3 === 0)) {
+              _sendEventFn("browser_progress", {
+                runId,
+                status: run.status,
+                step: attempt + 1,
               });
             }
 
-            // Poll bridge for completion with live progress streaming
-            // Patient polling: wait as long as needed, no stuck detection abandonment
-            let bridgeResult: any = null;
-            const pollHeaders: Record<string, string> = {};
-            if (BRIDGE_KEY) pollHeaders["Authorization"] = `Bearer ${BRIDGE_KEY}`;
-            let lastStep = 0;
-            let consecutiveErrors = 0;
-            const MAX_CONSECUTIVE_ERRORS = 15; // 15 × 4s = 60s of total network failure before giving up
-
-            for (let attempt = 0; attempt < 75; attempt++) { // 75 × 4s = 5 minutes max
-              await new Promise(r => setTimeout(r, 4000));
-              try {
-                const pollRes = await fetch(statusUrl, { headers: pollHeaders });
-                if (pollRes.ok) {
-                  consecutiveErrors = 0; // Reset on any successful response
-                  const pollData = await pollRes.json();
-                  const currentStep = pollData.steps_taken || pollData.current_step || 0;
-                  const bridgeStatus = pollData.status;
-                  console.log(`[browser_task] Bridge poll #${attempt + 1}: status=${bridgeStatus}, step=${currentStep}`);
-
-                  // Stream progress to frontend on every poll
-                  if (_sendEventFn) {
-                    _sendEventFn("browser_progress", {
-                      runId: bridgeRunId,
-                      status: bridgeStatus,
-                      step: currentStep,
-                      currentUrl: pollData.current_url || null,
-                      screenshotUrl: pollData.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : null,
-                      stepScreenshotUrl: currentStep > 0 ? `${screenshotUrl}?step=${currentStep}&t=${Date.now()}` : null,
-                      actionHistory: pollData.action_history?.slice(-3) || [],
-                    });
-                  }
-                  lastStep = currentStep;
-
-                  if (bridgeStatus === "completed") {
-                    bridgeResult = pollData;
-                    if (_sendEventFn) {
-                      _sendEventFn("browser_completed", {
-                        runId: bridgeRunId,
-                        stepsTaken: pollData.steps_taken || 0,
-                        currentUrl: pollData.current_url || null,
-                        screenshotUrl: pollData.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : null,
-                        result: pollData.result || null,
-                      });
-                    }
-                    break;
-                  } else if (bridgeStatus === "error") {
-                    buError = { message: `Bridge task error: ${pollData.error || "unknown"}` };
-                    if (_sendEventFn) {
-                      _sendEventFn("browser_error", {
-                        runId: bridgeRunId,
-                        error: pollData.error || "unknown",
-                      });
-                    }
-                    break;
-                  }
-                  // Any other status (starting, queued, running) — just keep waiting patiently
-                } else {
-                  consecutiveErrors++;
-                  console.warn(`[browser_task] Bridge poll #${attempt + 1} returned ${pollRes.status} (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})`);
-                  if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                    buError = { message: `Bridge returned errors for ${consecutiveErrors} consecutive polls (${consecutiveErrors * 4}s).` };
-                    if (_sendEventFn) {
-                      _sendEventFn("browser_error", { runId: bridgeRunId, error: "Bridge server not responding after extended wait." });
-                    }
-                    break;
-                  }
-                }
-              } catch (pollErr) {
-                consecutiveErrors++;
-                console.warn(`[browser_task] Bridge poll #${attempt + 1} fetch error:`, pollErr);
-                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                  buError = { message: `Bridge unreachable for ${consecutiveErrors} consecutive polls.` };
-                  if (_sendEventFn) {
-                    _sendEventFn("browser_error", { runId: bridgeRunId, error: "Bridge connection lost after extended wait." });
-                  }
-                  break;
-                }
-              }
-            }
-
-            if (bridgeResult) {
-              buResult = {
-                runId: bridgeRunId,
-                status: "completed",
-                statusUrl,
-                screenshotUrl,
-                mode: bridgeData.mode || "bridge",
-                bridgeOutput: bridgeResult.result || null,
-                currentUrl: bridgeResult.current_url || null,
-                pageTitle: bridgeResult.page_title || null,
-                pageContent: bridgeResult.page_content || null,
-                stepsTaken: bridgeResult.steps_taken || 0,
-                actionHistory: bridgeResult.action_history || [],
-                hasScreenshot: bridgeResult.has_screenshot || false,
-              };
-              buError = null;
-            } else if (!buError) {
-              console.warn(`[browser_task] Bridge timed out after 5min polling.`);
-              buError = { message: "Bridge task timed out after 5 minutes of polling." };
+            if (run.status === "completed") {
+              agentResult = run.summary_json || { success: true };
+              agentResult.success = true;
               if (_sendEventFn) {
-                _sendEventFn("browser_error", { runId: bridgeRunId, error: "Bridge timed out after 5 minutes." });
+                _sendEventFn("browser_completed", {
+                  runId,
+                  success: true,
+                  summary: agentResult.finalResult?.summary || "Task completed",
+                });
               }
+              break;
+            } else if (run.status === "failed") {
+              agentError = run.error_message || "Browser agent task failed";
+              if (_sendEventFn) {
+                _sendEventFn("browser_error", { runId, error: agentError });
+              }
+              break;
             }
-          } else {
-            const errText = await bridgeRes.text();
-            buError = { status: bridgeRes.status, message: `Bridge failed (${bridgeRes.status}): ${errText?.slice(0, 500)}` };
-            console.error(`[browser_task] Bridge error: ${errText?.slice(0, 200)}`);
           }
-        } catch (err: any) {
-          buError = { status: 0, message: `Bridge unreachable: ${err?.message}` };
-          console.error("[browser_task] Bridge unreachable:", err?.message);
-        }
-      }
 
-      // No cloud fallback — bridge only
+          if (!agentResult && !agentError) {
+            agentError = "Browser agent timed out after 4 minutes of polling.";
+            if (_sendEventFn) {
+              _sendEventFn("browser_error", { runId, error: agentError });
+            }
+          }
+        } else {
+          agentError = "browser-agent did not return a runId";
+        }
+      } catch (err: any) {
+        agentError = `browser-agent error: ${err?.message}`;
+        console.error(`[browser_task] ${agentError}`);
+      }
 
       // Build response
       const result: any = {
-        success: !!buResult,
-        provider: usedProvider,
+        success: !!agentResult?.success,
+        provider: "browser_agent",
         task: taskStr,
         url: scrapedUrl || startUrl,
       };
@@ -1406,41 +1325,20 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         result.pageContent = pageContent.substring(0, 6000);
       }
 
-      if (buResult) {
-        result.runId = buResult.runId;
-        result.taskId = buResult.runId;
-        result.sessionId = buResult.sessionId;
-        result.liveUrl = buResult.liveUrl;
-        result.taskStatus = buResult.status;
-        if (buResult.statusUrl) result.statusUrl = buResult.statusUrl;
-        if (buResult.screenshotUrl && buResult.hasScreenshot) {
-          result.screenshotUrl = buResult.screenshotUrl;
-        }
-        // Include bridge completion data
-        if (buResult.bridgeOutput) result.bridgeOutput = buResult.bridgeOutput;
-        if (buResult.currentUrl) result.currentUrl = buResult.currentUrl;
-        if (buResult.pageTitle && !result.pageTitle) result.pageTitle = buResult.pageTitle;
-        if (buResult.pageContent && !result.pageContent) result.pageContent = buResult.pageContent?.substring(0, 6000);
-        if (buResult.stepsTaken) result.stepsTaken = buResult.stepsTaken;
-        if (buResult.actionHistory) result.actionHistory = buResult.actionHistory;
-
-        if (usedProvider === "self_hosted_bridge" && buResult.status === "completed") {
-          result.message = `✅ Bridge task completed in ${buResult.stepsTaken || '?'} steps. URL: ${buResult.currentUrl || 'N/A'}`;
-          if (buResult.hasScreenshot) {
-            result.message += `\n\n📸 Screenshot: ${buResult.screenshotUrl}`;
-          }
-        } else if (usedProvider === "self_hosted_bridge") {
-          result.message = `🔧 Bridge task ${buResult.runId} is still running. Poll: ${buResult.statusUrl}`;
-        } else {
-          result.message = `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
-        }
+      if (agentResult) {
+        const fr = agentResult.finalResult;
+        if (fr?.extracted_data) result.extractedData = fr.extracted_data;
+        if (fr?.summary) result.summary = fr.summary;
+        if (agentResult.stepsUsed) result.stepsTaken = agentResult.stepsUsed;
+        if (agentResult.phasesCompleted) result.phasesCompleted = agentResult.phasesCompleted;
+        if (fr?.evidence) result.evidence = fr.evidence;
+        result.message = fr?.summary || `Browser agent completed in ${agentResult.stepsUsed || '?'} steps.`;
       } else {
-        result.taskStatus = "failed_to_start";
-        result.error = buError?.message || "All browser providers failed.";
-        result.statusCode = buError?.status;
+        result.taskStatus = "failed";
+        result.error = agentError || "Browser agent failed.";
         result.message = pageContent
-          ? "Page content was retrieved via Firecrawl, but bridge browser task failed."
-          : "Bridge browser task failed. Check if the bridge server is running.";
+          ? "Page content was retrieved via Firecrawl, but the browser agent task failed: " + (agentError || "unknown error")
+          : "Browser agent task failed: " + (agentError || "unknown error");
       }
 
       return JSON.stringify(result);
