@@ -165,6 +165,9 @@ export function AppLayout({ children }: AppLayoutProps) {
 
       {/* Main Content */}
       <main>{children}</main>
+
+      {/* Command Palette */}
+      <CommandPalette />
     </div>
   );
 }
