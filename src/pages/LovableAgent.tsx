@@ -636,6 +636,9 @@ export default function LovableAgent() {
 
   // ── Persistent client-side polling for browser tasks ──────────────────────
   // Kicks in when SSE stream ends but browser task is still running
+  const clientStuckCountRef = useRef(0);
+  const CLIENT_STUCK_LIMIT = 6; // 6 polls × 5s = 30s stuck client-side → give up
+
   useEffect(() => {
     // Only start persistent polling when NOT loading (SSE ended) and browser is still active
     if (isLoading || !browserLiveState) return;
@@ -644,40 +647,55 @@ export default function LovableAgent() {
 
     const { statusUrl, screenshotUrl } = browserUrlsRef.current;
     console.log("[BrowserPoll] Starting persistent client-side polling:", statusUrl);
+    clientStuckCountRef.current = 0;
+
+    const stopPolling = () => {
+      if (browserPollRef.current) {
+        clearInterval(browserPollRef.current);
+        browserPollRef.current = null;
+      }
+    };
 
     const poll = async () => {
       try {
         const res = await fetch(statusUrl);
-        if (!res.ok) return;
+        if (!res.ok) {
+          clientStuckCountRef.current++;
+          if (clientStuckCountRef.current >= CLIENT_STUCK_LIMIT) {
+            console.warn("[BrowserPoll] Bridge unreachable for too long. Stopping.");
+            setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: "Lost connection to browser server." } : prev);
+            stopPolling();
+          }
+          return;
+        }
         const data = await res.json();
         const step = data.steps_taken || data.current_step || 0;
 
         if (data.status === "completed") {
           setBrowserLiveState(prev => prev ? {
-            ...prev,
-            status: "completed",
-            step: data.steps_taken || prev.step,
+            ...prev, status: "completed", step: data.steps_taken || prev.step,
             currentUrl: data.current_url || prev.currentUrl,
             screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
             result: data.result || null,
           } : prev);
           browserLiveRef.current = null;
-          // Stop polling
-          if (browserPollRef.current) {
-            clearInterval(browserPollRef.current);
-            browserPollRef.current = null;
-          }
+          stopPolling();
         } else if (data.status === "error") {
-          setBrowserLiveState(prev => prev ? {
-            ...prev,
-            status: "error",
-            error: data.error || "Task failed",
-          } : prev);
-          if (browserPollRef.current) {
-            clearInterval(browserPollRef.current);
-            browserPollRef.current = null;
-          }
+          setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: data.error || "Task failed" } : prev);
+          stopPolling();
         } else {
+          // Check if stuck at step 0
+          if (step === 0 && (data.status === "starting" || data.status === "queued")) {
+            clientStuckCountRef.current++;
+            if (clientStuckCountRef.current >= CLIENT_STUCK_LIMIT) {
+              console.warn("[BrowserPoll] Browser stuck at step 0 for too long. Giving up.");
+              setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: "Browser task stuck — server may be cold-starting. Try again in a minute." } : prev);
+              stopPolling();
+              return;
+            }
+          } else {
+            clientStuckCountRef.current = 0;
+          }
           // Still running — update progress
           setBrowserLiveState(prev => prev ? {
             ...prev,
@@ -693,6 +711,11 @@ export default function LovableAgent() {
         }
       } catch (err) {
         console.warn("[BrowserPoll] Poll error:", err);
+        clientStuckCountRef.current++;
+        if (clientStuckCountRef.current >= CLIENT_STUCK_LIMIT) {
+          setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: "Lost connection to browser server." } : prev);
+          stopPolling();
+        }
       }
     };
 
@@ -700,12 +723,7 @@ export default function LovableAgent() {
     poll();
     browserPollRef.current = setInterval(poll, 5000);
 
-    return () => {
-      if (browserPollRef.current) {
-        clearInterval(browserPollRef.current);
-        browserPollRef.current = null;
-      }
-    };
+    return () => { stopPolling(); };
   }, [isLoading, browserLiveState?.status]);
 
   const sendMessage = useCallback(async (text?: string) => {
