@@ -856,7 +856,99 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // ACTION: STATUS — Call status callback from Twilio
+    // ACTION: INITIATE-MISSION — Start a persistent mission that retries across stores
+    // ═══════════════════════════════════════════════════════════════════════
+    if (action === "initiate-mission") {
+      const body = await req.json();
+      const { objective, tone, script, caller_name, voice, company_name, agent_name, agent_role,
+        success_criteria, allowed_actions, constraints, disclosure_policy, call_type,
+        retry_stores, max_attempts } = body;
+
+      if (!objective || !retry_stores?.length) {
+        return new Response(JSON.stringify({ error: "objective and retry_stores[] required" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const supabase = getSupabase();
+      const authHeader = req.headers.get("Authorization");
+      let userId = "system";
+      if (authHeader) {
+        const { data: { user } } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
+        if (user) userId = user.id;
+      }
+
+      // Create parent mission task
+      const missionPayload = {
+        objective, tone, script, caller_name, voice, company_name, agent_name, agent_role,
+        success_criteria, allowed_actions, constraints, disclosure_policy, call_type,
+      };
+
+      const { data: missionTask } = await supabase.from("agent_tasks").insert({
+        user_id: userId,
+        task_type: "voice_mission",
+        status: "running",
+        payload: missionPayload,
+        result: {
+          retry_stores: retry_stores, // [{phone, name, address?, department_hint?}]
+          max_attempts: max_attempts || retry_stores.length,
+          attempts: [],
+          current_store_index: 0,
+          objective_met: false,
+          winning_store: null,
+        },
+      }).select("id").single();
+
+      const missionId = missionTask?.id || "unknown";
+      console.log(`[voice-agent] 🎯 MISSION STARTED: ${missionId} — ${retry_stores.length} stores queued`);
+
+      // Kick off first call
+      const firstStore = retry_stores[0];
+      const callBody = {
+        ...missionPayload,
+        phone_number: firstStore.phone,
+        constraints: `${constraints || ""}\nStore: ${firstStore.name}${firstStore.department_hint ? ` (${firstStore.department_hint})` : ""}`.trim(),
+      };
+
+      // Initiate via internal fetch to reuse existing initiate logic
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+      const initiateResp = await fetch(
+        `${SUPABASE_URL}/functions/v1/voice-agent?action=initiate&mission_id=${missionId}&store_index=0`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(authHeader ? { Authorization: authHeader } : {}),
+            apikey: Deno.env.get("SUPABASE_ANON_KEY") || "",
+          },
+          body: JSON.stringify(callBody),
+        }
+      );
+      const initiateData = await initiateResp.json();
+
+      // Record first attempt
+      await supabase.from("agent_tasks").update({
+        result: {
+          retry_stores,
+          max_attempts: max_attempts || retry_stores.length,
+          attempts: [{ store: firstStore, child_task_id: initiateData.taskId, started_at: new Date().toISOString(), status: "calling" }],
+          current_store_index: 0,
+          objective_met: false,
+          winning_store: null,
+        },
+      }).eq("id", missionId);
+
+      return new Response(JSON.stringify({
+        success: true,
+        missionId,
+        totalStores: retry_stores.length,
+        firstCall: initiateData,
+        message: `Mission started. Will retry across ${retry_stores.length} stores until objective is met.`,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ACTION: STATUS — Call status callback from Twilio (with mission auto-retry)
     // ═══════════════════════════════════════════════════════════════════════
     if (action === "status") {
       const formData = await req.text();
@@ -864,13 +956,15 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
       const callStatus = params.get("CallStatus") || "";
       const callDuration = params.get("CallDuration") || "0";
       const taskId = url.searchParams.get("task_id") || "";
+      const missionId = url.searchParams.get("mission_id") || "";
+      const storeIndexStr = url.searchParams.get("store_index") || "";
 
-      console.log(`[voice-agent] Status — TaskId: ${taskId}, Status: ${callStatus}, Duration: ${callDuration}s`);
+      console.log(`[voice-agent] Status — TaskId: ${taskId}, Status: ${callStatus}, Duration: ${callDuration}s, MissionId: ${missionId}`);
+
+      const supabase = getSupabase();
 
       if (taskId) {
-        const supabase = getSupabase();
-        const { data: task } = await supabase.from("agent_tasks").select("result, status").eq("id", taskId).single();
-        // Only update status if not already set by the gather handler (which has objective context)
+        const { data: task } = await supabase.from("agent_tasks").select("result, status, payload").eq("id", taskId).single();
         const alreadyResolved = task?.status === "completed" || task?.status === "failed";
         const twilioFailed = ["busy", "no-answer", "canceled", "failed"].includes(callStatus);
         const newStatus = alreadyResolved ? task.status : (twilioFailed ? "failed" : "completed");
@@ -881,6 +975,90 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
           ...(errorMsg ? { error_message: errorMsg } : {}),
           result: { ...(task?.result as any || {}), callStatus, callDuration: parseInt(callDuration) },
         }).eq("id", taskId);
+
+        // ── MISSION AUTO-RETRY LOGIC ──
+        // If this call belongs to a mission AND objective was NOT met, try next store
+        if (missionId) {
+          const taskResult = task?.result as any || {};
+          const objectiveMet = taskResult?.lastDirective?.objectiveMet === true;
+
+          const { data: mission } = await supabase.from("agent_tasks").select("result, payload, status").eq("id", missionId).single();
+          if (mission && mission.status === "running") {
+            const mResult = mission.result as any;
+            const attempts = mResult.attempts || [];
+            const storeIndex = parseInt(storeIndexStr) || 0;
+
+            // Update current attempt
+            if (attempts[storeIndex]) {
+              attempts[storeIndex].status = objectiveMet ? "success" : (twilioFailed ? callStatus : "objective_not_met");
+              attempts[storeIndex].ended_at = new Date().toISOString();
+              attempts[storeIndex].call_duration = parseInt(callDuration);
+              attempts[storeIndex].call_status = callStatus;
+              attempts[storeIndex].objective_met = objectiveMet;
+              if (taskResult?.conversationHistory) {
+                attempts[storeIndex].transcript_summary = taskResult.conversationHistory.slice(-4).map((t: any) => `${t.role}: ${t.content}`).join(" | ");
+              }
+            }
+
+            if (objectiveMet) {
+              // 🎉 SUCCESS — mission complete
+              console.log(`[voice-agent] 🎉 MISSION ${missionId} SUCCEEDED at store index ${storeIndex}`);
+              await supabase.from("agent_tasks").update({
+                status: "completed",
+                completed_at: new Date().toISOString(),
+                result: { ...mResult, attempts, objective_met: true, winning_store: mResult.retry_stores[storeIndex], current_store_index: storeIndex },
+              }).eq("id", missionId);
+            } else {
+              // Try next store
+              const nextIndex = storeIndex + 1;
+              const maxAttempts = mResult.max_attempts || mResult.retry_stores.length;
+              
+              if (nextIndex < mResult.retry_stores.length && nextIndex < maxAttempts) {
+                const nextStore = mResult.retry_stores[nextIndex];
+                console.log(`[voice-agent] 🔄 MISSION ${missionId} — Store ${storeIndex} failed (${callStatus}). Trying store ${nextIndex}: ${nextStore.name} (${nextStore.phone})`);
+
+                // Brief backoff (2s) to avoid hammering
+                await new Promise(r => setTimeout(r, 2000));
+
+                const mPayload = mission.payload as any;
+                const callBody = {
+                  ...mPayload,
+                  phone_number: nextStore.phone,
+                  constraints: `${mPayload.constraints || ""}\nStore: ${nextStore.name}${nextStore.department_hint ? ` (${nextStore.department_hint})` : ""}`.trim(),
+                };
+
+                const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+                const nextResp = await fetch(
+                  `${SUPABASE_URL}/functions/v1/voice-agent?action=initiate&mission_id=${missionId}&store_index=${nextIndex}`,
+                  {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      apikey: Deno.env.get("SUPABASE_ANON_KEY") || "",
+                    },
+                    body: JSON.stringify(callBody),
+                  }
+                );
+                const nextData = await nextResp.json().catch(() => ({}));
+
+                attempts.push({ store: nextStore, child_task_id: nextData.taskId, started_at: new Date().toISOString(), status: "calling" });
+
+                await supabase.from("agent_tasks").update({
+                  result: { ...mResult, attempts, current_store_index: nextIndex },
+                }).eq("id", missionId);
+              } else {
+                // 💀 ALL STORES EXHAUSTED — mission failed
+                console.log(`[voice-agent] 💀 MISSION ${missionId} FAILED — all ${attempts.length} stores exhausted`);
+                await supabase.from("agent_tasks").update({
+                  status: "failed",
+                  completed_at: new Date().toISOString(),
+                  error_message: `All ${attempts.length} stores tried. Objective not met.`,
+                  result: { ...mResult, attempts, objective_met: false, current_store_index: nextIndex - 1 },
+                }).eq("id", missionId);
+              }
+            }
+          }
+        }
       }
 
       return new Response("<Response/>", { headers: { "Content-Type": "text/xml" } });
