@@ -981,15 +981,15 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
           newStatus = task.status;
         } else if (twilioFailed) {
           newStatus = "failed";
-        } else if (missionId && !objectiveMet) {
-          // Twilio says "completed" but objective wasn't met — mark failed so mission retries
+        } else if (!objectiveMet) {
+          // Twilio says "completed" but objective wasn't met — mark failed (triggers mission retry if applicable)
           newStatus = "failed";
         } else {
           newStatus = "completed";
         }
         
         const errorMsg = (newStatus === "failed" && !alreadyResolved) 
-          ? (twilioFailed ? `Call ${callStatus}` : `Call completed but objective not met`)
+          ? (twilioFailed ? `Call ${callStatus}` : `Call ended but objective not met`)
           : undefined;
         
         await supabase.from("agent_tasks").update({
