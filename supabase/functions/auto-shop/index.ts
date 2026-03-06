@@ -222,7 +222,7 @@ serve(async (req) => {
         return await handleCleanupSessions(supabase, user.id, BU_API_KEY);
       }
       case "start_order": {
-        return await handleStartOrder(supabase, user, payload, BU_API_KEY, LOVABLE_API_KEY || "", supabaseUrl);
+        return await handleStartOrder(supabase, user, payload, BU_API_KEY, LOVABLE_API_KEY || "", supabaseUrl, supabaseServiceKey);
       }
       case "check_order_status": {
         return await handleCheckOrderStatus(supabase, user.id, payload.orderId!);
