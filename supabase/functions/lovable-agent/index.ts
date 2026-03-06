@@ -1294,12 +1294,22 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
                   const currentStep = pollData.steps_taken || pollData.current_step || 0;
                   console.log(`[browser_task] Bridge poll #${attempt + 1}: status=${pollData.status}, step=${currentStep}`);
 
-                  // Log stuck-in-starting but don't abandon — client polls persistently
+                  // Detect stuck-in-starting: bridge accepted but never began processing
                   if (pollData.status === "starting" && currentStep === 0) {
                     stuckInStartingCount++;
-                    // Just log, keep polling — bridge may be cold-starting
+                    if (stuckInStartingCount >= STUCK_THRESHOLD) {
+                      console.error(`[browser_task] Bridge stuck in 'starting' for ${stuckInStartingCount} polls (${stuckInStartingCount * 4}s). Abandoning bridge, will fallback.`);
+                      buError = { message: `Bridge stuck in 'starting' state for ${stuckInStartingCount * 4}s — server may be cold-starting or overloaded.` };
+                      if (_sendEventFn) {
+                        _sendEventFn("browser_error", {
+                          runId: bridgeRunId,
+                          error: "Bridge stuck in starting state. Falling back to cloud provider.",
+                        });
+                      }
+                      break;
+                    }
                   } else {
-                    stuckInStartingCount = 0;
+                    stuckInStartingCount = 0; // Reset if status progresses
                   }
 
                   // Stream progress to frontend on every poll
@@ -1359,16 +1369,10 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
               };
               buError = null;
             } else if (!buError) {
-              // Timed out but still running on bridge — return as "running" so client polls persistently
-              console.log(`[browser_task] Bridge still running after edge timeout. Client will continue polling.`);
-              buResult = {
-                runId: bridgeRunId,
-                status: "running",
-                statusUrl,
-                screenshotUrl,
-                mode: bridgeData.mode || "bridge",
-              };
-              buError = null;
+              // Timed out but still running — treat as failure so we fallback to Cloud
+              console.warn(`[browser_task] Bridge timed out after 120s with no progress. Treating as failed for fallback.`);
+              buError = { message: "Bridge task timed out with no completion after 120s polling." };
+              // Don't set buResult — let fallback to Cloud kick in
             }
           } else {
             const errText = await bridgeRes.text();
