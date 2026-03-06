@@ -28,7 +28,8 @@ import {
   RotateCw,
   MoreHorizontal,
   Archive,
-  FileText
+  FileText,
+  Download
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -240,6 +241,35 @@ export default function Dashboard() {
     applied: applications.filter(a => ["applied", "applying"].includes(a.status)).length,
     inProgress: applications.filter(a => ["in-review", "interview"].includes(a.status)).length,
     responses: applications.filter(a => ["interview", "offer", "rejected"].includes(a.status)).length,
+  };
+
+  // Greeting
+  const getGreeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  };
+
+  // CSV export
+  const exportCSV = () => {
+    const headers = ["Job Title", "Company", "Platform", "Status", "Applied At", "URL"];
+    const rows = applications.map(a => [
+      a.job_title || a.job?.title || "",
+      a.company_name || a.job?.company || "",
+      a.platform || "",
+      a.status,
+      a.applied_at,
+      a.job_url || a.job?.url || "",
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `applications-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // Bulk selection handlers
