@@ -51,9 +51,11 @@ export default function CallCenter() {
 
   // Auto-retry state
   const [autoRetryEnabled, setAutoRetryEnabled] = useState(false);
-  const [retryStores, setRetryStores] = useState<Array<{ name: string; phone: string }>>([]);
+  const [retryStores, setRetryStores] = useState<Array<{ name: string; phone: string; why?: string }>>([]);
   const [newRetryName, setNewRetryName] = useState("");
   const [newRetryPhone, setNewRetryPhone] = useState("");
+  const [isSearchingStores, setIsSearchingStores] = useState(false);
+  const [searchLocation, setSearchLocation] = useState("");
 
   // Active call state
   const [activeCall, setActiveCall] = useState<CallState | null>(null);
@@ -254,6 +256,50 @@ export default function CallCenter() {
     setRetryStores(prev => prev.filter((_, i) => i !== index));
   };
 
+  // Smart store search
+  const searchStores = async () => {
+    if (!objective.trim() || !session?.access_token) return;
+    setIsSearchingStores(true);
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-stores`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            objective,
+            location: searchLocation || undefined,
+          }),
+        }
+      );
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        toast.error("Search failed", { description: data.error || "Could not find stores" });
+        return;
+      }
+      if (data.stores?.length > 0) {
+        setRetryStores(prev => {
+          const existingPhones = new Set(prev.map((s: any) => s.phone));
+          const newStores = data.stores.filter((s: any) => !existingPhones.has(s.phone));
+          return [...prev, ...newStores];
+        });
+        toast.success(`Found ${data.stores.length} ${data.product_category || ''} stores`, {
+          description: `Product: ${data.product}`,
+        });
+      } else {
+        toast.info("No stores found", { description: "Try adding them manually" });
+      }
+    } catch (e: any) {
+      toast.error("Search error", { description: e.message });
+    } finally {
+      setIsSearchingStores(false);
+    }
+  };
+
   // Inject instruction
   const injectInstruction = async () => {
     if (!injection.trim() || !activeCall?.taskId || !session?.access_token) return;
@@ -419,8 +465,32 @@ export default function CallCenter() {
                       {autoRetryEnabled && (
                         <div className="space-y-3 pt-2 border-t border-border/30">
                           <p className="text-xs text-muted-foreground">
-                            Add backup stores with phone numbers. If the primary call fails, the system will automatically try each one in order.
+                            Search for stores that sell your product, or add manually.
                           </p>
+
+                          {/* Smart Search */}
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={searchLocation}
+                              onChange={(e) => setSearchLocation(e.target.value)}
+                              placeholder="Location (optional, e.g. Houston TX)"
+                              className="bg-muted/20 text-sm h-8"
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={searchStores}
+                              disabled={isSearchingStores || !objective.trim()}
+                              className="h-8 px-3 shrink-0 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                            >
+                              {isSearchingStores ? (
+                                <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Searching...</>
+                              ) : (
+                                <><Zap className="w-3.5 h-3.5 mr-1" /> Find Stores</>
+                              )}
+                            </Button>
+                          </div>
                           
                           {/* Existing retry stores */}
                           {retryStores.length > 0 && (
@@ -429,6 +499,11 @@ export default function CallCenter() {
                                 <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/30 text-sm">
                                   <span className="text-xs font-mono text-muted-foreground w-5">{i + 1}.</span>
                                   <span className="flex-1 truncate">{store.name}</span>
+                                  {(store as any).why && (
+                                    <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={(store as any).why}>
+                                      {(store as any).why}
+                                    </span>
+                                  )}
                                   <span className="text-xs text-muted-foreground font-mono">{store.phone}</span>
                                   <button onClick={() => removeRetryStore(i)} className="text-muted-foreground hover:text-destructive transition-colors">
                                     <X className="w-3.5 h-3.5" />
@@ -438,7 +513,7 @@ export default function CallCenter() {
                             </div>
                           )}
 
-                          {/* Add new store */}
+                          {/* Add new store manually */}
                           <div className="flex items-center gap-2">
                             <Input
                               value={newRetryName}
