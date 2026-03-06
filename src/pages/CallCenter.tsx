@@ -41,7 +41,12 @@ type RecentCall = {
 export default function CallCenter() {
   const { session } = useAuth();
 
-  // Call initiation form
+  // Mode: smart (prompt-only) vs manual (phone number)
+  const [smartMode, setSmartMode] = useState(true);
+  const [prompt, setPrompt] = useState("");
+  const [smartLocation, setSmartLocation] = useState("");
+
+  // Call initiation form (manual mode)
   const [phoneNumber, setPhoneNumber] = useState("");
   const [objective, setObjective] = useState("");
   const [callerName, setCallerName] = useState("");
