@@ -454,7 +454,8 @@ async function handleStartOrder(
   payload: AutoShopPayload,
   buApiKey: string,
   lovableApiKey: string,
-  supabaseUrl: string
+  supabaseUrl: string,
+  supabaseServiceKey: string
 ) {
   const { orderId, productQuery, maxPrice, quantity, shippingAddress, paymentCards } = payload;
 
