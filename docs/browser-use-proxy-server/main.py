@@ -16,7 +16,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BRIDGE_API_KEY = os.getenv("BRIDGE_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 RUNS_DIR = Path("./runs")
 SESSIONS_DIR = Path("./sessions")
 PROFILES_DIR = Path("./profiles")
@@ -24,17 +23,8 @@ RUNS_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Browser-Use Bridge (AI Agent)")
+app = FastAPI(title="Playwright Bridge (Command Executor)")
 
-# Import browser_use Agent
-try:
-    from browser_use import Agent, Browser, BrowserConfig
-    from langchain_openai import ChatOpenAI
-    HAVE_BROWSER_USE = True
-except ImportError:
-    HAVE_BROWSER_USE = False
-
-# Fallback: playwright
 try:
     from playwright.async_api import async_playwright
     HAVE_PLAYWRIGHT = True
@@ -59,13 +49,32 @@ class ProxyModel(BaseModel):
     password: Optional[str] = None
 
 
+class CommandModel(BaseModel):
+    """A single Playwright command to execute."""
+    action: str  # navigate, click, type, select, extract_text, extract_html, screenshot, wait, scroll, press, evaluate
+    selector: Optional[str] = None
+    value: Optional[str] = None
+    url: Optional[str] = None
+    timeout: Optional[int] = 10000
+    wait_after: Optional[int] = 500  # ms to wait after action
+
+
 class RunTaskRequest(BaseModel):
+    """Execute a sequence of Playwright commands."""
+    commands: List[CommandModel]
+    proxy: Optional[ProxyModel] = None
+    viewport_width: Optional[int] = 1280
+    viewport_height: Optional[int] = 720
+
+
+class LegacyRunTaskRequest(BaseModel):
+    """Legacy: single natural-language task (now just navigates to URL)."""
     task: str
     max_steps: Optional[int] = 25
     start_url: Optional[str] = None
     profile_id: Optional[str] = None
     proxy: Optional[ProxyModel] = None
-    model: Optional[str] = "gpt-4o"
+    model: Optional[str] = None
     extract_schema: Optional[Dict[str, Any]] = None
 
 
@@ -76,7 +85,6 @@ runs_store: Dict[str, Dict[str, Any]] = {}
 
 
 def write_run(run_id: str, data: Dict[str, Any]):
-    """Write run status to both memory and disk."""
     runs_store[run_id] = data
     outdir = RUNS_DIR / run_id
     outdir.mkdir(parents=True, exist_ok=True)
@@ -85,7 +93,6 @@ def write_run(run_id: str, data: Dict[str, Any]):
 
 
 def read_run(run_id: str) -> Optional[Dict[str, Any]]:
-    """Read run status from memory or disk."""
     if run_id in runs_store:
         return runs_store[run_id]
     sf = RUNS_DIR / run_id / "status.json"
@@ -98,224 +105,35 @@ def read_run(run_id: str) -> Optional[Dict[str, Any]]:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Browser Use Agent Runner — with per-step screenshots
+# Command Executor — pure Playwright, no AI
 # ═══════════════════════════════════════════════════════════════════════
-async def run_browser_use_agent(
+async def execute_commands(
     run_id: str,
-    task: str,
-    max_steps: int = 25,
-    start_url: Optional[str] = None,
-    model_name: str = "gpt-4o",
+    commands: List[CommandModel],
     proxy: Optional[Dict[str, Any]] = None,
+    viewport_width: int = 1280,
+    viewport_height: int = 720,
 ):
-    """Run the Browser Use Agent with full AI loop and per-step screenshots."""
+    """Execute a sequence of Playwright commands and capture results."""
     outdir = RUNS_DIR / run_id
     outdir.mkdir(parents=True, exist_ok=True)
 
     write_run(run_id, {
         "status": "starting",
-        "task": task,
+        "total_commands": len(commands),
         "steps_taken": 0,
-        "current_step": 0,
         "action_history": [],
         "has_screenshot": False,
-        "latest_screenshot_step": 0,
     })
 
-    if not HAVE_BROWSER_USE:
-        write_run(run_id, {
-            "status": "error",
-            "error": "browser_use package not installed",
-            "task": task,
-        })
-        return
-
-    openai_key = OPENAI_API_KEY
-    if not openai_key:
-        write_run(run_id, {
-            "status": "error",
-            "error": "OPENAI_API_KEY not configured on bridge server",
-            "task": task,
-        })
-        return
-
-    try:
-        # Set up LLM
-        llm = ChatOpenAI(
-            model=model_name,
-            api_key=openai_key,
-            temperature=0.1,
-        )
-
-        # Set up browser config
-        browser_config = BrowserConfig(headless=True)
-        browser = Browser(config=browser_config)
-
-        # Create the Agent
-        agent = Agent(
-            task=task,
-            llm=llm,
-            browser=browser,
-            max_steps=max_steps,
-        )
-
-        write_run(run_id, {
-            "status": "running",
-            "task": task,
-            "steps_taken": 0,
-            "current_step": 0,
-            "action_history": [],
-            "has_screenshot": False,
-            "latest_screenshot_step": 0,
-        })
-
-        # Run the agent step by step for live progress
-        action_history = []
-        step_count = 0
-
-        # Use agent.run() but capture intermediate state via a step callback approach
-        # browser_use Agent supports register_new_step_callback for per-step hooks
-        async def on_step(step_info):
-            nonlocal step_count
-            step_count += 1
-            step_data = {
-                "step": step_count,
-                "action": str(step_info) if step_info else "unknown",
-            }
-            action_history.append(step_data)
-
-            # Capture screenshot at this step
-            screenshot_path = outdir / f"screenshot_step_{step_count}.png"
-            latest_screenshot_path = outdir / "screenshot.png"
-            try:
-                # Try to get screenshot from the browser context
-                if hasattr(agent, 'browser_context') and agent.browser_context:
-                    pages = agent.browser_context.pages
-                    if pages:
-                        page = pages[-1]
-                        await page.screenshot(path=str(screenshot_path))
-                        # Also copy as latest screenshot
-                        shutil.copy2(str(screenshot_path), str(latest_screenshot_path))
-            except Exception as e:
-                print(f"[step {step_count}] Screenshot capture failed: {e}")
-
-            # Get current URL
-            current_url = None
-            try:
-                if hasattr(agent, 'browser_context') and agent.browser_context:
-                    pages = agent.browser_context.pages
-                    if pages:
-                        current_url = pages[-1].url
-            except Exception:
-                pass
-
-            # Update run status with progress
-            write_run(run_id, {
-                "status": "running",
-                "task": task,
-                "steps_taken": step_count,
-                "current_step": step_count,
-                "action_history": action_history,
-                "current_url": current_url,
-                "has_screenshot": screenshot_path.exists(),
-                "latest_screenshot_step": step_count if screenshot_path.exists() else (step_count - 1),
-            })
-
-        # Register the step callback if supported
-        try:
-            if hasattr(agent, 'register_new_step_callback'):
-                agent.register_new_step_callback(on_step)
-        except Exception as e:
-            print(f"[{run_id}] Could not register step callback: {e}")
-
-        # Run the agent
-        result = await agent.run()
-
-        # Extract result data
-        final_result = result.final_result() if hasattr(result, 'final_result') else None
-        history = result.history if hasattr(result, 'history') else []
-        
-        # If step callback didn't fire, build history from result
-        if not action_history:
-            for i, step in enumerate(history):
-                step_info = {
-                    "step": i + 1,
-                    "action": str(step) if step else "unknown",
-                }
-                action_history.append(step_info)
-
-        # Try to get the last screenshot
-        screenshot_path = outdir / "screenshot.png"
-        try:
-            if hasattr(result, 'screenshot') and result.screenshot:
-                screenshot_data = result.screenshot
-                if isinstance(screenshot_data, str):
-                    screenshot_data = base64.b64decode(screenshot_data)
-                with open(screenshot_path, 'wb') as f:
-                    f.write(screenshot_data)
-        except Exception:
-            pass
-
-        # Get current page info
-        current_url = None
-        page_title = None
-        try:
-            if hasattr(agent, 'browser') and agent.browser:
-                pages = agent.browser.contexts
-                if pages:
-                    current_url = str(pages[-1].url) if hasattr(pages[-1], 'url') else None
-                    page_title = str(pages[-1].title) if hasattr(pages[-1], 'title') else None
-        except Exception:
-            pass
-
-        write_run(run_id, {
-            "status": "completed",
-            "task": task,
-            "result": final_result,
-            "steps_taken": len(action_history),
-            "action_history": action_history,
-            "current_url": current_url,
-            "page_title": page_title,
-            "has_screenshot": screenshot_path.exists(),
-            "latest_screenshot_step": len(action_history),
-        })
-
-        # Clean up browser
-        try:
-            await browser.close()
-        except Exception:
-            pass
-
-    except Exception as e:
-        write_run(run_id, {
-            "status": "error",
-            "task": task,
-            "error": str(e),
-        })
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Fallback: simple Playwright navigation (no AI)
-# ═══════════════════════════════════════════════════════════════════════
-async def run_playwright_fallback(
-    run_id: str,
-    task: str,
-    start_url: Optional[str] = None,
-    proxy: Optional[Dict[str, Any]] = None,
-):
-    """Simple fallback: navigate + screenshot via Playwright."""
-    write_run(run_id, {"status": "starting", "task": task})
-
-    url = start_url
-    if not url:
-        m = re.search(r"https?://[\w-.~:/?#\[\]@!$&'()*+,;=%]+", task)
-        url = m.group(0) if m else f"https://duckduckgo.com/?q={task.replace(' ', '+')}"
-
-    screenshot_path = RUNS_DIR / run_id / "screenshot.png"
-
     if not HAVE_PLAYWRIGHT:
-        write_run(run_id, {"status": "error", "error": "No browser backend available"})
+        write_run(run_id, {"status": "error", "error": "playwright not installed"})
         return
+
+    action_history = []
+    current_url = None
+    page_title = None
+    extracted_data = []
 
     try:
         async with async_playwright() as p:
@@ -331,32 +149,265 @@ async def run_playwright_fallback(
                     launch_kwargs["proxy"]["password"] = proxy["password"]
 
             browser = await p.chromium.launch(**launch_kwargs)
-            context = await browser.new_context()
+            context = await browser.new_context(
+                viewport={"width": viewport_width, "height": viewport_height},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
             page = await context.new_page()
-            await page.goto(url)
-            await asyncio.sleep(2)
-            await page.screenshot(path=str(screenshot_path))
 
-            content = await page.content()
-            title = await page.title()
+            for i, cmd in enumerate(commands):
+                step_num = i + 1
+                step_result = {"step": step_num, "action": cmd.action, "status": "ok", "detail": None}
+
+                try:
+                    if cmd.action == "navigate":
+                        url = cmd.url or cmd.value
+                        if not url:
+                            step_result["status"] = "error"
+                            step_result["detail"] = "No URL provided"
+                        else:
+                            await page.goto(url, timeout=cmd.timeout, wait_until="domcontentloaded")
+                            step_result["detail"] = f"Navigated to {page.url}"
+
+                    elif cmd.action == "click":
+                        if not cmd.selector:
+                            step_result["status"] = "error"
+                            step_result["detail"] = "No selector"
+                        else:
+                            await page.click(cmd.selector, timeout=cmd.timeout)
+                            step_result["detail"] = f"Clicked {cmd.selector}"
+
+                    elif cmd.action == "type":
+                        if not cmd.selector or cmd.value is None:
+                            step_result["status"] = "error"
+                            step_result["detail"] = "Need selector and value"
+                        else:
+                            await page.fill(cmd.selector, cmd.value, timeout=cmd.timeout)
+                            step_result["detail"] = f"Typed into {cmd.selector}"
+
+                    elif cmd.action == "press":
+                        key = cmd.value or "Enter"
+                        if cmd.selector:
+                            await page.press(cmd.selector, key, timeout=cmd.timeout)
+                        else:
+                            await page.keyboard.press(key)
+                        step_result["detail"] = f"Pressed {key}"
+
+                    elif cmd.action == "select":
+                        if not cmd.selector or cmd.value is None:
+                            step_result["status"] = "error"
+                            step_result["detail"] = "Need selector and value"
+                        else:
+                            await page.select_option(cmd.selector, cmd.value, timeout=cmd.timeout)
+                            step_result["detail"] = f"Selected {cmd.value} in {cmd.selector}"
+
+                    elif cmd.action == "wait":
+                        ms = int(cmd.value or "2000")
+                        await asyncio.sleep(ms / 1000)
+                        step_result["detail"] = f"Waited {ms}ms"
+
+                    elif cmd.action == "wait_for_selector":
+                        if not cmd.selector:
+                            step_result["status"] = "error"
+                            step_result["detail"] = "No selector"
+                        else:
+                            await page.wait_for_selector(cmd.selector, timeout=cmd.timeout)
+                            step_result["detail"] = f"Selector appeared: {cmd.selector}"
+
+                    elif cmd.action == "scroll":
+                        direction = cmd.value or "down"
+                        amount = 500
+                        if direction == "down":
+                            await page.evaluate(f"window.scrollBy(0, {amount})")
+                        elif direction == "up":
+                            await page.evaluate(f"window.scrollBy(0, -{amount})")
+                        elif direction == "bottom":
+                            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        elif direction == "top":
+                            await page.evaluate("window.scrollTo(0, 0)")
+                        step_result["detail"] = f"Scrolled {direction}"
+
+                    elif cmd.action == "screenshot":
+                        ss_path = outdir / f"screenshot_step_{step_num}.png"
+                        latest_path = outdir / "screenshot.png"
+                        await page.screenshot(path=str(ss_path), full_page=(cmd.value == "full"))
+                        shutil.copy2(str(ss_path), str(latest_path))
+                        step_result["detail"] = "Screenshot captured"
+
+                    elif cmd.action == "extract_text":
+                        if cmd.selector:
+                            elements = await page.query_selector_all(cmd.selector)
+                            texts = []
+                            for el in elements:
+                                t = await el.text_content()
+                                if t and t.strip():
+                                    texts.append(t.strip())
+                            step_result["detail"] = texts
+                            extracted_data.append({"selector": cmd.selector, "texts": texts})
+                        else:
+                            body_text = await page.inner_text("body")
+                            step_result["detail"] = body_text[:8000]
+                            extracted_data.append({"selector": "body", "texts": [body_text[:8000]]})
+
+                    elif cmd.action == "extract_html":
+                        if cmd.selector:
+                            html = await page.inner_html(cmd.selector)
+                        else:
+                            html = await page.content()
+                        step_result["detail"] = html[:10000]
+                        extracted_data.append({"selector": cmd.selector or "page", "html": html[:10000]})
+
+                    elif cmd.action == "extract_attribute":
+                        if cmd.selector and cmd.value:
+                            elements = await page.query_selector_all(cmd.selector)
+                            attrs = []
+                            for el in elements:
+                                a = await el.get_attribute(cmd.value)
+                                if a:
+                                    attrs.append(a)
+                            step_result["detail"] = attrs
+                            extracted_data.append({"selector": cmd.selector, "attribute": cmd.value, "values": attrs})
+
+                    elif cmd.action == "evaluate":
+                        if cmd.value:
+                            result = await page.evaluate(cmd.value)
+                            step_result["detail"] = str(result)[:5000] if result else None
+                            extracted_data.append({"js": cmd.value[:200], "result": str(result)[:5000] if result else None})
+
+                    elif cmd.action == "hover":
+                        if cmd.selector:
+                            await page.hover(cmd.selector, timeout=cmd.timeout)
+                            step_result["detail"] = f"Hovered {cmd.selector}"
+
+                    elif cmd.action == "check":
+                        if cmd.selector:
+                            await page.check(cmd.selector, timeout=cmd.timeout)
+                            step_result["detail"] = f"Checked {cmd.selector}"
+
+                    elif cmd.action == "uncheck":
+                        if cmd.selector:
+                            await page.uncheck(cmd.selector, timeout=cmd.timeout)
+                            step_result["detail"] = f"Unchecked {cmd.selector}"
+
+                    elif cmd.action == "upload_file":
+                        if cmd.selector and cmd.value:
+                            await page.set_input_files(cmd.selector, cmd.value, timeout=cmd.timeout)
+                            step_result["detail"] = f"Uploaded {cmd.value}"
+
+                    elif cmd.action == "get_url":
+                        step_result["detail"] = page.url
+
+                    elif cmd.action == "get_title":
+                        step_result["detail"] = await page.title()
+
+                    else:
+                        step_result["status"] = "error"
+                        step_result["detail"] = f"Unknown action: {cmd.action}"
+
+                except Exception as e:
+                    step_result["status"] = "error"
+                    step_result["detail"] = str(e)[:500]
+
+                action_history.append(step_result)
+
+                # Wait after action
+                if cmd.wait_after and cmd.wait_after > 0 and step_result["status"] == "ok":
+                    await asyncio.sleep(cmd.wait_after / 1000)
+
+                # Update progress
+                current_url = page.url
+                try:
+                    page_title = await page.title()
+                except Exception:
+                    pass
+
+                write_run(run_id, {
+                    "status": "running",
+                    "total_commands": len(commands),
+                    "steps_taken": step_num,
+                    "action_history": action_history,
+                    "current_url": current_url,
+                    "page_title": page_title,
+                    "has_screenshot": (outdir / "screenshot.png").exists(),
+                    "latest_screenshot_step": step_num if (outdir / f"screenshot_step_{step_num}.png").exists() else None,
+                })
+
+                # Stop on error if it's critical (navigate failure)
+                if step_result["status"] == "error" and cmd.action == "navigate":
+                    break
+
+            # Final screenshot if none taken
+            final_ss = outdir / "screenshot.png"
+            if not final_ss.exists():
+                try:
+                    await page.screenshot(path=str(final_ss))
+                except Exception:
+                    pass
+
+            # Get final page content (text only, truncated)
+            page_content = None
+            try:
+                page_content = await page.inner_text("body")
+                page_content = page_content[:8000] if page_content else None
+            except Exception:
+                pass
+
             current_url = page.url
+            try:
+                page_title = await page.title()
+            except Exception:
+                pass
 
             await browser.close()
 
+            failed_steps = [s for s in action_history if s["status"] == "error"]
+
             write_run(run_id, {
                 "status": "completed",
-                "task": task,
-                "result": f"Navigated to {current_url}",
+                "total_commands": len(commands),
+                "steps_taken": len(action_history),
+                "action_history": action_history,
                 "current_url": current_url,
-                "page_title": title,
-                "steps_taken": 1,
-                "action_history": [{"step": 1, "action": f"navigate to {current_url}"}],
-                "has_screenshot": True,
-                "latest_screenshot_step": 1,
-                "page_content": content[:5000] if content else None,
+                "page_title": page_title,
+                "has_screenshot": final_ss.exists(),
+                "latest_screenshot_step": len(action_history),
+                "extracted_data": extracted_data,
+                "page_content": page_content,
+                "errors": failed_steps if failed_steps else None,
+                "result": extracted_data if extracted_data else f"Executed {len(action_history)} commands on {current_url}",
             })
+
     except Exception as e:
-        write_run(run_id, {"status": "error", "error": str(e), "task": task})
+        write_run(run_id, {
+            "status": "error",
+            "error": str(e),
+            "action_history": action_history,
+        })
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Legacy: simple navigate-and-screenshot for backward compat
+# ═══════════════════════════════════════════════════════════════════════
+async def run_legacy_task(
+    run_id: str,
+    task: str,
+    start_url: Optional[str] = None,
+    proxy: Optional[Dict[str, Any]] = None,
+):
+    """Legacy fallback: extract URL from task string, navigate, screenshot."""
+    url = start_url
+    if not url:
+        m = re.search(r"https?://[\w\-.~:/?#\[\]@!$&'()*+,;=%]+", task)
+        url = m.group(0) if m else f"https://duckduckgo.com/?q={task.replace(' ', '+')}"
+
+    commands = [
+        CommandModel(action="navigate", url=url),
+        CommandModel(action="wait", value="2000"),
+        CommandModel(action="screenshot"),
+        CommandModel(action="extract_text"),
+        CommandModel(action="get_title"),
+    ]
+    await execute_commands(run_id, commands, proxy)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -368,43 +419,74 @@ async def run_playwright_fallback(
 async def health():
     return JSONResponse({
         "status": "ok",
-        "has_browser_use": HAVE_BROWSER_USE,
+        "engine": "playwright_direct",
         "has_playwright": HAVE_PLAYWRIGHT,
-        "has_openai_key": bool(OPENAI_API_KEY),
     })
 
 
-@app.post("/run-task")
-async def run_task(req: Request, body: RunTaskRequest, background: BackgroundTasks):
+@app.post("/execute")
+async def execute(req: Request, body: RunTaskRequest, background: BackgroundTasks):
+    """Primary endpoint: execute a sequence of Playwright commands."""
     check_auth(req)
     run_id = uuid.uuid4().hex
 
     proxy_dict = body.proxy.dict() if body.proxy else None
 
-    if HAVE_BROWSER_USE and OPENAI_API_KEY:
-        # Use full AI agent
-        background.add_task(
-            run_browser_use_agent,
-            run_id=run_id,
-            task=body.task,
-            max_steps=body.max_steps or 25,
-            start_url=body.start_url,
-            model_name=body.model or "gpt-4o",
-            proxy=proxy_dict,
-        )
-        mode = "browser_use_agent"
-    else:
-        # Fallback to simple Playwright
-        background.add_task(
-            run_playwright_fallback,
-            run_id=run_id,
-            task=body.task,
-            start_url=body.start_url,
-            proxy=proxy_dict,
-        )
-        mode = "playwright_fallback"
+    background.add_task(
+        execute_commands,
+        run_id=run_id,
+        commands=body.commands,
+        proxy=proxy_dict,
+        viewport_width=body.viewport_width or 1280,
+        viewport_height=body.viewport_height or 720,
+    )
 
-    write_run(run_id, {"status": "queued", "task": body.task})
+    write_run(run_id, {"status": "queued", "total_commands": len(body.commands)})
+
+    return JSONResponse({
+        "run_id": run_id,
+        "mode": "playwright_direct",
+        "status_url": f"/runs/{run_id}/status",
+        "screenshot_url": f"/runs/{run_id}/screenshot",
+    })
+
+
+@app.post("/run-task")
+async def run_task(req: Request, background: BackgroundTasks):
+    """Legacy endpoint: accepts task string, converts to commands."""
+    check_auth(req)
+    raw = await req.json()
+    run_id = uuid.uuid4().hex
+
+    # Check if it's new-style (has commands) or legacy (has task)
+    if "commands" in raw:
+        commands = [CommandModel(**c) for c in raw["commands"]]
+        proxy = ProxyModel(**raw["proxy"]) if raw.get("proxy") else None
+        proxy_dict = proxy.dict() if proxy else None
+        background.add_task(
+            execute_commands,
+            run_id=run_id,
+            commands=commands,
+            proxy=proxy_dict,
+            viewport_width=raw.get("viewport_width", 1280),
+            viewport_height=raw.get("viewport_height", 720),
+        )
+        mode = "playwright_direct"
+    else:
+        # Legacy: natural language task
+        proxy_dict = None
+        if raw.get("proxy"):
+            proxy_dict = raw["proxy"]
+        background.add_task(
+            run_legacy_task,
+            run_id=run_id,
+            task=raw.get("task", ""),
+            start_url=raw.get("start_url"),
+            proxy=proxy_dict,
+        )
+        mode = "legacy_navigate"
+
+    write_run(run_id, {"status": "queued"})
 
     return JSONResponse({
         "run_id": run_id,
@@ -425,7 +507,6 @@ def run_status(run_id: str, req: Request):
 
 @app.get("/runs/{run_id}/screenshot")
 def run_screenshot(run_id: str, step: Optional[int] = None):
-    """Get screenshot — latest or for a specific step."""
     if step:
         p = RUNS_DIR / run_id / f"screenshot_step_{step}.png"
     else:
@@ -436,7 +517,7 @@ def run_screenshot(run_id: str, step: Optional[int] = None):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Sessions (kept for human-in-the-loop compatibility)
+# Sessions (human-in-the-loop compatibility)
 # ═══════════════════════════════════════════════════════════════════════
 
 @app.post("/sessions")
