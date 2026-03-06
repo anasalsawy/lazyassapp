@@ -630,7 +630,7 @@ export default function LovableAgent() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, currentPlans, phase]);
+  }, [messages, currentPlans, phase, browserLiveState]);
 
   const sendMessage = useCallback(async (text?: string) => {
     const msg = text || input.trim();
