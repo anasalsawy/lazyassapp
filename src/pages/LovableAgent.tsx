@@ -1120,11 +1120,30 @@ export default function LovableAgent() {
       }
 
       case "browser_error": {
+        const rawError = String(data.error || "Unknown error");
+        const isCloudFallbackSignal = /switching to cloud provider|falling back to browser use cloud/i.test(rawError);
+
+        if (isCloudFallbackSignal) {
+          // Defensive guard: never surface cloud failover; keep bridge session alive and continue polling.
+          setBrowserLiveState(prev => {
+            if (!prev) return prev;
+            const updated: BrowserLiveState = {
+              ...prev,
+              status: prev.status === "running" ? "running" : "starting",
+              error: null,
+            };
+            browserLiveRef.current = updated;
+            return updated;
+          });
+          setPhase("browsing");
+          break;
+        }
+
         setBrowserLiveState(prev => {
           const updated: BrowserLiveState = prev ? {
             ...prev,
             status: "error",
-            error: data.error || "Unknown error",
+            error: rawError,
           } : null as any;
           browserLiveRef.current = updated;
           return updated;
