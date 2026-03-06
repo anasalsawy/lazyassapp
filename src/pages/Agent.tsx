@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { SteelSessionEmbed } from "@/components/chat/SteelSessionEmbed";
 import { useAuth } from "@/hooks/useAuth";
 import {
-  Bot, Send, Loader2, Sparkles, Briefcase, FileText, ShoppingCart,
+  Bot, Send, Loader2, Sparkles, Briefcase, FileText,
   Search, Mail, Activity, User, Zap,
 } from "lucide-react";
 
@@ -23,7 +23,7 @@ const SUGGESTIONS = [
   { icon: FileText, text: "Optimize my resume", color: "text-green-400" },
   { icon: Activity, text: "Check my pipeline status", color: "text-yellow-400" },
   { icon: Mail, text: "Check for recruiter emails", color: "text-purple-400" },
-  { icon: ShoppingCart, text: "Order something for me", color: "text-pink-400" },
+  { icon: Sparkles, text: "Give me turn-by-turn direction and reroute if needed", color: "text-pink-400" },
   { icon: Search, text: "Research average salaries for my target roles", color: "text-cyan-400" },
 ];
 

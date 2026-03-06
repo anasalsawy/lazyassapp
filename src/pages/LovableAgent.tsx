@@ -604,12 +604,12 @@ function LovableMessageContent({ content, role }: { content: string; role: "user
 
 // ── Suggestions ─────────────────────────────────────────────────────────────
 const SUGGESTIONS = [
-  { icon: Sparkles, text: "Run the full pipeline — optimize, search, apply", color: "text-emerald-400" },
+  { icon: Sparkles, text: "Run the full mission and complete each section", color: "text-emerald-400" },
   { icon: Code2, text: "Optimize my resume for more interviews", color: "text-rose-400" },
   { icon: Search, text: "Find jobs matching my preferences", color: "text-sky-400" },
   { icon: FileText, text: "Check my application status", color: "text-amber-400" },
   { icon: Paintbrush, text: "Help me improve the app design", color: "text-violet-400" },
-  { icon: Heart, text: "What can you do?", color: "text-pink-400" },
+  { icon: Heart, text: "Act like phone + browser copilot and keep me on course", color: "text-pink-400" },
 ];
 
 // ── Main Page ───────────────────────────────────────────────────────────────
