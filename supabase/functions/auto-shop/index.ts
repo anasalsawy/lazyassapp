@@ -55,10 +55,9 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled;
 }
 
-// Bridge-first execution: self-hosted bridge → Browser Use Cloud fallback
+// Bridge-only execution — no cloud fallback
 const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL");
 const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY");
-const BU_API_BASE = "https://api.browser-use.com/api/v2";
 
 // Retry-til-die constants
 const RETRY_SITES = [
@@ -101,45 +100,15 @@ async function runBridgeTask(task: string, startUrl: string, maxSteps: number, p
         console.log(`[AutoShop] Bridge task started: ${taskId}, liveView: ${liveViewUrl}`);
         return { success: true, taskId, liveViewUrl, source: "bridge" };
       }
-      console.warn(`[AutoShop] Bridge returned ${res.status}, falling back to cloud`);
+      console.warn(`[AutoShop] Bridge returned ${res.status}`);
+      return { success: false, error: `Bridge returned ${res.status}`, source: "bridge" };
     } catch (e) {
-      console.warn(`[AutoShop] Bridge unreachable, falling back to cloud:`, e);
+      console.warn(`[AutoShop] Bridge unreachable:`, e);
+      return { success: false, error: e instanceof Error ? e.message : String(e), source: "bridge" };
     }
   }
 
-  // Fallback: Browser Use Cloud
-  const buApiKey = Deno.env.get("BROWSER_USE_API_KEY");
-  if (!buApiKey) return { success: false, error: "No BROWSER_USE_API_KEY configured", source: "none" };
-
-  try {
-    const res = await fetch(`${BU_API_BASE}/tasks`, {
-      method: "POST",
-      headers: { "X-Browser-Use-API-Key": buApiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ task, startUrl, maxSteps }),
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      return { success: false, error: `Cloud API ${res.status}: ${err}`, source: "cloud" };
-    }
-    const data = await res.json();
-    console.log(`[AutoShop] Cloud task started: ${data.id}`);
-    // Try to get live URL from session
-    let liveViewUrl: string | undefined;
-    if (data.sessionId && buApiKey) {
-      try {
-        const sessRes = await fetch(`${BU_API_BASE}/sessions/${data.sessionId}`, {
-          headers: { "X-Browser-Use-API-Key": buApiKey },
-        });
-        if (sessRes.ok) {
-          const sessData = await sessRes.json();
-          liveViewUrl = sessData.liveUrl || sessData.live_url || undefined;
-        }
-      } catch (_) {}
-    }
-    return { success: true, taskId: data.id, liveViewUrl, source: "cloud" };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : String(e), source: "cloud" };
-  }
+  return { success: false, error: "No bridge configured (BROWSER_USE_BRIDGE_URL not set)", source: "none" };
 }
 
 interface PollResult {
@@ -177,27 +146,7 @@ async function pollTaskStatus(taskId: string, source: string): Promise<PollResul
       }
     } catch (_) {}
   }
-  // Fallback to cloud polling
-  const buApiKey = Deno.env.get("BROWSER_USE_API_KEY");
-  if (!buApiKey) return { status: "unknown", error: "No API key" };
-  try {
-    const res = await fetch(`${BU_API_BASE}/tasks/${taskId}`, {
-      headers: { "X-Browser-Use-API-Key": buApiKey },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return {
-        status: data.status || "unknown",
-        result: data.result || data.output,
-        error: data.error,
-        current_url: data.currentUrl || data.url,
-        current_step: data.completedSteps || data.step,
-        total_steps: data.totalSteps || data.maxSteps,
-        step_description: data.stepDescription || data.lastAction,
-        screenshot_url: data.screenshotUrl,
-        live_url: data.liveUrl,
-      };
-    }
+  return { status: "unknown", error: "Bridge polling failed" };
     return { status: "unknown", error: `${res.status}` };
   } catch (e) {
     return { status: "unknown", error: e instanceof Error ? e.message : String(e) };
