@@ -256,6 +256,50 @@ export default function CallCenter() {
     setRetryStores(prev => prev.filter((_, i) => i !== index));
   };
 
+  // Smart store search
+  const searchStores = async () => {
+    if (!objective.trim() || !session?.access_token) return;
+    setIsSearchingStores(true);
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-stores`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            objective,
+            location: searchLocation || undefined,
+          }),
+        }
+      );
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        toast.error("Search failed", { description: data.error || "Could not find stores" });
+        return;
+      }
+      if (data.stores?.length > 0) {
+        setRetryStores(prev => {
+          const existingPhones = new Set(prev.map((s: any) => s.phone));
+          const newStores = data.stores.filter((s: any) => !existingPhones.has(s.phone));
+          return [...prev, ...newStores];
+        });
+        toast.success(`Found ${data.stores.length} ${data.product_category || ''} stores`, {
+          description: `Product: ${data.product}`,
+        });
+      } else {
+        toast.info("No stores found", { description: "Try adding them manually" });
+      }
+    } catch (e: any) {
+      toast.error("Search error", { description: e.message });
+    } finally {
+      setIsSearchingStores(false);
+    }
+  };
+
   // Inject instruction
   const injectInstruction = async () => {
     if (!injection.trim() || !activeCall?.taskId || !session?.access_token) return;
