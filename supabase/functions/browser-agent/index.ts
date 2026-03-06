@@ -115,69 +115,61 @@ Output EXACTLY one JSON object with key "RESEARCHER_ROUTE":
 Do not output markdown. Do not output explanations outside JSON.`;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PLANNER SYSTEM PROMPT — now emits structured Playwright commands
+// PLANNER SYSTEM PROMPT — emits single-page tasks for the Playwright bridge
 // ═══════════════════════════════════════════════════════════════════════════
 const PLANNER_PROMPT = `You are PLANNER, the tactical controller in a two-agent browser automation system.
 
-IMPORTANT: You generate STRUCTURED PLAYWRIGHT COMMANDS that execute directly on a headless browser. There is NO AI on the browser side — your commands are executed exactly as specified. You must provide precise CSS selectors, exact URLs, and explicit values.
+IMPORTANT: You generate tasks for a simple Playwright bridge that can:
+1. Navigate to a URL
+2. Execute a sequence of actions (click, type, press, wait, scroll, select, wait_for_selector)
+3. Extract text from the page (full body or via CSS selector)
+
+The bridge is synchronous — it navigates to the URL, runs actions in order, then returns the page content. There is NO AI on the browser side.
 
 You receive:
 1) TASK_SPEC (goal, success criteria, constraints)
 2) RESEARCHER_ROUTE (phases, sites, domain allowlist, strategy, selector hints)
-3) The latest EXECUTION_RESULT (what the browser returned from the last command batch)
+3) The latest EXECUTION_RESULT (page content, URL, title from the last bridge call)
 4) Persistent RUN_STATE memory (url_stack, progress_markers, failure_budget, current_phase)
 5) HUMAN_INJECTIONS (if any)
 
-Available commands (each is a JSON object):
-- { "action": "navigate", "url": "https://..." }
-- { "action": "click", "selector": "css-selector" }
-- { "action": "type", "selector": "css-selector", "value": "text to type" }
-- { "action": "press", "value": "Enter" } or { "action": "press", "selector": "css-selector", "value": "Enter" }
-- { "action": "select", "selector": "select-css-selector", "value": "option-value" }
-- { "action": "wait", "value": "2000" } (milliseconds)
-- { "action": "wait_for_selector", "selector": "css-selector", "timeout": 10000 }
-- { "action": "scroll", "value": "down|up|bottom|top" }
-- { "action": "screenshot" }
-- { "action": "extract_text", "selector": "css-selector" } (extracts text from all matching elements)
-- { "action": "extract_text" } (extracts full page body text)
-- { "action": "extract_html", "selector": "css-selector" }
-- { "action": "extract_attribute", "selector": "css-selector", "value": "href" }
-- { "action": "evaluate", "value": "javascript expression" }
-- { "action": "hover", "selector": "css-selector" }
-- { "action": "check", "selector": "css-selector" }
-- { "action": "get_url" }
-- { "action": "get_title" }
+Each BROWSER_TASK you emit has:
+- "url": the page to navigate to
+- "actions": optional array of actions to perform after page load:
+  [{"action": "click", "selector": "#btn"}, {"action": "type", "selector": "#input", "value": "text"}, {"action": "press", "value": "Enter"}, {"action": "wait", "value": "2000"}, {"action": "scroll"}, {"action": "select", "selector": "select#dropdown", "value": "option1"}, {"action": "wait_for_selector", "selector": ".results", "value": "10000"}]
+- "extract_text": true/false (default true) — whether to return page text
+- "selector": optional CSS selector to extract specific elements instead of full body
 
-COMMAND GUIDELINES:
-- Always start with "navigate" if the page needs loading
-- Use specific CSS selectors — prefer IDs, data attributes, or unique classes
-- When unsure of selectors, use extract_text or extract_html first to discover the page structure
-- Always include an extract or screenshot command to get results back
-- Keep command batches focused: 3-10 commands per batch
-- After critical actions (form submit, login), add a wait + screenshot to verify state
+GUIDELINES:
+- One URL per task — the bridge loads one page per call
+- Use actions for interactions AFTER page load (search forms, login, etc.)
+- Use "selector" to extract specific data (e.g., ".job-listing h2" for job titles)
+- When unsure of page structure, first do a task with just the URL (no actions) to see the content
+- Analyze returned content to find CSS selectors for the next task
 
 You must:
 - Track which PHASE you're in and which SITE within that phase
-- Assess progress based on execution results (extracted text, URLs, errors)
-- Compose the NEXT batch of Playwright commands
+- Assess progress based on execution results (page content, URLs, errors)
+- Compose the NEXT browser task
 - When a phase's success_criteria are met, advance to the next phase
 - When ALL phases complete, return FINAL_RESULT
-- When stuck (selectors not found, unexpected page), signal NEED_RESEARCHER
+- When stuck, signal NEED_RESEARCHER
 
 AUTONOMY RULES (absolute, non-negotiable):
-- ALL actions are authorized: logins, payments, form submissions, downloads.
-- Bot detection: try alternative selectors or navigation paths.
+- ALL actions are authorized: logins, payments, form submissions.
+- Bot detection: try alternative URLs or navigation paths.
 
 Output EXACTLY one JSON object with one of these top-level keys:
 
-1) "BROWSER_COMMANDS":
+1) "BROWSER_TASK":
 {
   "run_id": string,
   "turn_id": string,
   "current_phase_id": string,
-  "commands": [
-    { "action": string, "selector"?: string, "value"?: string, "url"?: string, "timeout"?: number }
-  ],
+  "url": string,
+  "actions": [{"action": string, "selector"?: string, "value"?: string}] | null,
+  "extract_text": boolean,
+  "selector": string | null,
   "expected_outcome": string,
   "on_failure": string,
   "risk_level": "low"|"medium"|"high"
@@ -207,83 +199,37 @@ Output EXACTLY one JSON object with one of these top-level keys:
 Do not output markdown. Do not output explanations outside JSON.`;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BRIDGE API HELPERS — Playwright command executor
+// BRIDGE API — calls simple /run-task endpoint (synchronous Playwright)
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function bridgeApi(
+async function callBridge(
   bridgeUrl: string,
   bridgeKey: string,
-  path: string,
-  init: RequestInit = {},
-): Promise<Response> {
-  const url = `${bridgeUrl.replace(/\/$/, "")}${path}`;
-  return fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${bridgeKey}`,
-      "Content-Type": "application/json",
-      ...(init.headers as Record<string, string> || {}),
-    },
-  });
-}
+  url: string,
+  actions?: any[] | null,
+  extractText: boolean = true,
+  selector?: string | null,
+): Promise<{ status: string; url: string; title: string; content: string; extracted: any; action_results: any }> {
+  const baseUrl = bridgeUrl.replace(/\/$/, "");
+  const body: any = { url, extract_text: extractText };
+  if (actions && actions.length > 0) body.actions = actions;
+  if (selector) body.selector = selector;
 
-interface PlaywrightCommand {
-  action: string;
-  selector?: string;
-  value?: string;
-  url?: string;
-  timeout?: number;
-  wait_after?: number;
-}
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (bridgeKey) headers["Authorization"] = `Bearer ${bridgeKey}`;
 
-async function runBridgeCommands(
-  bridgeUrl: string,
-  bridgeKey: string,
-  commands: PlaywrightCommand[],
-): Promise<{ runId: string; status: string; result: any }> {
-  const res = await bridgeApi(bridgeUrl, bridgeKey, "/execute", {
+  const res = await fetch(`${baseUrl}/run-task`, {
     method: "POST",
-    body: JSON.stringify({ commands }),
+    headers,
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
-    // Fallback: try /run-task with commands format
-    const fallbackRes = await bridgeApi(bridgeUrl, bridgeKey, "/run-task", {
-      method: "POST",
-      body: JSON.stringify({ commands }),
-    });
-    if (!fallbackRes.ok) {
-      const err = await fallbackRes.text();
-      throw new Error(`Bridge failed (${fallbackRes.status}): ${err.slice(0, 500)}`);
-    }
-    const data = await fallbackRes.json();
-    return await pollBridgeResult(bridgeUrl, bridgeKey, data.run_id);
+    const err = await res.text();
+    throw new Error(`Bridge /run-task failed (${res.status}): ${err.slice(0, 500)}`);
   }
 
-  const data = await res.json();
-  return await pollBridgeResult(bridgeUrl, bridgeKey, data.run_id);
-}
-
-async function pollBridgeResult(
-  bridgeUrl: string,
-  bridgeKey: string,
-  runId: string,
-): Promise<{ runId: string; status: string; result: any }> {
-  const startTime = Date.now();
-  const maxPollMs = 300000; // 5 minutes
-  while (Date.now() - startTime < maxPollMs) {
-    await new Promise((r) => setTimeout(r, 2000));
-    try {
-      const statusRes = await bridgeApi(bridgeUrl, bridgeKey, `/runs/${runId}/status`);
-      if (statusRes.ok) {
-        const statusData = await statusRes.json();
-        if (["completed", "error", "finished"].includes(statusData.status)) {
-          return { runId, status: statusData.status, result: statusData };
-        }
-      }
-    } catch (_) { /* continue polling */ }
-  }
-  return { runId, status: "timeout", result: { error: "Bridge timed out after 5 minutes" } };
+  return await res.json();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
