@@ -51,9 +51,11 @@ export default function CallCenter() {
 
   // Auto-retry state
   const [autoRetryEnabled, setAutoRetryEnabled] = useState(false);
-  const [retryStores, setRetryStores] = useState<Array<{ name: string; phone: string }>>([]);
+  const [retryStores, setRetryStores] = useState<Array<{ name: string; phone: string; why?: string }>>([]);
   const [newRetryName, setNewRetryName] = useState("");
   const [newRetryPhone, setNewRetryPhone] = useState("");
+  const [isSearchingStores, setIsSearchingStores] = useState(false);
+  const [searchLocation, setSearchLocation] = useState("");
 
   // Active call state
   const [activeCall, setActiveCall] = useState<CallState | null>(null);
