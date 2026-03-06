@@ -1261,23 +1261,66 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
             const screenshotUrl = `${BRIDGE_URL}/runs/${bridgeRunId}/screenshot`;
             console.log(`[browser_task] Bridge task started: ${bridgeRunId} (mode: ${bridgeData.mode})`);
 
-            // Poll bridge for completion (up to 90 seconds)
+            // Send initial browser_started event so frontend shows live panel
+            if (_sendEventFn) {
+              _sendEventFn("browser_started", {
+                runId: bridgeRunId,
+                provider: "self_hosted_bridge",
+                task: taskStr,
+                screenshotUrl,
+                statusUrl,
+              });
+            }
+
+            // Poll bridge for completion (up to 120 seconds) with live progress streaming
             let bridgeResult: any = null;
             const pollHeaders: Record<string, string> = {};
             if (BRIDGE_KEY) pollHeaders["Authorization"] = `Bearer ${BRIDGE_KEY}`;
+            let lastStep = 0;
 
-            for (let attempt = 0; attempt < 18; attempt++) {
-              await new Promise(r => setTimeout(r, 5000));
+            for (let attempt = 0; attempt < 30; attempt++) {
+              await new Promise(r => setTimeout(r, 4000));
               try {
                 const pollRes = await fetch(statusUrl, { headers: pollHeaders });
                 if (pollRes.ok) {
                   const pollData = await pollRes.json();
-                  console.log(`[browser_task] Bridge poll #${attempt + 1}: status=${pollData.status}`);
+                  const currentStep = pollData.steps_taken || pollData.current_step || 0;
+                  console.log(`[browser_task] Bridge poll #${attempt + 1}: status=${pollData.status}, step=${currentStep}`);
+
+                  // Stream progress to frontend on every poll
+                  if (_sendEventFn) {
+                    _sendEventFn("browser_progress", {
+                      runId: bridgeRunId,
+                      status: pollData.status,
+                      step: currentStep,
+                      currentUrl: pollData.current_url || null,
+                      screenshotUrl: pollData.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : null,
+                      stepScreenshotUrl: currentStep > 0 ? `${screenshotUrl}?step=${currentStep}&t=${Date.now()}` : null,
+                      actionHistory: pollData.action_history?.slice(-3) || [],
+                    });
+                  }
+                  lastStep = currentStep;
+
                   if (pollData.status === "completed") {
                     bridgeResult = pollData;
+                    if (_sendEventFn) {
+                      _sendEventFn("browser_completed", {
+                        runId: bridgeRunId,
+                        stepsTaken: pollData.steps_taken || 0,
+                        currentUrl: pollData.current_url || null,
+                        screenshotUrl: pollData.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : null,
+                        result: pollData.result || null,
+                      });
+                    }
                     break;
                   } else if (pollData.status === "error") {
                     buError = { message: `Bridge task error: ${pollData.error || "unknown"}` };
+                    if (_sendEventFn) {
+                      _sendEventFn("browser_error", {
+                        runId: bridgeRunId,
+                        error: pollData.error || "unknown",
+                      });
+                    }
                     break;
                   }
                 }
