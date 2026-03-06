@@ -140,6 +140,14 @@ const AutoShop = () => {
   } = useShopProfile();
 
   const [activeTab, setActiveTab] = useState("shop");
+
+  // Auto-poll orders every 10s when there are active orders (to get live telemetry)
+  const hasActiveOrders = orders.some(o => ["pending", "searching", "found_deals", "ordering"].includes(o.status));
+  useEffect(() => {
+    if (!hasActiveOrders || activeTab !== "orders") return;
+    const interval = setInterval(() => { refreshOrders(); }, 10000);
+    return () => clearInterval(interval);
+  }, [hasActiveOrders, activeTab, refreshOrders]);
   const [showAddCard, setShowAddCard] = useState(false);
   const [showAddAddress, setShowAddAddress] = useState(false);
   
