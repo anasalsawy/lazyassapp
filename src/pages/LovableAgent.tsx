@@ -623,6 +623,8 @@ export default function LovableAgent() {
   const callStateRef = useRef<CallState | null>(null);
   const [browserLiveState, setBrowserLiveState] = useState<BrowserLiveState | null>(null);
   const browserLiveRef = useRef<BrowserLiveState | null>(null);
+  const browserPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const browserUrlsRef = useRef<{ statusUrl: string; screenshotUrl: string } | null>(null);
   const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call" | "browsing">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -631,6 +633,80 @@ export default function LovableAgent() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, currentPlans, phase, browserLiveState]);
+
+  // ── Persistent client-side polling for browser tasks ──────────────────────
+  // Kicks in when SSE stream ends but browser task is still running
+  useEffect(() => {
+    // Only start persistent polling when NOT loading (SSE ended) and browser is still active
+    if (isLoading || !browserLiveState) return;
+    if (browserLiveState.status === "completed" || browserLiveState.status === "error") return;
+    if (!browserUrlsRef.current) return;
+
+    const { statusUrl, screenshotUrl } = browserUrlsRef.current;
+    console.log("[BrowserPoll] Starting persistent client-side polling:", statusUrl);
+
+    const poll = async () => {
+      try {
+        const res = await fetch(statusUrl);
+        if (!res.ok) return;
+        const data = await res.json();
+        const step = data.steps_taken || data.current_step || 0;
+
+        if (data.status === "completed") {
+          setBrowserLiveState(prev => prev ? {
+            ...prev,
+            status: "completed",
+            step: data.steps_taken || prev.step,
+            currentUrl: data.current_url || prev.currentUrl,
+            screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
+            result: data.result || null,
+          } : prev);
+          browserLiveRef.current = null;
+          // Stop polling
+          if (browserPollRef.current) {
+            clearInterval(browserPollRef.current);
+            browserPollRef.current = null;
+          }
+        } else if (data.status === "error") {
+          setBrowserLiveState(prev => prev ? {
+            ...prev,
+            status: "error",
+            error: data.error || "Task failed",
+          } : prev);
+          if (browserPollRef.current) {
+            clearInterval(browserPollRef.current);
+            browserPollRef.current = null;
+          }
+        } else {
+          // Still running — update progress
+          setBrowserLiveState(prev => prev ? {
+            ...prev,
+            status: step > 0 ? "running" : prev.status,
+            step,
+            currentUrl: data.current_url || prev.currentUrl,
+            screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
+            actionHistory: data.action_history?.slice(-5)?.map((a: any, i: number) => ({
+              step: a.step || step - (data.action_history.length - 1 - i),
+              action: typeof a === "string" ? a : a.action || JSON.stringify(a),
+            })) || prev.actionHistory,
+          } : prev);
+        }
+      } catch (err) {
+        console.warn("[BrowserPoll] Poll error:", err);
+      }
+    };
+
+    // Poll immediately, then every 5 seconds
+    poll();
+    browserPollRef.current = setInterval(poll, 5000);
+
+    return () => {
+      if (browserPollRef.current) {
+        clearInterval(browserPollRef.current);
+        browserPollRef.current = null;
+      }
+    };
+  }, [isLoading, browserLiveState?.status]);
 
   const sendMessage = useCallback(async (text?: string) => {
     const msg = text || input.trim();
@@ -644,8 +720,14 @@ export default function LovableAgent() {
     setCurrentPlans([]);
     setCurrentCallState(null);
     callStateRef.current = null;
+    // Clear previous browser state and stop any persistent polling
     setBrowserLiveState(null);
     browserLiveRef.current = null;
+    browserUrlsRef.current = null;
+    if (browserPollRef.current) {
+      clearInterval(browserPollRef.current);
+      browserPollRef.current = null;
+    }
     let assistantSoFar = "";
 
     const upsertAssistant = (chunk: string) => {
@@ -954,6 +1036,10 @@ export default function LovableAgent() {
 
       case "browser_started": {
         setPhase("browsing");
+        // Capture polling URLs for persistent client-side polling after SSE ends
+        if (data.statusUrl && data.screenshotUrl) {
+          browserUrlsRef.current = { statusUrl: data.statusUrl, screenshotUrl: data.screenshotUrl };
+        }
         const initial: BrowserLiveState = {
           runId: data.runId,
           provider: data.provider || "self_hosted_bridge",
@@ -1227,14 +1313,26 @@ export default function LovableAgent() {
                   </div>
                 )}
 
-                {/* Live browser panel */}
-                {isLoading && browserLiveState && (
+                {/* Live browser panel — persists after SSE ends for ongoing tasks */}
+                {browserLiveState && (
                   <div className="flex gap-3">
                     <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
                       <Bot className="w-4 h-4 text-white" />
                     </div>
                     <div className="max-w-[85%] min-w-0 w-full">
                       <BrowserLivePanel state={browserLiveState} isLive={browserLiveState.status === "running" || browserLiveState.status === "starting"} />
+                      {!isLoading && (browserLiveState.status === "running" || browserLiveState.status === "starting") && (
+                        <div className="flex items-center gap-2 mt-1.5 px-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="text-[11px] text-muted-foreground">Persistent monitoring active — polling every 5s</span>
+                          <button
+                            onClick={() => { setBrowserLiveState(null); browserUrlsRef.current = null; }}
+                            className="ml-auto text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
