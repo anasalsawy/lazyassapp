@@ -447,12 +447,15 @@ async function runTwoAgentLoop(
     while (stepCount < maxSteps) {
       stepCount++;
       const turnId = `turn_${stepCount}`;
+      const stepStartedAt = Date.now();
       await log("info", `Step ${stepCount}/${maxSteps} | Phase: ${researcherRoute.phases[currentPhaseIndex]?.phase_name || "?"}`);
 
       // Check for human injections
       const newInjections = await fetchInjections(supabase, runId);
+      let currentInjection: string | null = null;
       if (newInjections.length > 0) {
         allInjections.push(...newInjections);
+        currentInjection = newInjections.join("; ");
         await log("info", `📡 Human injection received: ${newInjections.length}`, { injections: newInjections });
       }
 
@@ -490,6 +493,17 @@ async function runTwoAgentLoop(
         plannerDecision = JSON.parse(plannerRaw);
       } catch {
         await log("error", "Planner produced invalid JSON", { raw: plannerRaw.slice(0, 500) });
+        // Track the invalid step
+        await supabase.from("browser_steps").insert({
+          run_id: runId, user_id: userId, step_number: stepCount,
+          phase_name: currentPhase?.phase_name, phase_id: currentPhase?.phase_id,
+          url: "n/a", result_status: "error", error_message: "Planner produced invalid JSON",
+          planner_decision_type: "invalid_json",
+          started_at: new Date(stepStartedAt).toISOString(),
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - stepStartedAt,
+          human_injection: currentInjection,
+        }).then(() => {}, () => {});
         failureBudget["invalid_json"] = (failureBudget["invalid_json"] || 0) + 1;
         if (failureBudget["invalid_json"] >= 3) {
           return { success: false, error: "Planner repeatedly failed to produce valid JSON", stepsUsed: stepCount, milestones };
@@ -500,6 +514,20 @@ async function runTwoAgentLoop(
       // ── FINAL_RESULT ────────────────────────────────────────────
       if (plannerDecision.FINAL_RESULT) {
         await log("info", "✅ Planner declared task complete", plannerDecision.FINAL_RESULT);
+        // Track the final step
+        await supabase.from("browser_steps").insert({
+          run_id: runId, user_id: userId, step_number: stepCount,
+          phase_name: currentPhase?.phase_name, phase_id: currentPhase?.phase_id,
+          url: urlStack[urlStack.length - 1] || "n/a",
+          result_status: plannerDecision.FINAL_RESULT.success !== false ? "completed" : "failed",
+          planner_decision_type: "FINAL_RESULT",
+          extracted_data: plannerDecision.FINAL_RESULT.extracted_data || null,
+          page_content_preview: plannerDecision.FINAL_RESULT.summary?.slice(0, 2000),
+          started_at: new Date(stepStartedAt).toISOString(),
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - stepStartedAt,
+          human_injection: currentInjection,
+        }).then(() => {}, () => {});
         return {
           success: plannerDecision.FINAL_RESULT.success !== false,
           finalResult: plannerDecision.FINAL_RESULT,
@@ -514,6 +542,22 @@ async function runTwoAgentLoop(
       if (plannerDecision.NEED_RESEARCHER) {
         const needInfo = plannerDecision.NEED_RESEARCHER;
         await log("info", `🔬 Planner requests re-route: ${needInfo.reason}`, needInfo);
+
+        // Track the re-route step
+        await supabase.from("browser_steps").insert({
+          run_id: runId, user_id: userId, step_number: stepCount,
+          phase_name: currentPhase?.phase_name, phase_id: currentPhase?.phase_id,
+          url: urlStack[urlStack.length - 1] || "n/a",
+          result_status: "reroute",
+          planner_decision_type: "NEED_RESEARCHER",
+          researcher_reroute: true,
+          error_message: needInfo.reason,
+          page_content_preview: JSON.stringify({ sites_exhausted: needInfo.sites_exhausted, suggestion: needInfo.suggestion }).slice(0, 2000),
+          started_at: new Date(stepStartedAt).toISOString(),
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - stepStartedAt,
+          human_injection: currentInjection,
+        }).then(() => {}, () => {});
 
         const previousOutcomes = {
           phases_completed: phasesCompleted,
@@ -538,6 +582,16 @@ async function runTwoAgentLoop(
       const browserTask = plannerDecision.BROWSER_TASK;
       if (!browserTask || !browserTask.url) {
         await log("error", "Planner produced no task or missing URL");
+        await supabase.from("browser_steps").insert({
+          run_id: runId, user_id: userId, step_number: stepCount,
+          phase_name: currentPhase?.phase_name, phase_id: currentPhase?.phase_id,
+          url: "n/a", result_status: "error", error_message: "Planner produced no task or missing URL",
+          planner_decision_type: "empty_task",
+          started_at: new Date(stepStartedAt).toISOString(),
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - stepStartedAt,
+          human_injection: currentInjection,
+        }).then(() => {}, () => {});
         failureBudget["no_task"] = (failureBudget["no_task"] || 0) + 1;
         if (failureBudget["no_task"] >= 3) {
           return { success: false, error: "Planner repeatedly failed to produce a task", stepsUsed: stepCount, milestones };
@@ -563,6 +617,7 @@ async function runTwoAgentLoop(
       });
 
       // ── SEND TO BRIDGE ──────────────────────────────────────────
+      const bridgeStartedAt = Date.now();
       try {
         const bridgeResult = await callBridge(
           bridgeUrl,
@@ -589,6 +644,29 @@ async function runTwoAgentLoop(
           has_extracted: !!lastExecutionResult.extracted,
         });
 
+        // ── PERSIST STEP TO browser_steps ──────────────────────────
+        await supabase.from("browser_steps").insert({
+          run_id: runId, user_id: userId, step_number: stepCount,
+          phase_name: currentPhase?.phase_name, phase_id: currentPhase?.phase_id,
+          url: browserTask.url,
+          actions: browserTask.actions || [],
+          selector: browserTask.selector || null,
+          expected_outcome: browserTask.expected_outcome || null,
+          risk_level: browserTask.risk_level || "low",
+          result_status: lastExecutionResult.status,
+          final_url: lastExecutionResult.current_url,
+          page_title: lastExecutionResult.page_title,
+          page_content_preview: (lastExecutionResult.page_content || "").slice(0, 2000),
+          action_results: bridgeResult.action_results || [],
+          extracted_data: bridgeResult.extracted ? { items: bridgeResult.extracted } : null,
+          error_message: lastExecutionResult.status === "failed" ? "Bridge returned failure" : null,
+          planner_decision_type: "BROWSER_TASK",
+          started_at: new Date(bridgeStartedAt).toISOString(),
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - bridgeStartedAt,
+          human_injection: currentInjection,
+        }).then(() => {}, () => {});
+
         // Track URLs
         if (lastExecutionResult.current_url) {
           urlStack.push(lastExecutionResult.current_url);
@@ -604,6 +682,25 @@ async function runTwoAgentLoop(
           result: `Bridge error: ${err.message}`,
           current_url: null,
         };
+
+        // Persist the failed step
+        await supabase.from("browser_steps").insert({
+          run_id: runId, user_id: userId, step_number: stepCount,
+          phase_name: currentPhase?.phase_name, phase_id: currentPhase?.phase_id,
+          url: browserTask.url,
+          actions: browserTask.actions || [],
+          selector: browserTask.selector || null,
+          expected_outcome: browserTask.expected_outcome || null,
+          risk_level: browserTask.risk_level || "low",
+          result_status: "error",
+          error_message: err.message,
+          planner_decision_type: "BROWSER_TASK",
+          started_at: new Date(bridgeStartedAt).toISOString(),
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - bridgeStartedAt,
+          human_injection: currentInjection,
+        }).then(() => {}, () => {});
+
         failureBudget["bridge_error"] = (failureBudget["bridge_error"] || 0) + 1;
       }
 
@@ -611,6 +708,19 @@ async function runTwoAgentLoop(
       if (plannerHistory.length > 24) {
         plannerHistory.splice(0, 2);
       }
+
+      // ── UPDATE agent_runs with latest step info (live tracking) ──
+      await supabase.from("agent_runs").update({
+        summary_json: {
+          architecture: "researcher-planner-playwright",
+          steps_taken: stepCount,
+          current_phase: currentPhase?.phase_name,
+          phases_completed: phasesCompleted,
+          milestones,
+          last_url: urlStack[urlStack.length - 1] || null,
+          last_status: lastExecutionResult.status,
+        },
+      }).eq("id", runId).then(() => {}, () => {});
     }
 
     // Budget exhausted
