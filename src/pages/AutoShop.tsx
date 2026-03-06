@@ -413,6 +413,7 @@ const AutoShop = () => {
       searching: { variant: "default", icon: <Search className="h-3 w-3 animate-pulse" />, label: "Searching Sites" },
       found_deals: { variant: "default", icon: <Package className="h-3 w-3" />, label: "Comparing Prices" },
       ordering: { variant: "default", icon: <ShoppingCart className="h-3 w-3 animate-pulse" />, label: "Checking Out" },
+      retrying: { variant: "outline", icon: <Loader2 className="h-3 w-3 animate-spin" />, label: "Retrying Next Site" },
       completed: { variant: "outline", icon: <CheckCircle className="h-3 w-3 text-success" />, label: "Completed" },
       failed: { variant: "destructive", icon: <XCircle className="h-3 w-3" />, label: "Failed" },
       cancelled: { variant: "secondary", icon: <XCircle className="h-3 w-3" />, label: "Cancelled" },
