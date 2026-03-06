@@ -447,8 +447,8 @@ function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedDa
 
 // ── Lovable Message Content (with Steel embeds) ─────────────────────────────
 function LovableMessageContent({ content, role }: { content: string; role: "user" | "assistant" }) {
-  const { text, embeds } = useMemo(() =>
-    role === "assistant" ? parseSteelEmbeds(content) : { text: content, embeds: [] as SteelEmbedData[] },
+  const { text, embeds, screenshots } = useMemo(() =>
+    role === "assistant" ? parseSteelEmbeds(content) : { text: content, embeds: [] as SteelEmbedData[], screenshots: [] as ScreenshotData[] },
     [content, role]
   );
 
