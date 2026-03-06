@@ -971,20 +971,39 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
         const { data: task } = await supabase.from("agent_tasks").select("result, status, payload").eq("id", taskId).single();
         const alreadyResolved = task?.status === "completed" || task?.status === "failed";
         const twilioFailed = ["busy", "no-answer", "canceled", "failed"].includes(callStatus);
-        const newStatus = alreadyResolved ? task.status : (twilioFailed ? "failed" : "completed");
-        const errorMsg = twilioFailed && !alreadyResolved ? `Call ${callStatus}` : undefined;
+        const taskResult = task?.result as any || {};
+        const objectiveMet = taskResult?.lastDirective?.objectiveMet === true;
+
+        // For mission calls: DON'T mark as "completed" if objective wasn't met — mark as "failed" to trigger retry
+        // For standalone calls: mark based on Twilio status
+        let newStatus: string;
+        if (alreadyResolved) {
+          newStatus = task.status;
+        } else if (twilioFailed) {
+          newStatus = "failed";
+        } else if (missionId && !objectiveMet) {
+          // Twilio says "completed" but objective wasn't met — mark failed so mission retries
+          newStatus = "failed";
+        } else {
+          newStatus = "completed";
+        }
+        
+        const errorMsg = (newStatus === "failed" && !alreadyResolved) 
+          ? (twilioFailed ? `Call ${callStatus}` : `Call completed but objective not met`)
+          : undefined;
+        
         await supabase.from("agent_tasks").update({
           status: newStatus,
           completed_at: new Date().toISOString(),
           ...(errorMsg ? { error_message: errorMsg } : {}),
-          result: { ...(task?.result as any || {}), callStatus, callDuration: parseInt(callDuration) },
+          result: { ...taskResult, callStatus, callDuration: parseInt(callDuration) },
         }).eq("id", taskId);
+
+        console.log(`[voice-agent] Task ${taskId} → status=${newStatus}, objectiveMet=${objectiveMet}, twilioFailed=${twilioFailed}, hasMission=${!!missionId}`);
 
         // ── MISSION AUTO-RETRY LOGIC ──
         // If this call belongs to a mission AND objective was NOT met, try next store
         if (missionId) {
-          const taskResult = task?.result as any || {};
-          const objectiveMet = taskResult?.lastDirective?.objectiveMet === true;
 
           const { data: mission } = await supabase.from("agent_tasks").select("result, payload, status").eq("id", missionId).single();
           if (mission && mission.status === "running") {
