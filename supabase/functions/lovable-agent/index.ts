@@ -1218,20 +1218,20 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         }
       }
 
-      // Step 2: Invoke browser-agent edge function (has Researcher→Planner→Bridge loop)
+      // Step 2: Invoke browser-agent edge function (Researcher→Planner→Bridge loop, async)
       let agentResult: any = null;
       let agentError: string | null = null;
 
       try {
-        console.log(`[browser_task] Invoking browser-agent edge function for task: ${taskStr.slice(0, 100)}`);
+        console.log(`[browser_task] Invoking browser-agent for: ${taskStr.slice(0, 100)}`);
 
         if (_sendEventFn) {
-          _sendEventFn("browser_started", {
-            provider: "browser_agent",
-            task: taskStr,
-          });
+          _sendEventFn("browser_started", { provider: "browser_agent", task: taskStr });
         }
 
+        const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_KEY);
+
+        // Start async run
         const agentRes = await fetch(`${SUPABASE_URL}/functions/v1/browser-agent`, {
           method: "POST",
           headers: {
@@ -1240,34 +1240,75 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
             apikey: SERVICE_KEY,
           },
           body: JSON.stringify({
+            action: "run",
             goal: taskStr,
             start_url: startUrl || undefined,
             user_id: _currentUserId,
+            context: { userId: _currentUserId },
           }),
         });
 
-        if (agentRes.ok) {
-          agentResult = await agentRes.json();
-          console.log(`[browser_task] browser-agent completed:`, JSON.stringify(agentResult).slice(0, 300));
+        if (!agentRes.ok) {
+          const errText = await agentRes.text();
+          throw new Error(`browser-agent returned ${agentRes.status}: ${errText.slice(0, 300)}`);
+        }
 
-          if (_sendEventFn) {
-            _sendEventFn("browser_completed", {
-              provider: "browser_agent",
-              success: agentResult.success,
-              summary: agentResult.summary || agentResult.message || "",
-            });
+        const startData = await agentRes.json();
+        const runId = startData.runId;
+        console.log(`[browser_task] browser-agent started, runId: ${runId}`);
+
+        if (_sendEventFn) {
+          _sendEventFn("browser_progress", { runId, status: "running", step: 0 });
+        }
+
+        // Poll agent_runs for completion (up to 4 minutes)
+        if (runId) {
+          for (let attempt = 0; attempt < 60; attempt++) {
+            await new Promise(r => setTimeout(r, 4000));
+            const { data: run } = await supabaseAdmin.from("agent_runs")
+              .select("*").eq("id", runId).single();
+
+            if (!run) continue;
+
+            if (_sendEventFn && (attempt % 3 === 0)) {
+              _sendEventFn("browser_progress", {
+                runId,
+                status: run.status,
+                step: attempt + 1,
+              });
+            }
+
+            if (run.status === "completed") {
+              agentResult = run.summary_json || { success: true };
+              agentResult.success = true;
+              if (_sendEventFn) {
+                _sendEventFn("browser_completed", {
+                  runId,
+                  success: true,
+                  summary: agentResult.finalResult?.summary || "Task completed",
+                });
+              }
+              break;
+            } else if (run.status === "failed") {
+              agentError = run.error_message || "Browser agent task failed";
+              if (_sendEventFn) {
+                _sendEventFn("browser_error", { runId, error: agentError });
+              }
+              break;
+            }
+          }
+
+          if (!agentResult && !agentError) {
+            agentError = "Browser agent timed out after 4 minutes of polling.";
+            if (_sendEventFn) {
+              _sendEventFn("browser_error", { runId, error: agentError });
+            }
           }
         } else {
-          const errText = await agentRes.text();
-          agentError = `browser-agent failed (${agentRes.status}): ${errText.slice(0, 500)}`;
-          console.error(`[browser_task] ${agentError}`);
-
-          if (_sendEventFn) {
-            _sendEventFn("browser_error", { error: agentError });
-          }
+          agentError = "browser-agent did not return a runId";
         }
       } catch (err: any) {
-        agentError = `browser-agent unreachable: ${err?.message}`;
+        agentError = `browser-agent error: ${err?.message}`;
         console.error(`[browser_task] ${agentError}`);
       }
 
@@ -1285,12 +1326,13 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
       }
 
       if (agentResult) {
-        if (agentResult.extracted_data) result.extractedData = agentResult.extracted_data;
-        if (agentResult.summary) result.summary = agentResult.summary;
-        if (agentResult.steps_taken) result.stepsTaken = agentResult.steps_taken;
-        if (agentResult.phases_completed) result.phasesCompleted = agentResult.phases_completed;
-        if (agentResult.evidence) result.evidence = agentResult.evidence;
-        result.message = agentResult.summary || `Browser agent completed in ${agentResult.steps_taken || '?'} steps.`;
+        const fr = agentResult.finalResult;
+        if (fr?.extracted_data) result.extractedData = fr.extracted_data;
+        if (fr?.summary) result.summary = fr.summary;
+        if (agentResult.stepsUsed) result.stepsTaken = agentResult.stepsUsed;
+        if (agentResult.phasesCompleted) result.phasesCompleted = agentResult.phasesCompleted;
+        if (fr?.evidence) result.evidence = fr.evidence;
+        result.message = fr?.summary || `Browser agent completed in ${agentResult.stepsUsed || '?'} steps.`;
       } else {
         result.taskStatus = "failed";
         result.error = agentError || "Browser agent failed.";
