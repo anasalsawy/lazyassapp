@@ -51,6 +51,19 @@ type SecretRequest = {
   status: "pending" | "submitted" | "error";
 };
 
+type BrowserLiveState = {
+  runId: string;
+  provider: string;
+  task: string;
+  status: "starting" | "running" | "completed" | "error";
+  step: number;
+  currentUrl: string | null;
+  screenshotUrl: string | null;
+  actionHistory: Array<{ step: number; action: string }>;
+  error: string | null;
+  result: string | null;
+};
+
 type Msg = {
   role: "user" | "assistant";
   content: string;
