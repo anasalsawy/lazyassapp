@@ -393,15 +393,21 @@ function CallMonitorPanel({ callState, isLive }: { callState: CallState; isLive:
   );
 }
 
-// ── Steel Embed Parser ───────────────────────────────────────────────────────
+// ── Steel Embed + Screenshot Parser ──────────────────────────────────────────
 interface SteelEmbedData {
   debugUrl: string;
   sessionId?: string;
   interactive?: boolean;
 }
 
-function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedData[] } {
+interface ScreenshotData {
+  url: string;
+  alt?: string;
+}
+
+function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedData[]; screenshots: ScreenshotData[] } {
   const embeds: SteelEmbedData[] = [];
+  const screenshots: ScreenshotData[] = [];
   const embedRegex = /\[STEEL_EMBED\]([\s\S]*?)\[\/STEEL_EMBED\]/g;
   let text = content;
   let match;
@@ -422,13 +428,27 @@ function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedDa
     }
   }
 
-  return { text: text.trim(), embeds };
+  // Extract bridge screenshot URLs
+  const screenshotRegex = /📸\s*Screenshot:\s*(https?:\/\/[^\s"]+\/runs\/[^\s"]+\/screenshot)/g;
+  let ssMatch;
+  while ((ssMatch = screenshotRegex.exec(content)) !== null) {
+    screenshots.push({ url: ssMatch[1], alt: "Browser screenshot" });
+    text = text.replace(ssMatch[0], "");
+  }
+
+  // Also catch raw screenshot URLs in markdown image syntax
+  const mdImgRegex = /!\[([^\]]*)\]\((https?:\/\/[^\s"]+\/runs\/[^\s"]+\/screenshot)\)/g;
+  while ((ssMatch = mdImgRegex.exec(content)) !== null) {
+    screenshots.push({ url: ssMatch[2], alt: ssMatch[1] || "Browser screenshot" });
+  }
+
+  return { text: text.trim(), embeds, screenshots };
 }
 
 // ── Lovable Message Content (with Steel embeds) ─────────────────────────────
 function LovableMessageContent({ content, role }: { content: string; role: "user" | "assistant" }) {
-  const { text, embeds } = useMemo(() =>
-    role === "assistant" ? parseSteelEmbeds(content) : { text: content, embeds: [] as SteelEmbedData[] },
+  const { text, embeds, screenshots } = useMemo(() =>
+    role === "assistant" ? parseSteelEmbeds(content) : { text: content, embeds: [] as SteelEmbedData[], screenshots: [] as ScreenshotData[] },
     [content, role]
   );
 
@@ -456,6 +476,16 @@ function LovableMessageContent({ content, role }: { content: string; role: "user
           sessionId={embed.sessionId}
           interactive={embed.interactive}
         />
+      ))}
+      {screenshots.map((ss, i) => (
+        <div key={`ss-${i}`} className="mt-2 rounded-lg overflow-hidden border border-border/40 bg-muted/30">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/60 border-b border-border/30">
+            <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground font-medium">Browser Screenshot</span>
+            <a href={ss.url} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-primary hover:underline">Open</a>
+          </div>
+          <img src={ss.url} alt={ss.alt || "Screenshot"} className="w-full max-h-96 object-contain" loading="lazy" />
+        </div>
       ))}
     </>
   );

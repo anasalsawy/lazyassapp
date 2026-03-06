@@ -1256,15 +1256,61 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
 
           if (bridgeRes.ok) {
             const bridgeData = await bridgeRes.json();
-            buResult = {
-              runId: bridgeData.run_id,
-              status: "running",
-              statusUrl: `${BRIDGE_URL}/runs/${bridgeData.run_id}/status`,
-              screenshotUrl: `${BRIDGE_URL}/runs/${bridgeData.run_id}/screenshot`,
-              mode: bridgeData.mode || "bridge",
-            };
-            buError = null;
-            console.log(`[browser_task] Bridge task started: ${bridgeData.run_id} (mode: ${bridgeData.mode})`);
+            const bridgeRunId = bridgeData.run_id;
+            const statusUrl = `${BRIDGE_URL}/runs/${bridgeRunId}/status`;
+            const screenshotUrl = `${BRIDGE_URL}/runs/${bridgeRunId}/screenshot`;
+            console.log(`[browser_task] Bridge task started: ${bridgeRunId} (mode: ${bridgeData.mode})`);
+
+            // Poll bridge for completion (up to 90 seconds)
+            let bridgeResult: any = null;
+            const pollHeaders: Record<string, string> = {};
+            if (BRIDGE_KEY) pollHeaders["Authorization"] = `Bearer ${BRIDGE_KEY}`;
+
+            for (let attempt = 0; attempt < 18; attempt++) {
+              await new Promise(r => setTimeout(r, 5000));
+              try {
+                const pollRes = await fetch(statusUrl, { headers: pollHeaders });
+                if (pollRes.ok) {
+                  const pollData = await pollRes.json();
+                  console.log(`[browser_task] Bridge poll #${attempt + 1}: status=${pollData.status}`);
+                  if (pollData.status === "completed") {
+                    bridgeResult = pollData;
+                    break;
+                  } else if (pollData.status === "error") {
+                    buError = { message: `Bridge task error: ${pollData.error || "unknown"}` };
+                    break;
+                  }
+                }
+              } catch (_) {}
+            }
+
+            if (bridgeResult) {
+              buResult = {
+                runId: bridgeRunId,
+                status: "completed",
+                statusUrl,
+                screenshotUrl,
+                mode: bridgeData.mode || "bridge",
+                bridgeOutput: bridgeResult.result || null,
+                currentUrl: bridgeResult.current_url || null,
+                pageTitle: bridgeResult.page_title || null,
+                pageContent: bridgeResult.page_content || null,
+                stepsTaken: bridgeResult.steps_taken || 0,
+                actionHistory: bridgeResult.action_history || [],
+                hasScreenshot: bridgeResult.has_screenshot || false,
+              };
+              buError = null;
+            } else if (!buError) {
+              // Timed out but still running
+              buResult = {
+                runId: bridgeRunId,
+                status: "running",
+                statusUrl,
+                screenshotUrl,
+                mode: bridgeData.mode || "bridge",
+              };
+              buError = null;
+            }
           } else {
             const errText = await bridgeRes.text();
             buError = { status: bridgeRes.status, message: `Bridge failed (${bridgeRes.status}): ${errText?.slice(0, 500)}` };
@@ -1296,10 +1342,27 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         result.liveUrl = buResult.liveUrl;
         result.taskStatus = buResult.status;
         if (buResult.statusUrl) result.statusUrl = buResult.statusUrl;
-        if (buResult.screenshotUrl) result.screenshotUrl = buResult.screenshotUrl;
-        result.message = usedProvider === "self_hosted_bridge"
-          ? `🔧 Self-hosted bridge task ${buResult.runId} is running. Poll status at ${buResult.statusUrl}`
-          : `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
+        if (buResult.screenshotUrl && buResult.hasScreenshot) {
+          result.screenshotUrl = buResult.screenshotUrl;
+        }
+        // Include bridge completion data
+        if (buResult.bridgeOutput) result.bridgeOutput = buResult.bridgeOutput;
+        if (buResult.currentUrl) result.currentUrl = buResult.currentUrl;
+        if (buResult.pageTitle && !result.pageTitle) result.pageTitle = buResult.pageTitle;
+        if (buResult.pageContent && !result.pageContent) result.pageContent = buResult.pageContent?.substring(0, 6000);
+        if (buResult.stepsTaken) result.stepsTaken = buResult.stepsTaken;
+        if (buResult.actionHistory) result.actionHistory = buResult.actionHistory;
+
+        if (usedProvider === "self_hosted_bridge" && buResult.status === "completed") {
+          result.message = `✅ Bridge task completed in ${buResult.stepsTaken || '?'} steps. URL: ${buResult.currentUrl || 'N/A'}`;
+          if (buResult.hasScreenshot) {
+            result.message += `\n\n📸 Screenshot: ${buResult.screenshotUrl}`;
+          }
+        } else if (usedProvider === "self_hosted_bridge") {
+          result.message = `🔧 Bridge task ${buResult.runId} is still running. Poll: ${buResult.statusUrl}`;
+        } else {
+          result.message = `🤖 Browser Use task ${buResult.runId} is running autonomously.`;
+        }
       } else {
         result.taskStatus = "failed_to_start";
         result.error = buError?.message || "All browser providers failed.";
