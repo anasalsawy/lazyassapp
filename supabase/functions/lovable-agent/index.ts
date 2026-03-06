@@ -1311,11 +1311,30 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
                   summary: agentResult.finalResult?.summary || "Task completed",
                 });
               }
+              // Update linked order if exists
+              if (linkedOrderId) {
+                const fr = agentResult.finalResult;
+                const resultText = (fr?.summary || "").toLowerCase();
+                const isSuccess = ["confirmation", "order placed", "success", "order #"].some(k => resultText.includes(k));
+                await supabaseAdmin.from("auto_shop_orders").update({
+                  status: isSuccess ? "completed" : "failed",
+                  completed_at: new Date().toISOString(),
+                  order_confirmation: fr?.extracted_data?.confirmation_number || fr?.summary?.match(/(?:confirmation|order)\s*(?:#|number|:)\s*([A-Z0-9-]+)/i)?.[1] || null,
+                  notes: JSON.stringify({ source: "lovable_agent", finalResult: fr }),
+                }).eq("id", linkedOrderId).then(() => {}, () => {});
+              }
               break;
             } else if (run.status === "failed") {
               agentError = run.error_message || "Browser agent task failed";
               if (_sendEventFn) {
                 _sendEventFn("browser_error", { runId, error: agentError });
+              }
+              // Update linked order if exists
+              if (linkedOrderId) {
+                await supabaseAdmin.from("auto_shop_orders").update({
+                  status: "failed",
+                  error_message: agentError,
+                }).eq("id", linkedOrderId).then(() => {}, () => {});
               }
               break;
             }
