@@ -393,15 +393,21 @@ function CallMonitorPanel({ callState, isLive }: { callState: CallState; isLive:
   );
 }
 
-// ── Steel Embed Parser ───────────────────────────────────────────────────────
+// ── Steel Embed + Screenshot Parser ──────────────────────────────────────────
 interface SteelEmbedData {
   debugUrl: string;
   sessionId?: string;
   interactive?: boolean;
 }
 
-function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedData[] } {
+interface ScreenshotData {
+  url: string;
+  alt?: string;
+}
+
+function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedData[]; screenshots: ScreenshotData[] } {
   const embeds: SteelEmbedData[] = [];
+  const screenshots: ScreenshotData[] = [];
   const embedRegex = /\[STEEL_EMBED\]([\s\S]*?)\[\/STEEL_EMBED\]/g;
   let text = content;
   let match;
@@ -422,7 +428,21 @@ function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedDa
     }
   }
 
-  return { text: text.trim(), embeds };
+  // Extract bridge screenshot URLs
+  const screenshotRegex = /📸\s*Screenshot:\s*(https?:\/\/[^\s"]+\/runs\/[^\s"]+\/screenshot)/g;
+  let ssMatch;
+  while ((ssMatch = screenshotRegex.exec(content)) !== null) {
+    screenshots.push({ url: ssMatch[1], alt: "Browser screenshot" });
+    text = text.replace(ssMatch[0], "");
+  }
+
+  // Also catch raw screenshot URLs in markdown image syntax
+  const mdImgRegex = /!\[([^\]]*)\]\((https?:\/\/[^\s"]+\/runs\/[^\s"]+\/screenshot)\)/g;
+  while ((ssMatch = mdImgRegex.exec(content)) !== null) {
+    screenshots.push({ url: ssMatch[2], alt: ssMatch[1] || "Browser screenshot" });
+  }
+
+  return { text: text.trim(), embeds, screenshots };
 }
 
 // ── Lovable Message Content (with Steel embeds) ─────────────────────────────
