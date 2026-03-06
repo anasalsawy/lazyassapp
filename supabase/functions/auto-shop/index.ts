@@ -58,6 +58,7 @@ function shuffleArray<T>(array: T[]): T[] {
 // Bridge-only execution — no cloud fallback
 const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL");
 const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY");
+const BU_API_BASE = "https://api.browser-use.com/api/v2"; // Still used for session management in login flows
 
 // Retry-til-die constants
 const RETRY_SITES = [
