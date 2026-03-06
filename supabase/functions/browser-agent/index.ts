@@ -53,7 +53,7 @@ const SITE_KNOWLEDGE: Record<string, { search_pattern: string; login_url: string
 // ═══════════════════════════════════════════════════════════════════════════
 const RESEARCHER_PROMPT = `You are RESEARCHER, the strategic route planner in a two-agent browser automation system (Researcher → Planner).
 
-The Planner will send natural-language task descriptions to a Browser Use AI Agent that autonomously navigates websites. You provide the strategic plan; the Planner translates each step into a task for the browser agent.
+The Planner will generate structured Playwright commands that execute on a headless browser. You provide the strategic plan; the Planner translates each step into executable browser commands.
 
 You receive:
 1) TASK_SPEC: the high-level goal, user context
@@ -67,6 +67,7 @@ Your job:
 - Define SUCCESS_CRITERIA and PHASE_TRANSITIONS
 - Provide DOMAIN_ALLOWLIST
 - Estimate step budget per phase
+- Include CSS SELECTOR HINTS for known sites when possible
 
 AUTONOMY RULES (absolute):
 - ALL sites are fair game. Login walls → use credentials. Payment → use stored cards.
@@ -89,7 +90,13 @@ Output EXACTLY one JSON object with key "RESEARCHER_ROUTE":
           "priority": int,
           "requires_login": boolean,
           "has_credentials": boolean,
-          "strategy_notes": string
+          "strategy_notes": string,
+          "selector_hints": {
+            "search_input": string,
+            "results_container": string,
+            "result_item": string,
+            "next_page": string
+          }
         }
       ],
       "fallback_sites": [
@@ -108,51 +115,70 @@ Output EXACTLY one JSON object with key "RESEARCHER_ROUTE":
 Do not output markdown. Do not output explanations outside JSON.`;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PLANNER SYSTEM PROMPT — now sends tasks directly to Browser Use Agent
+// PLANNER SYSTEM PROMPT — now emits structured Playwright commands
 // ═══════════════════════════════════════════════════════════════════════════
 const PLANNER_PROMPT = `You are PLANNER, the tactical controller in a two-agent browser automation system.
 
-IMPORTANT: You do NOT issue low-level browser commands. Instead, you compose NATURAL LANGUAGE TASK DESCRIPTIONS that are sent to a Browser Use AI Agent. That agent autonomously navigates the browser, clicks, types, and extracts data based on your description.
+IMPORTANT: You generate STRUCTURED PLAYWRIGHT COMMANDS that execute directly on a headless browser. There is NO AI on the browser side — your commands are executed exactly as specified. You must provide precise CSS selectors, exact URLs, and explicit values.
 
 You receive:
 1) TASK_SPEC (goal, success criteria, constraints)
-2) RESEARCHER_ROUTE (phases, sites, domain allowlist, strategy)
-3) The latest BROWSER_AGENT_RESULT (what the browser agent returned from its last task)
+2) RESEARCHER_ROUTE (phases, sites, domain allowlist, strategy, selector hints)
+3) The latest EXECUTION_RESULT (what the browser returned from the last command batch)
 4) Persistent RUN_STATE memory (url_stack, progress_markers, failure_budget, current_phase)
 5) HUMAN_INJECTIONS (if any)
 
-You must:
-- Track which PHASE you're in and which SITE within that phase.
-- Assess progress based on browser agent results.
-- Compose the NEXT task description for the browser agent — a clear, specific natural language instruction.
-- When a phase's success_criteria are met, advance to the next phase.
-- When ALL phases complete, return FINAL_RESULT.
-- When stuck, signal NEED_RESEARCHER.
+Available commands (each is a JSON object):
+- { "action": "navigate", "url": "https://..." }
+- { "action": "click", "selector": "css-selector" }
+- { "action": "type", "selector": "css-selector", "value": "text to type" }
+- { "action": "press", "value": "Enter" } or { "action": "press", "selector": "css-selector", "value": "Enter" }
+- { "action": "select", "selector": "select-css-selector", "value": "option-value" }
+- { "action": "wait", "value": "2000" } (milliseconds)
+- { "action": "wait_for_selector", "selector": "css-selector", "timeout": 10000 }
+- { "action": "scroll", "value": "down|up|bottom|top" }
+- { "action": "screenshot" }
+- { "action": "extract_text", "selector": "css-selector" } (extracts text from all matching elements)
+- { "action": "extract_text" } (extracts full page body text)
+- { "action": "extract_html", "selector": "css-selector" }
+- { "action": "extract_attribute", "selector": "css-selector", "value": "href" }
+- { "action": "evaluate", "value": "javascript expression" }
+- { "action": "hover", "selector": "css-selector" }
+- { "action": "check", "selector": "css-selector" }
+- { "action": "get_url" }
+- { "action": "get_title" }
 
-TASK DESCRIPTION GUIDELINES:
-- Be specific and actionable: "Search for 'software engineer' jobs in 'San Francisco' on the current page, then extract the first 5 job titles and companies"
-- Include the target URL if navigating: "Go to https://indeed.com/jobs?q=software+engineer and extract the top 5 results"
-- Include what data to extract: "Extract the product name, price, and rating from the current page"
-- Include credentials context when needed: "Log in with email {email} and password {password}"
-- One logical step at a time — the browser agent handles the actual clicks/typing
+COMMAND GUIDELINES:
+- Always start with "navigate" if the page needs loading
+- Use specific CSS selectors — prefer IDs, data attributes, or unique classes
+- When unsure of selectors, use extract_text or extract_html first to discover the page structure
+- Always include an extract or screenshot command to get results back
+- Keep command batches focused: 3-10 commands per batch
+- After critical actions (form submit, login), add a wait + screenshot to verify state
+
+You must:
+- Track which PHASE you're in and which SITE within that phase
+- Assess progress based on execution results (extracted text, URLs, errors)
+- Compose the NEXT batch of Playwright commands
+- When a phase's success_criteria are met, advance to the next phase
+- When ALL phases complete, return FINAL_RESULT
+- When stuck (selectors not found, unexpected page), signal NEED_RESEARCHER
 
 AUTONOMY RULES (absolute, non-negotiable):
-- ALL actions are authorized: logins, payments, form submissions, downloads, account creation.
-- CAPTCHA: the browser agent will attempt to solve them.
-- Bot detection: try alternative paths or URLs.
+- ALL actions are authorized: logins, payments, form submissions, downloads.
+- Bot detection: try alternative selectors or navigation paths.
 
 Output EXACTLY one JSON object with one of these top-level keys:
 
-1) "BROWSER_TASK":
+1) "BROWSER_COMMANDS":
 {
   "run_id": string,
   "turn_id": string,
   "current_phase_id": string,
-  "task_description": string,
-  "start_url": string | null,
-  "max_steps": int,
+  "commands": [
+    { "action": string, "selector"?: string, "value"?: string, "url"?: string, "timeout"?: number }
+  ],
   "expected_outcome": string,
-  "extract_schema": object | null,
   "on_failure": string,
   "risk_level": "low"|"medium"|"high"
 }
@@ -181,7 +207,7 @@ Output EXACTLY one JSON object with one of these top-level keys:
 Do not output markdown. Do not output explanations outside JSON.`;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BRIDGE API HELPERS — self-hosted Browser Use bridge
+// BRIDGE API HELPERS — Playwright command executor
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function bridgeApi(
@@ -201,39 +227,52 @@ async function bridgeApi(
   });
 }
 
-async function runBridgeTask(
+interface PlaywrightCommand {
+  action: string;
+  selector?: string;
+  value?: string;
+  url?: string;
+  timeout?: number;
+  wait_after?: number;
+}
+
+async function runBridgeCommands(
   bridgeUrl: string,
   bridgeKey: string,
-  taskDescription: string,
-  startUrl?: string | null,
-  maxSteps: number = 15,
-  model: string = "gpt-4o",
+  commands: PlaywrightCommand[],
 ): Promise<{ runId: string; status: string; result: any }> {
-  const body: any = {
-    task: taskDescription,
-    max_steps: maxSteps,
-    model,
-  };
-  if (startUrl) body.start_url = startUrl;
-
-  const res = await bridgeApi(bridgeUrl, bridgeKey, "/run-task", {
+  const res = await bridgeApi(bridgeUrl, bridgeKey, "/execute", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify({ commands }),
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Bridge /run-task failed (${res.status}): ${err.slice(0, 500)}`);
+    // Fallback: try /run-task with commands format
+    const fallbackRes = await bridgeApi(bridgeUrl, bridgeKey, "/run-task", {
+      method: "POST",
+      body: JSON.stringify({ commands }),
+    });
+    if (!fallbackRes.ok) {
+      const err = await fallbackRes.text();
+      throw new Error(`Bridge failed (${fallbackRes.status}): ${err.slice(0, 500)}`);
+    }
+    const data = await fallbackRes.json();
+    return await pollBridgeResult(bridgeUrl, bridgeKey, data.run_id);
   }
 
   const data = await res.json();
-  const runId = data.run_id;
+  return await pollBridgeResult(bridgeUrl, bridgeKey, data.run_id);
+}
 
-  // Poll for completion
+async function pollBridgeResult(
+  bridgeUrl: string,
+  bridgeKey: string,
+  runId: string,
+): Promise<{ runId: string; status: string; result: any }> {
   const startTime = Date.now();
-  const maxPollMs = 180000; // 3 minutes max
+  const maxPollMs = 300000; // 5 minutes
   while (Date.now() - startTime < maxPollMs) {
-    await new Promise((r) => setTimeout(r, 3000));
+    await new Promise((r) => setTimeout(r, 2000));
     try {
       const statusRes = await bridgeApi(bridgeUrl, bridgeKey, `/runs/${runId}/status`);
       if (statusRes.ok) {
@@ -244,8 +283,7 @@ async function runBridgeTask(
       }
     } catch (_) { /* continue polling */ }
   }
-
-  return { runId, status: "timeout", result: { error: "Bridge task timed out after 3 minutes" } };
+  return { runId, status: "timeout", result: { error: "Bridge timed out after 5 minutes" } };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -367,7 +405,7 @@ async function fetchInjections(supabase: any, runId: string): Promise<string[]> 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN 2-AGENT LOOP: Researcher → Planner → (Bridge Browser Use Agent)
+// MAIN 2-AGENT LOOP: Researcher → Planner → (Playwright Bridge)
 // ═══════════════════════════════════════════════════════════════════════════
 interface TaskSpec {
   goal: string;
@@ -388,7 +426,7 @@ async function runTwoAgentLoop(
   openaiKey: string,
   firecrawlKey?: string,
 ): Promise<any> {
-  const maxSteps = 30; // max Planner turns (each can be multi-step on bridge)
+  const maxSteps = 30;
   let stepCount = 0;
   const runId = crypto.randomUUID();
   const milestones: string[] = [];
@@ -452,9 +490,9 @@ async function runTwoAgentLoop(
     }
 
     // Synthetic initial result for the Planner
-    let lastBrowserResult: any = {
+    let lastExecutionResult: any = {
       status: "success",
-      task_sent: "Initial state",
+      commands_executed: 0,
       result: initialPageContent.slice(0, 6000) || "Ready to start — no initial page loaded yet.",
       current_url: startUrl || null,
     };
@@ -472,7 +510,7 @@ async function runTwoAgentLoop(
         await log("info", `📡 Human injection received: ${newInjections.length}`, { injections: newInjections });
       }
 
-      // ── PLANNER: decide next browser task ──────────────────────
+      // ── PLANNER: decide next command batch ──────────────────────
       const currentPhase = researcherRoute.phases[currentPhaseIndex] || null;
       plannerHistory.push({
         role: "user",
@@ -480,7 +518,7 @@ async function runTwoAgentLoop(
           TASK_SPEC: taskSpec,
           RESEARCHER_ROUTE: researcherRoute,
           CURRENT_PHASE: currentPhase,
-          BROWSER_AGENT_RESULT: lastBrowserResult,
+          EXECUTION_RESULT: lastExecutionResult,
           HUMAN_INJECTIONS: newInjections.length > 0 ? newInjections : undefined,
           RUN_STATE: {
             run_id: runId,
@@ -550,20 +588,20 @@ async function runTwoAgentLoop(
         continue;
       }
 
-      // ── BROWSER_TASK — send to bridge ───────────────────────────
-      const browserTask = plannerDecision.BROWSER_TASK;
-      if (!browserTask) {
-        await log("error", "Planner produced no actionable output");
-        failureBudget["no_task"] = (failureBudget["no_task"] || 0) + 1;
-        if (failureBudget["no_task"] >= 3) {
-          return { success: false, error: "Planner repeatedly failed", stepsUsed: stepCount, milestones };
+      // ── BROWSER_COMMANDS — send to bridge ───────────────────────
+      const browserCmds = plannerDecision.BROWSER_COMMANDS;
+      if (!browserCmds || !browserCmds.commands || browserCmds.commands.length === 0) {
+        await log("error", "Planner produced no commands");
+        failureBudget["no_commands"] = (failureBudget["no_commands"] || 0) + 1;
+        if (failureBudget["no_commands"] >= 3) {
+          return { success: false, error: "Planner repeatedly failed to produce commands", stepsUsed: stepCount, milestones };
         }
         continue;
       }
 
       // Track phase advancement
-      if (browserTask.current_phase_id && currentPhase && browserTask.current_phase_id !== currentPhase.phase_id) {
-        const newIdx = researcherRoute.phases.findIndex((p: any) => p.phase_id === browserTask.current_phase_id);
+      if (browserCmds.current_phase_id && currentPhase && browserCmds.current_phase_id !== currentPhase.phase_id) {
+        const newIdx = researcherRoute.phases.findIndex((p: any) => p.phase_id === browserCmds.current_phase_id);
         if (newIdx >= 0 && newIdx !== currentPhaseIndex) {
           phasesCompleted.push(currentPhase.phase_id);
           currentPhaseIndex = newIdx;
@@ -571,52 +609,55 @@ async function runTwoAgentLoop(
         }
       }
 
-      const taskDesc = browserTask.task_description;
-      await log("info", `Planner → Bridge: "${taskDesc.slice(0, 150)}..."`, {
+      const cmdCount = browserCmds.commands.length;
+      await log("info", `Planner → Bridge: ${cmdCount} commands`, {
         phase: currentPhase?.phase_name,
-        risk: browserTask.risk_level,
-        start_url: browserTask.start_url,
+        risk: browserCmds.risk_level,
+        actions: browserCmds.commands.map((c: any) => c.action),
       });
 
       // ── SEND TO BRIDGE ──────────────────────────────────────────
       try {
-        const bridgeResult = await runBridgeTask(
+        const bridgeResult = await runBridgeCommands(
           bridgeUrl,
           bridgeKey,
-          taskDesc,
-          browserTask.start_url,
-          browserTask.max_steps || 15,
+          browserCmds.commands,
         );
 
-        lastBrowserResult = {
+        const resultData = bridgeResult.result || {};
+        lastExecutionResult = {
           status: bridgeResult.status === "completed" || bridgeResult.status === "finished" ? "success" : "failed",
-          task_sent: taskDesc,
-          result: bridgeResult.result?.result || bridgeResult.result?.error || "No output",
-          current_url: bridgeResult.result?.current_url || null,
-          page_title: bridgeResult.result?.page_title || null,
-          steps_taken: bridgeResult.result?.steps_taken || 0,
-          action_history: bridgeResult.result?.action_history || [],
-          page_content: bridgeResult.result?.page_content || null,
+          commands_sent: cmdCount,
+          commands_executed: resultData.steps_taken || 0,
+          action_history: resultData.action_history || [],
+          current_url: resultData.current_url || null,
+          page_title: resultData.page_title || null,
+          extracted_data: resultData.extracted_data || [],
+          page_content: resultData.page_content || null,
+          errors: resultData.errors || null,
+          result: resultData.result || resultData.error || "No output",
         };
 
-        await log("info", `Bridge → ${lastBrowserResult.status}`, {
-          url: lastBrowserResult.current_url,
-          steps: lastBrowserResult.steps_taken,
+        await log("info", `Bridge → ${lastExecutionResult.status}`, {
+          url: lastExecutionResult.current_url,
+          commands_executed: lastExecutionResult.commands_executed,
+          extracted_items: (lastExecutionResult.extracted_data || []).length,
+          errors: lastExecutionResult.errors ? lastExecutionResult.errors.length : 0,
         });
 
         // Track URLs
-        if (lastBrowserResult.current_url) {
-          urlStack.push(lastBrowserResult.current_url);
+        if (lastExecutionResult.current_url) {
+          urlStack.push(lastExecutionResult.current_url);
         }
 
-        if (lastBrowserResult.status === "failed") {
+        if (lastExecutionResult.status === "failed") {
           failureBudget["bridge_fail"] = (failureBudget["bridge_fail"] || 0) + 1;
         }
       } catch (err: any) {
         await log("error", `Bridge call failed: ${err.message}`);
-        lastBrowserResult = {
+        lastExecutionResult = {
           status: "failed",
-          task_sent: taskDesc,
+          commands_sent: cmdCount,
           result: `Bridge error: ${err.message}`,
           current_url: null,
         };
@@ -636,7 +677,7 @@ async function runTwoAgentLoop(
       error: `Step budget exhausted (${maxSteps} steps)`,
       stepsUsed: stepCount, milestones, phasesCompleted,
       researcherRoute,
-      lastState: lastBrowserResult,
+      lastState: lastExecutionResult,
     };
   } catch (err: any) {
     await log("error", `Fatal error: ${err.message}`, { stack: err.stack?.slice(0, 500) });
@@ -714,10 +755,10 @@ serve(async (req) => {
 
         const { data: agentRun } = await supabase.from("agent_runs").insert({
           user_id: userId,
-          run_type: "browser_agent_2a",
+          run_type: "browser_agent_pw",
           status: "running",
           started_at: new Date().toISOString(),
-          summary_json: { architecture: "researcher-planner-bridge" },
+          summary_json: { architecture: "researcher-planner-playwright" },
         }).select().single();
 
         const backgroundWork = async () => {
@@ -748,8 +789,8 @@ serve(async (req) => {
           success: true,
           runId: agentRun?.id,
           status: "running",
-          architecture: "researcher-planner-bridge",
-          message: "2-agent browser automation started. Researcher → Planner → Browser Use Agent (self-hosted bridge).",
+          architecture: "researcher-planner-playwright",
+          message: "Browser automation started. Researcher → Planner → Playwright (direct commands).",
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
@@ -818,29 +859,30 @@ serve(async (req) => {
         const runId = body.run_id;
         if (!runId) throw new Error("run_id required");
         const { data: run } = await supabase.from("agent_runs")
-          .select("*").eq("id", runId).eq("user_id", userId).single();
+          .select("*")
+          .eq("id", runId)
+          .single();
         if (!run) throw new Error("Run not found");
 
         const { data: logs } = await supabase.from("agent_logs")
-          .select("message, log_level, created_at, metadata")
-          .eq("user_id", userId).eq("agent_name", "browser_agent")
+          .select("message, metadata, created_at")
+          .eq("user_id", userId)
+          .eq("agent_name", "browser_agent")
           .order("created_at", { ascending: false })
           .limit(20);
 
         return new Response(JSON.stringify({
           run,
-          recent_logs: logs || [],
+          recentLogs: logs || [],
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       default:
-        return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        throw new Error(`Unknown action: ${action}`);
     }
-  } catch (err: any) {
-    console.error("[BrowserAgent]", err);
-    return new Response(JSON.stringify({ error: err.message }), {
+  } catch (error: any) {
+    console.error("[BrowserAgent] Error:", error);
+    return new Response(JSON.stringify({ error: error.message }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
