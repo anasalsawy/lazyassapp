@@ -80,7 +80,7 @@ interface MissionState {
   confirmationNumber?: string;
 }
 
-async function runBridgeTask(task: string, startUrl: string, maxSteps: number, proxy?: { server: string; username?: string; password?: string }): Promise<{ success: boolean; taskId?: string; error?: string; source: string }> {
+async function runBridgeTask(task: string, startUrl: string, maxSteps: number, proxy?: { server: string; username?: string; password?: string }): Promise<{ success: boolean; taskId?: string; liveViewUrl?: string; error?: string; source: string }> {
   // Try bridge first
   if (BRIDGE_URL && BRIDGE_API_KEY) {
     try {
@@ -96,8 +96,10 @@ async function runBridgeTask(task: string, startUrl: string, maxSteps: number, p
       });
       if (res.ok) {
         const data = await res.json();
-        console.log(`[AutoShop] Bridge task started: ${data.task_id || data.id}`);
-        return { success: true, taskId: data.task_id || data.id, source: "bridge" };
+        const taskId = data.task_id || data.id;
+        const liveViewUrl = data.live_url || data.liveUrl || data.debug_url || null;
+        console.log(`[AutoShop] Bridge task started: ${taskId}, liveView: ${liveViewUrl}`);
+        return { success: true, taskId, liveViewUrl, source: "bridge" };
       }
       console.warn(`[AutoShop] Bridge returned ${res.status}, falling back to cloud`);
     } catch (e) {
@@ -121,7 +123,20 @@ async function runBridgeTask(task: string, startUrl: string, maxSteps: number, p
     }
     const data = await res.json();
     console.log(`[AutoShop] Cloud task started: ${data.id}`);
-    return { success: true, taskId: data.id, source: "cloud" };
+    // Try to get live URL from session
+    let liveViewUrl: string | undefined;
+    if (data.sessionId && buApiKey) {
+      try {
+        const sessRes = await fetch(`${BU_API_BASE}/sessions/${data.sessionId}`, {
+          headers: { "X-Browser-Use-API-Key": buApiKey },
+        });
+        if (sessRes.ok) {
+          const sessData = await sessRes.json();
+          liveViewUrl = sessData.liveUrl || sessData.live_url || undefined;
+        }
+      } catch (_) {}
+    }
+    return { success: true, taskId: data.id, liveViewUrl, source: "cloud" };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : String(e), source: "cloud" };
   }
@@ -578,11 +593,11 @@ async function handleStartOrder(
           continue;
         }
 
-        // Update order with current task
+        // Update order with current task + live view URL
         await supabase.from("auto_shop_orders").update({
           browser_use_task_id: taskResult.taskId,
           status: "searching",
-          notes: JSON.stringify({ missionState: mission, currentTaskId: taskResult.taskId, source: taskResult.source }),
+          notes: JSON.stringify({ missionState: mission, currentTaskId: taskResult.taskId, source: taskResult.source, liveViewUrl: taskResult.liveViewUrl || null, currentSite: siteName }),
         }).eq("id", orderId);
 
         // Poll until complete (max 10 min per attempt)
@@ -593,6 +608,48 @@ async function handleStartOrder(
 
         while (Date.now() < pollDeadline) {
           await sleep(15000); // poll every 15s
+
+          // ── HUMAN STRATEGIC INJECTION ──
+          // Check agent_tasks for mid-run instructions from the user
+          try {
+            const { data: injections } = await supabase
+              .from("agent_tasks")
+              .select("id, payload, task_type")
+              .eq("user_id", user.id)
+              .eq("status", "pending")
+              .in("task_type", ["shop_injection", "strategic_injection"])
+              .order("created_at", { ascending: true })
+              .limit(5);
+
+            if (injections && injections.length > 0) {
+              for (const inj of injections) {
+                const instruction = (inj.payload as any)?.instruction || (inj.payload as any)?.message || "";
+                if (instruction) {
+                  console.log(`[AutoShop] Human injection received: ${instruction}`);
+                  await supabase.from("agent_logs").insert({
+                    user_id: user.id, agent_name: "auto_shop", log_level: "info",
+                    message: `Human injection applied: ${instruction}`,
+                    metadata: { orderId, injectionId: inj.id, attempt: mission.totalAttempts },
+                  });
+                  // Mark injection as consumed
+                  await supabase.from("agent_tasks").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", inj.id);
+
+                  // If instruction says to skip/abandon current site, break polling early
+                  const instrLower = instruction.toLowerCase();
+                  if (instrLower.includes("skip") || instrLower.includes("abandon") || instrLower.includes("next site") || instrLower.includes("try another")) {
+                    console.log(`[AutoShop] Injection: abandoning current site per user instruction`);
+                    finalStatus = "failed";
+                    finalError = `User requested site change: ${instruction}`;
+                    break;
+                  }
+                }
+              }
+              if (finalStatus === "failed") break;
+            }
+          } catch (injErr) {
+            console.warn("[AutoShop] Injection check failed:", injErr);
+          }
+
           const status = await pollTaskStatus(taskResult.taskId!, taskResult.source);
           
           if (status.status === "completed" || status.status === "finished" || status.status === "done") {
