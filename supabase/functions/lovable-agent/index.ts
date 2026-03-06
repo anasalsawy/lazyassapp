@@ -1205,6 +1205,7 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
 
           const bridgeBody: any = { task: taskStr, max_steps: 50 };
           if (startUrl) bridgeBody.start_url = startUrl;
+          if (proxyConfig) bridgeBody.proxy = proxyConfig;
 
           const bridgeRes = await fetch(`${BRIDGE_URL}/run-task`, {
             method: "POST",
