@@ -690,6 +690,23 @@ async function handleStartOrder(
           }
 
           const status = await pollTaskStatus(taskResult.taskId!, taskResult.source);
+
+          // ── WRITE LIVE PROGRESS TELEMETRY TO ORDER ──
+          const progressNotes = JSON.stringify({
+            missionState: { totalAttempts: mission.totalAttempts, currentSiteIndex: mission.currentSiteIndex },
+            currentTaskId: taskResult.taskId,
+            source: taskResult.source,
+            liveViewUrl: status.live_url || taskResult.liveViewUrl || null,
+            currentSite: siteName,
+            taskStatus: status.status,
+            currentUrl: status.current_url || null,
+            currentStep: status.current_step || null,
+            totalSteps: status.total_steps || null,
+            stepDescription: status.step_description || null,
+            screenshotUrl: status.screenshot_url || null,
+            lastPollAt: new Date().toISOString(),
+          });
+          await supabase.from("auto_shop_orders").update({ notes: progressNotes }).eq("id", orderId);
           
           if (status.status === "completed" || status.status === "finished" || status.status === "done") {
             finalStatus = "completed";
