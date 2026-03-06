@@ -291,7 +291,7 @@ serve(async (req) => {
         return await handleSetProxy(supabase, user.id, payload);
       }
       case "test_proxy": {
-        return await handleTestProxy(supabase, user.id, SKYVERN_API_KEY);
+        return await handleTestProxy(supabase, user.id, BU_API_KEY);
       }
       case "toggle_browserstack": {
         return await handleToggleBrowserstack(supabase, user.id, payload.useBrowserstack ?? false);
