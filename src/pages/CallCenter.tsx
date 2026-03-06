@@ -465,8 +465,32 @@ export default function CallCenter() {
                       {autoRetryEnabled && (
                         <div className="space-y-3 pt-2 border-t border-border/30">
                           <p className="text-xs text-muted-foreground">
-                            Add backup stores with phone numbers. If the primary call fails, the system will automatically try each one in order.
+                            Search for stores that sell your product, or add manually.
                           </p>
+
+                          {/* Smart Search */}
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={searchLocation}
+                              onChange={(e) => setSearchLocation(e.target.value)}
+                              placeholder="Location (optional, e.g. Houston TX)"
+                              className="bg-muted/20 text-sm h-8"
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={searchStores}
+                              disabled={isSearchingStores || !objective.trim()}
+                              className="h-8 px-3 shrink-0 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                            >
+                              {isSearchingStores ? (
+                                <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Searching...</>
+                              ) : (
+                                <><Zap className="w-3.5 h-3.5 mr-1" /> Find Stores</>
+                              )}
+                            </Button>
+                          </div>
                           
                           {/* Existing retry stores */}
                           {retryStores.length > 0 && (
@@ -475,6 +499,11 @@ export default function CallCenter() {
                                 <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/30 text-sm">
                                   <span className="text-xs font-mono text-muted-foreground w-5">{i + 1}.</span>
                                   <span className="flex-1 truncate">{store.name}</span>
+                                  {(store as any).why && (
+                                    <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={(store as any).why}>
+                                      {(store as any).why}
+                                    </span>
+                                  )}
                                   <span className="text-xs text-muted-foreground font-mono">{store.phone}</span>
                                   <button onClick={() => removeRetryStore(i)} className="text-muted-foreground hover:text-destructive transition-colors">
                                     <X className="w-3.5 h-3.5" />
@@ -484,7 +513,7 @@ export default function CallCenter() {
                             </div>
                           )}
 
-                          {/* Add new store */}
+                          {/* Add new store manually */}
                           <div className="flex items-center gap-2">
                             <Input
                               value={newRetryName}
