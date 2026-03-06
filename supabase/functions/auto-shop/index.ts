@@ -765,12 +765,13 @@ async function handleStartOrder(
 
         // Not met — analyze and rotate
         const analysis = analyzeFailure(finalError || finalResult, {});
+        const isLastAttempt = mission.totalAttempts >= MAX_MISSION_RETRIES;
         await supabase.from("auto_shop_orders").update({
-          status: "failed",
+          status: isLastAttempt ? "failed" : "retrying",
           retry_count: mission.totalAttempts,
           failure_analysis: `Attempt ${mission.totalAttempts} (${siteName}): ${analysis.diagnosis}`,
           last_retry_at: new Date().toISOString(),
-          error_message: finalError || `Failed on ${siteName}`,
+          error_message: finalError || `Failed on ${siteName} — rotating to next site...`,
           notes: JSON.stringify({ missionState: mission }),
         }).eq("id", orderId);
 
@@ -942,7 +943,7 @@ async function handleSyncAllOrders(
     .select("*")
     .eq("user_id", user.id)
     .not("browser_use_task_id", "is", null)
-    .in("status", ["pending", "searching", "found_deals", "ordering", "failed"]);
+    .in("status", ["pending", "searching", "found_deals", "ordering", "retrying"]);
 
   if (!orders || orders.length === 0) {
     return new Response(

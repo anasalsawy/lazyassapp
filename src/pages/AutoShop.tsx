@@ -142,7 +142,7 @@ const AutoShop = () => {
   const [activeTab, setActiveTab] = useState("shop");
 
   // Auto-poll orders every 10s when there are active orders (to get live telemetry)
-  const hasActiveOrders = orders.some(o => ["pending", "searching", "found_deals", "ordering"].includes(o.status));
+  const hasActiveOrders = orders.some(o => ["pending", "searching", "found_deals", "ordering", "retrying"].includes(o.status));
   useEffect(() => {
     if (!hasActiveOrders || activeTab !== "orders") return;
     const interval = setInterval(() => { refreshOrders(); }, 10000);
@@ -413,6 +413,7 @@ const AutoShop = () => {
       searching: { variant: "default", icon: <Search className="h-3 w-3 animate-pulse" />, label: "Searching Sites" },
       found_deals: { variant: "default", icon: <Package className="h-3 w-3" />, label: "Comparing Prices" },
       ordering: { variant: "default", icon: <ShoppingCart className="h-3 w-3 animate-pulse" />, label: "Checking Out" },
+      retrying: { variant: "outline", icon: <Loader2 className="h-3 w-3 animate-spin" />, label: "Retrying Next Site" },
       completed: { variant: "outline", icon: <CheckCircle className="h-3 w-3 text-success" />, label: "Completed" },
       failed: { variant: "destructive", icon: <XCircle className="h-3 w-3" />, label: "Failed" },
       cancelled: { variant: "secondary", icon: <XCircle className="h-3 w-3" />, label: "Cancelled" },
