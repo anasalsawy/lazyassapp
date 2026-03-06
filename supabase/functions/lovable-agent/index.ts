@@ -1324,6 +1324,62 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         }
       }
 
+      // --- Attempt 2: Browser Use Cloud API (FALLBACK) ---
+      if (!buResult && BU_API_KEY) {
+        console.log(`[browser_task] Bridge failed/unavailable, falling back to Browser Use Cloud API`);
+        usedProvider = "browser_use_cloud";
+        try {
+          const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+          const { data: browserProfile } = await supabase.from("browser_profiles")
+            .select("browser_use_profile_id").eq("user_id", _currentUserId || "").single();
+
+          const taskBody: any = { task: taskStr, maxSteps: 50 };
+          if (startUrl) taskBody.startUrl = startUrl;
+
+          if (browserProfile?.browser_use_profile_id) {
+            try {
+              const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
+                method: "POST",
+                headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+                body: JSON.stringify({ profileId: browserProfile.browser_use_profile_id }),
+              });
+              if (sessionRes.ok) {
+                const sess = await sessionRes.json();
+                taskBody.sessionId = sess.id;
+              }
+            } catch (_) {}
+          }
+
+          const buRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
+            method: "POST",
+            headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify(taskBody),
+          });
+
+          if (buRes.ok) {
+            const buData = await buRes.json();
+            buResult = { runId: buData.id, sessionId: buData.sessionId, status: "running" };
+            if (buData.sessionId) {
+              try {
+                const sessInfoRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${buData.sessionId}`, {
+                  headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+                });
+                if (sessInfoRes.ok) {
+                  const sessInfo = await sessInfoRes.json();
+                  buResult.liveUrl = sessInfo.liveUrl || null;
+                }
+              } catch (_) {}
+            }
+          } else {
+            const errText = await buRes.text();
+            buError = { status: buRes.status, message: errText?.slice(0, 1200) || "Cloud API failed." };
+            console.warn(`[browser_task] Cloud API failed (${buRes.status}): ${errText?.slice(0, 200)}`);
+          }
+        } catch (err: any) {
+          buError = { message: err?.message || "Cloud API request failed." };
+        }
+      }
+
       // Build response
       const result: any = {
         success: !!buResult,
