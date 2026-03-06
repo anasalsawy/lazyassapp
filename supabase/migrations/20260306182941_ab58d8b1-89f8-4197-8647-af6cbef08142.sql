@@ -1,0 +1,2 @@
+ALTER TABLE public.agent_runs DROP CONSTRAINT IF EXISTS agent_runs_run_type_check;
+ALTER TABLE public.agent_runs ADD CONSTRAINT agent_runs_run_type_check CHECK (run_type IN ('job_agent', 'lever_job_research', 'resume_optimization', 'apply_jobs', 'resume_application', 'connect_account', 'email_process', 'test_session', 'job_application', 'email_monitoring', 'browser_agent_pw'));
