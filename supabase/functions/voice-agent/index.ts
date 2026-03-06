@@ -432,7 +432,15 @@ serve(async (req) => {
       const twiml = buildGatherTwiml(greeting, gatherUrl, selectedVoice);
 
       // Build status callback URL with mission context
-      const statusUrl = `${SUPABASE_URL}/functions/v1/voice-agent?action=status&task_id=${taskId}${missionId ? `&mission_id=${missionId}` : ""}${storeIndex !== "" ? `&store_index=${storeIndex}` : ""}`;
+      // Allows external mission orchestrators (e.g. mission-executive) to receive completion callbacks.
+      let statusUrl: string;
+      if (body.status_callback_url) {
+        const callbackUrl = new URL(String(body.status_callback_url));
+        callbackUrl.searchParams.set("child_task_id", taskId);
+        statusUrl = callbackUrl.toString();
+      } else {
+        statusUrl = `${SUPABASE_URL}/functions/v1/voice-agent?action=status&task_id=${taskId}${missionId ? `&mission_id=${missionId}` : ""}${storeIndex !== "" ? `&store_index=${storeIndex}` : ""}`;
+      }
 
       // Initiate Twilio call
       const callParams = new URLSearchParams();
