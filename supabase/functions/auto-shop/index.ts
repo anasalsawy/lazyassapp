@@ -148,10 +148,6 @@ async function pollTaskStatus(taskId: string, source: string): Promise<PollResul
     } catch (_) {}
   }
   return { status: "unknown", error: "Bridge polling failed" };
-    return { status: "unknown", error: `${res.status}` };
-  } catch (e) {
-    return { status: "unknown", error: e instanceof Error ? e.message : String(e) };
-  }
 }
 
 // Legacy wrapper for code that still uses browserUseApi
