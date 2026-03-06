@@ -28,7 +28,8 @@ import {
   RotateCw,
   MoreHorizontal,
   Archive,
-  FileText
+  FileText,
+  Download
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -242,6 +243,35 @@ export default function Dashboard() {
     responses: applications.filter(a => ["interview", "offer", "rejected"].includes(a.status)).length,
   };
 
+  // Greeting
+  const getGreeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  };
+
+  // CSV export
+  const exportCSV = () => {
+    const headers = ["Job Title", "Company", "Platform", "Status", "Applied At", "URL"];
+    const rows = applications.map(a => [
+      a.job_title || a.job?.title || "",
+      a.company_name || a.job?.company || "",
+      a.platform || "",
+      a.status,
+      a.applied_at,
+      a.job_url || a.job?.url || "",
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `applications-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Bulk selection handlers
   const toggleSelectAll = () => {
     if (selectedApps.size === applications.length) {
@@ -407,16 +437,20 @@ export default function Dashboard() {
         {/* Page Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-display font-bold">Dashboard</h1>
+            <h1 className="text-3xl font-display font-bold">{getGreeting()} 👋</h1>
             <p className="text-muted-foreground">
-              Track your applications and agent activity
+              {applications.length} applications tracked · {stats.responses} responses
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground hidden sm:block">
-              {lastChecked && `Last checked: ${formatDistanceToNow(lastChecked, { addSuffix: true })}`}
+              {lastChecked && `${formatDistanceToNow(lastChecked, { addSuffix: true })}`}
             </span>
-            <Button variant="outline" size="sm" className="rounded-full" onClick={refreshAllStatuses} disabled={isRefreshing}>
+            <Button variant="outline" size="sm" onClick={exportCSV} className="hidden sm:flex gap-1.5">
+              <Download className="w-3.5 h-3.5" />
+              Export
+            </Button>
+            <Button variant="outline" size="icon" className="h-9 w-9 rounded-full" onClick={refreshAllStatuses} disabled={isRefreshing}>
               {isRefreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             </Button>
           </div>
