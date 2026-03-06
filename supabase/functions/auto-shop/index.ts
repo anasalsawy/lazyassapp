@@ -810,8 +810,8 @@ async function handleStartOrder(
   };
 
   // Fire-and-forget the mission loop
-  if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
-    (EdgeRuntime as any).waitUntil(missionLoop());
+  if (typeof (globalThis as any).EdgeRuntime !== "undefined" && (globalThis as any).EdgeRuntime.waitUntil) {
+    (globalThis as any).EdgeRuntime.waitUntil(missionLoop());
   } else {
     missionLoop().catch(console.error);
   }

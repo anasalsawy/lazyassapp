@@ -194,8 +194,8 @@ serve(async (req) => {
           }
         };
 
-        if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
-          (EdgeRuntime as any).waitUntil(backgroundWork());
+        if (typeof (globalThis as any).EdgeRuntime !== "undefined" && (globalThis as any).EdgeRuntime.waitUntil) {
+          (globalThis as any).EdgeRuntime.waitUntil(backgroundWork());
         } else { backgroundWork().catch(console.error); }
 
         return new Response(

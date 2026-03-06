@@ -382,7 +382,7 @@ interface TaskSpec {
 async function runTwoAgentLoop(
   taskSpec: TaskSpec,
   userId: string,
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   bridgeUrl: string,
   bridgeKey: string,
   openaiKey: string,
@@ -408,7 +408,7 @@ async function runTwoAgentLoop(
       log_level: level,
       message,
       metadata: { ...metadata, stepCount, runId },
-    }).catch(() => {});
+    }).then(() => {}, () => {});
   };
 
   try {

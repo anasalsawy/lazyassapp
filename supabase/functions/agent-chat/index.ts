@@ -630,7 +630,7 @@ Current date: ${new Date().toISOString().split("T")[0]}
 async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   userId: string
 ): Promise<string> {
   try {
@@ -1032,7 +1032,7 @@ async function executeTool(
         const TWILIO_NUMBER = Deno.env.get("TWILIO_WHATSAPP_NUMBER")?.replace("whatsapp:", "") || "";
         if (!TWILIO_SID || !TWILIO_TOKEN) return JSON.stringify({ error: "Telephony not configured — Twilio credentials needed." });
 
-        const twiml = `<Response><Say voice="Polly.Matthew">${(args.script || args.objective as string).replace(/[<>&'"]/g, "")}</Say></Response>`;
+        const twiml = `<Response><Say voice="Polly.Matthew">${String(args.script || args.objective || "").replace(/[<>&'"]/g, "")}</Say></Response>`;
         const callParams = new URLSearchParams();
         callParams.append("To", args.phone_number as string);
         callParams.append("From", TWILIO_NUMBER);
