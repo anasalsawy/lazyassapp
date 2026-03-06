@@ -1369,15 +1369,10 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
               };
               buError = null;
             } else if (!buError) {
-              // Timed out but still running
-              buResult = {
-                runId: bridgeRunId,
-                status: "running",
-                statusUrl,
-                screenshotUrl,
-                mode: bridgeData.mode || "bridge",
-              };
-              buError = null;
+              // Timed out but still running — treat as failure so we fallback to Cloud
+              console.warn(`[browser_task] Bridge timed out after 120s with no progress. Treating as failed for fallback.`);
+              buError = { message: "Bridge task timed out with no completion after 120s polling." };
+              // Don't set buResult — let fallback to Cloud kick in
             }
           } else {
             const errText = await bridgeRes.text();
