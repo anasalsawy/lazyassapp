@@ -55,9 +55,102 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled;
 }
 
-// Browser Use API configuration
+// Bridge-first execution: self-hosted bridge → Browser Use Cloud fallback
+const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL");
+const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY");
 const BU_API_BASE = "https://api.browser-use.com/api/v2";
 
+// Retry-til-die constants
+const RETRY_SITES = [
+  "https://www.amazon.com",
+  "https://www.walmart.com",
+  "https://www.target.com",
+  "https://www.bestbuy.com",
+  "https://www.ebay.com",
+];
+const MAX_MISSION_RETRIES = 10; // retry across sites until success or exhaustion
+const RETRY_BACKOFF_MS = 5000; // 5s between retries
+
+interface MissionState {
+  attempts: Array<{ site: string; attemptNum: number; outcome: string; error?: string; timestamp: string }>;
+  currentSiteIndex: number;
+  totalAttempts: number;
+  objectiveMet: boolean;
+  winningSite?: string;
+  confirmationNumber?: string;
+}
+
+async function runBridgeTask(task: string, startUrl: string, maxSteps: number, proxy?: { server: string; username?: string; password?: string }): Promise<{ success: boolean; taskId?: string; error?: string; source: string }> {
+  // Try bridge first
+  if (BRIDGE_URL && BRIDGE_API_KEY) {
+    try {
+      console.log(`[AutoShop] Attempting bridge: ${BRIDGE_URL}`);
+      const bridgePayload: Record<string, unknown> = { task, start_url: startUrl, max_steps: maxSteps };
+      if (proxy?.server) {
+        bridgePayload.proxy = { server: proxy.server, username: proxy.username, password: proxy.password };
+      }
+      const res = await fetch(`${BRIDGE_URL}/run-task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": BRIDGE_API_KEY },
+        body: JSON.stringify(bridgePayload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        console.log(`[AutoShop] Bridge task started: ${data.task_id || data.id}`);
+        return { success: true, taskId: data.task_id || data.id, source: "bridge" };
+      }
+      console.warn(`[AutoShop] Bridge returned ${res.status}, falling back to cloud`);
+    } catch (e) {
+      console.warn(`[AutoShop] Bridge unreachable, falling back to cloud:`, e);
+    }
+  }
+
+  // Fallback: Browser Use Cloud
+  const buApiKey = Deno.env.get("BROWSER_USE_API_KEY");
+  if (!buApiKey) return { success: false, error: "No BROWSER_USE_API_KEY configured", source: "none" };
+
+  try {
+    const res = await fetch(`${BU_API_BASE}/tasks`, {
+      method: "POST",
+      headers: { "X-Browser-Use-API-Key": buApiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ task, startUrl, maxSteps }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      return { success: false, error: `Cloud API ${res.status}: ${err}`, source: "cloud" };
+    }
+    const data = await res.json();
+    console.log(`[AutoShop] Cloud task started: ${data.id}`);
+    return { success: true, taskId: data.id, source: "cloud" };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e), source: "cloud" };
+  }
+}
+
+async function pollTaskStatus(taskId: string, source: string): Promise<{ status: string; result?: string; error?: string }> {
+  if (source === "bridge" && BRIDGE_URL && BRIDGE_API_KEY) {
+    try {
+      const res = await fetch(`${BRIDGE_URL}/runs/${taskId}/status`, {
+        headers: { "X-API-Key": BRIDGE_API_KEY },
+      });
+      if (res.ok) return await res.json();
+    } catch (_) {}
+  }
+  // Fallback to cloud polling
+  const buApiKey = Deno.env.get("BROWSER_USE_API_KEY");
+  if (!buApiKey) return { status: "unknown", error: "No API key" };
+  try {
+    const res = await fetch(`${BU_API_BASE}/tasks/${taskId}`, {
+      headers: { "X-Browser-Use-API-Key": buApiKey },
+    });
+    if (res.ok) return await res.json();
+    return { status: "unknown", error: `${res.status}` };
+  } catch (e) {
+    return { status: "unknown", error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// Legacy wrapper for code that still uses browserUseApi
 async function browserUseApi(
   apiKey: string,
   path: string,
@@ -392,6 +485,23 @@ async function handleStartOrder(
     : [];
   const userEmail = user.email || "";
 
+  // Get proxy config
+  let proxy: { server: string; username?: string; password?: string } | undefined;
+  if (profile?.proxy_server) {
+    const encKey = "SHOP_PROXY_KEY_2024";
+    let decryptedPw: string | undefined;
+    if (profile.proxy_password_enc) {
+      try {
+        const decoded = atob(profile.proxy_password_enc);
+        decryptedPw = "";
+        for (let i = 0; i < decoded.length; i++) {
+          decryptedPw += String.fromCharCode(decoded.charCodeAt(i) ^ encKey.charCodeAt(i % encKey.length));
+        }
+      } catch (_) {}
+    }
+    proxy = { server: profile.proxy_server, username: profile.proxy_username || undefined, password: decryptedPw };
+  }
+
   // Fetch site credentials
   const { data: siteCredentials } = await supabase
     .from("site_credentials")
@@ -415,83 +525,198 @@ async function handleStartOrder(
     }
   }
 
-  console.log(`[AutoShop] Starting order via Browser Use: "${productQuery}"`);
-  await supabase.from("auto_shop_orders").update({ status: "searching" }).eq("id", orderId);
-  await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Starting product search via Browser Use: "${productQuery}"`, metadata: { orderId, productQuery, maxPrice, quantity, userEmail } });
+  // Initialize mission state
+  const mission: MissionState = {
+    attempts: [],
+    currentSiteIndex: 0,
+    totalAttempts: 0,
+    objectiveMet: false,
+  };
 
-  // Create a Browser Use task for the shopping task
-  const taskRes = await browserUseApi(buApiKey, "/tasks", {
-    method: "POST",
-    body: JSON.stringify({
-      task: `Search for and purchase "${productQuery}" at the best price${maxPrice ? ` under $${maxPrice}` : ""}. Use guest checkout with email ${userEmail}.`,
-      startUrl: "https://www.amazon.com",
-      maxSteps: 80,
-    }),
-  });
+  console.log(`[AutoShop] Starting MISSION for "${productQuery}" — retry-til-die mode (max ${MAX_MISSION_RETRIES} attempts)`);
+  await supabase.from("auto_shop_orders").update({ status: "searching", retry_count: 0, max_retries: MAX_MISSION_RETRIES }).eq("id", orderId);
+  await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Mission started: "${productQuery}" — bridge-first, retry-til-die`, metadata: { orderId, productQuery, maxPrice, quantity, userEmail, maxRetries: MAX_MISSION_RETRIES } });
 
-  if (!taskRes.ok) {
-    const errorData = await taskRes.text();
-    console.error("[AutoShop] Browser Use API error:", taskRes.status, errorData);
-    await supabase.from("auto_shop_orders").update({ status: "failed", error_message: `Browser Use API error: ${taskRes.status}` }).eq("id", orderId);
-    throw new Error(`Browser Use task creation failed: ${taskRes.status} - ${errorData}`);
-  }
+  // Build the agent prompt
+  const agentPrompt = buildShoppingAgentInstruction(
+    productQuery, maxPrice, quantity || 1, shippingAddress, paymentCards,
+    userEmail, sitesLoggedIn, supabaseUrl, false, decryptedCreds
+  );
 
-  const buTask = await taskRes.json();
-  const runId = buTask.id;
-  console.log("[AutoShop] Browser Use task created:", runId);
+  // ── MISSION LOOP (fire-and-forget) ──
+  const missionLoop = async () => {
+    try {
+      while (!mission.objectiveMet && mission.totalAttempts < MAX_MISSION_RETRIES) {
+        const siteUrl = RETRY_SITES[mission.currentSiteIndex % RETRY_SITES.length];
+        const siteName = new URL(siteUrl).hostname.replace("www.", "");
+        mission.totalAttempts++;
 
-  await supabase.from("auto_shop_orders").update({ browser_use_task_id: runId, status: "searching", notes: JSON.stringify({ browserUseTaskId: runId }) }).eq("id", orderId);
-  await supabase.from("agent_logs").insert({ user_id: user.id, agent_name: "auto_shop", log_level: "info", message: `Browser Use task created: ${runId}`, metadata: { orderId, runId } });
-
-  // Use Lovable AI to orchestrate the shopping task via Skyvern
-  if (lovableApiKey) {
-    const agentPrompt = buildShoppingAgentInstruction(
-      productQuery, maxPrice, quantity || 1, shippingAddress, paymentCards,
-      userEmail, sitesLoggedIn, supabaseUrl, false, decryptedCreds
-    );
-
-    // Fire-and-forget: invoke lovable-agent to handle the task
-    const backgroundWork = async () => {
-      try {
-        await fetch(`${supabaseUrl}/functions/v1/lovable-agent`, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            messages: [{
-              role: "user",
-            content: `Execute this shopping task using Browser Use (task: ${runId}):\n\n${agentPrompt}\n\nWhen complete, update order ${orderId} status in the database.`,
-            }],
-          }),
+        console.log(`[AutoShop] Mission attempt ${mission.totalAttempts}/${MAX_MISSION_RETRIES} → ${siteName}`);
+        await supabase.from("agent_logs").insert({
+          user_id: user.id, agent_name: "auto_shop", log_level: "info",
+          message: `Attempt ${mission.totalAttempts}/${MAX_MISSION_RETRIES}: trying ${siteName}`,
+          metadata: { orderId, attempt: mission.totalAttempts, site: siteName },
         });
-      } catch (err) {
-        console.error("[AutoShop] Background agent failed:", err);
+
+        // Run task via bridge-first
+        const taskResult = await runBridgeTask(
+          `${agentPrompt}\n\nSTART ON: ${siteUrl}\nIf blocked or items unavailable on this site, report FAILED immediately — do NOT navigate to other sites.`,
+          siteUrl,
+          80,
+          proxy
+        );
+
+        if (!taskResult.success) {
+          mission.attempts.push({ site: siteName, attemptNum: mission.totalAttempts, outcome: "task_creation_failed", error: taskResult.error, timestamp: new Date().toISOString() });
+          await supabase.from("auto_shop_orders").update({
+            retry_count: mission.totalAttempts,
+            failure_analysis: `Attempt ${mission.totalAttempts}: ${taskResult.error}`,
+            last_retry_at: new Date().toISOString(),
+          }).eq("id", orderId);
+          mission.currentSiteIndex++;
+          await sleep(RETRY_BACKOFF_MS);
+          continue;
+        }
+
+        // Update order with current task
+        await supabase.from("auto_shop_orders").update({
+          browser_use_task_id: taskResult.taskId,
+          status: "searching",
+          notes: JSON.stringify({ missionState: mission, currentTaskId: taskResult.taskId, source: taskResult.source }),
+        }).eq("id", orderId);
+
+        // Poll until complete (max 10 min per attempt)
+        const pollDeadline = Date.now() + 10 * 60 * 1000;
+        let finalStatus = "unknown";
+        let finalResult = "";
+        let finalError = "";
+
+        while (Date.now() < pollDeadline) {
+          await sleep(15000); // poll every 15s
+          const status = await pollTaskStatus(taskResult.taskId!, taskResult.source);
+          
+          if (status.status === "completed" || status.status === "finished" || status.status === "done") {
+            finalStatus = "completed";
+            finalResult = status.result || JSON.stringify(status);
+            break;
+          }
+          if (status.status === "failed" || status.status === "error") {
+            finalStatus = "failed";
+            finalError = status.error || status.result || "Task failed";
+            break;
+          }
+          // still running...
+        }
+
+        if (finalStatus === "unknown") {
+          finalStatus = "timeout";
+          finalError = "Task exceeded 10 minute timeout";
+        }
+
+        // Check if objective was met
+        const resultLower = (finalResult + finalError).toLowerCase();
+        const successIndicators = ["success", "confirmation", "order placed", "order confirmed", "thank you for your order", "order #"];
+        const objectiveMet = finalStatus === "completed" && successIndicators.some(s => resultLower.includes(s));
+
+        mission.attempts.push({
+          site: siteName, attemptNum: mission.totalAttempts,
+          outcome: objectiveMet ? "SUCCESS" : finalStatus,
+          error: finalError || undefined,
+          timestamp: new Date().toISOString(),
+        });
+
+        if (objectiveMet) {
+          mission.objectiveMet = true;
+          mission.winningSite = siteName;
+          // Try to extract confirmation number
+          const confMatch = finalResult.match(/(?:confirmation|order)\s*(?:#|number|:)\s*([A-Z0-9-]+)/i);
+          if (confMatch) mission.confirmationNumber = confMatch[1];
+
+          await supabase.from("auto_shop_orders").update({
+            status: "completed",
+            completed_at: new Date().toISOString(),
+            selected_deal_site: siteName,
+            order_confirmation: mission.confirmationNumber || "See task result",
+            retry_count: mission.totalAttempts,
+            notes: JSON.stringify({ missionState: mission, finalResult }),
+            error_message: null,
+          }).eq("id", orderId);
+
+          await supabase.from("agent_logs").insert({
+            user_id: user.id, agent_name: "auto_shop", log_level: "info",
+            message: `MISSION COMPLETE on ${siteName} after ${mission.totalAttempts} attempts${mission.confirmationNumber ? ` — confirmation: ${mission.confirmationNumber}` : ""}`,
+            metadata: { orderId, mission },
+          });
+          break;
+        }
+
+        // Not met — analyze and rotate
+        const analysis = analyzeFailure(finalError || finalResult, {});
         await supabase.from("auto_shop_orders").update({
           status: "failed",
-          error_message: err instanceof Error ? err.message : String(err),
+          retry_count: mission.totalAttempts,
+          failure_analysis: `Attempt ${mission.totalAttempts} (${siteName}): ${analysis.diagnosis}`,
+          last_retry_at: new Date().toISOString(),
+          error_message: finalError || `Failed on ${siteName}`,
+          notes: JSON.stringify({ missionState: mission }),
         }).eq("id", orderId);
-      }
-    };
 
-    if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
-      (EdgeRuntime as any).waitUntil(backgroundWork());
-    } else {
-      backgroundWork().catch(console.error);
+        // Rotate to next site
+        mission.currentSiteIndex++;
+        
+        // Backoff before next attempt
+        const backoff = RETRY_BACKOFF_MS * Math.min(mission.totalAttempts, 4);
+        console.log(`[AutoShop] Attempt ${mission.totalAttempts} failed on ${siteName}. Backing off ${backoff}ms before next try.`);
+        await sleep(backoff);
+      }
+
+      // Mission exhausted
+      if (!mission.objectiveMet) {
+        const sitesSummary = mission.attempts.map(a => `${a.site}: ${a.outcome}${a.error ? ` (${a.error.substring(0, 80)})` : ""}`).join("; ");
+        await supabase.from("auto_shop_orders").update({
+          status: "failed",
+          error_message: `Mission exhausted after ${mission.totalAttempts} attempts across ${new Set(mission.attempts.map(a => a.site)).size} sites`,
+          failure_analysis: sitesSummary,
+          notes: JSON.stringify({ missionState: mission }),
+        }).eq("id", orderId);
+
+        await supabase.from("agent_logs").insert({
+          user_id: user.id, agent_name: "auto_shop", log_level: "error",
+          message: `MISSION FAILED after ${mission.totalAttempts} attempts: ${sitesSummary.substring(0, 300)}`,
+          metadata: { orderId, mission },
+        });
+      }
+    } catch (err) {
+      console.error("[AutoShop] Mission loop crashed:", err);
+      await supabase.from("auto_shop_orders").update({
+        status: "failed",
+        error_message: `Mission loop error: ${err instanceof Error ? err.message : String(err)}`,
+      }).eq("id", orderId);
     }
+  };
+
+  // Fire-and-forget the mission loop
+  if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
+    (EdgeRuntime as any).waitUntil(missionLoop());
+  } else {
+    missionLoop().catch(console.error);
   }
 
   return new Response(
     JSON.stringify({
       success: true,
-      message: "Shopping agent started via Browser Use",
+      message: `Shopping mission started — will retry across ${RETRY_SITES.length} sites up to ${MAX_MISSION_RETRIES} times`,
       orderId,
-      taskId: runId,
       status: "searching",
+      maxRetries: MAX_MISSION_RETRIES,
+      sites: RETRY_SITES.map(u => new URL(u).hostname.replace("www.", "")),
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function buildShoppingAgentInstruction(
@@ -618,8 +843,8 @@ async function handleSyncAllOrders(
 
   for (const order of orders) {
     try {
-      // For failed orders with retries remaining, attempt auto-retry
-      if (order.status === "failed" && (order.retry_count || 0) < (order.max_retries || 3)) {
+      // For failed orders with retries remaining, attempt auto-retry via bridge-first
+      if (order.status === "failed" && (order.retry_count || 0) < (order.max_retries || MAX_MISSION_RETRIES)) {
         const lastRetry = order.last_retry_at ? new Date(order.last_retry_at).getTime() : 0;
         if (Date.now() - lastRetry < 30000) {
           updatedOrders.push(order);
@@ -628,26 +853,26 @@ async function handleSyncAllOrders(
 
         const analysis = analyzeFailure(order.error_message || "", order);
         if (analysis.canRetry) {
-          // Create new Browser Use task for retry
-          const retryRes = await browserUseApi(buApiKey, "/tasks", {
-            method: "POST",
-            body: JSON.stringify({
-              task: `Retry purchasing: ${order.product_query}. Previous error: ${order.error_message}`,
-              startUrl: "https://www.amazon.com",
-              maxSteps: 80,
-            }),
-          });
+          // Rotate site for retry
+          const attemptNum = (order.retry_count || 0) + 1;
+          const siteUrl = RETRY_SITES[attemptNum % RETRY_SITES.length];
+          const siteName = new URL(siteUrl).hostname.replace("www.", "");
 
-          if (retryRes.ok) {
-            const retryTask = await retryRes.json();
+          const retryResult = await runBridgeTask(
+            `Retry purchasing: ${order.product_query}. Previous error: ${order.error_message}\n\nSTART ON: ${siteUrl}. If blocked, report FAILED immediately.`,
+            siteUrl,
+            80
+          );
+
+          if (retryResult.success) {
             await supabase.from("auto_shop_orders").update({
               status: "searching",
-              browser_use_task_id: retryTask.id,
-              retry_count: (order.retry_count || 0) + 1,
-              failure_analysis: `${analysis.diagnosis}\nFix: ${analysis.workaround}`,
+              browser_use_task_id: retryResult.taskId,
+              retry_count: attemptNum,
+              failure_analysis: `Attempt ${attemptNum} (${siteName}): ${analysis.diagnosis}\nFix: ${analysis.workaround}`,
               last_retry_at: new Date().toISOString(),
               error_message: null,
-              notes: JSON.stringify({ browserUseTaskId: retryTask.id }),
+              notes: JSON.stringify({ taskId: retryResult.taskId, source: retryResult.source, site: siteName }),
             }).eq("id", order.id);
             retriedCount++;
           }
