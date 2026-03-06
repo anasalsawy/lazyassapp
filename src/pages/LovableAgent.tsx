@@ -623,6 +623,8 @@ export default function LovableAgent() {
   const callStateRef = useRef<CallState | null>(null);
   const [browserLiveState, setBrowserLiveState] = useState<BrowserLiveState | null>(null);
   const browserLiveRef = useRef<BrowserLiveState | null>(null);
+  const browserPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const browserUrlsRef = useRef<{ statusUrl: string; screenshotUrl: string } | null>(null);
   const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call" | "browsing">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
 
