@@ -437,16 +437,20 @@ export default function Dashboard() {
         {/* Page Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-display font-bold">Dashboard</h1>
+            <h1 className="text-3xl font-display font-bold">{getGreeting()} 👋</h1>
             <p className="text-muted-foreground">
-              Track your applications and agent activity
+              {applications.length} applications tracked · {stats.responses} responses
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground hidden sm:block">
-              {lastChecked && `Last checked: ${formatDistanceToNow(lastChecked, { addSuffix: true })}`}
+              {lastChecked && `${formatDistanceToNow(lastChecked, { addSuffix: true })}`}
             </span>
-            <Button variant="outline" size="sm" className="rounded-full" onClick={refreshAllStatuses} disabled={isRefreshing}>
+            <Button variant="outline" size="sm" onClick={exportCSV} className="hidden sm:flex gap-1.5">
+              <Download className="w-3.5 h-3.5" />
+              Export
+            </Button>
+            <Button variant="outline" size="icon" className="h-9 w-9 rounded-full" onClick={refreshAllStatuses} disabled={isRefreshing}>
               {isRefreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             </Button>
           </div>
