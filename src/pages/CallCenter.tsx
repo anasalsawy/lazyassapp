@@ -209,7 +209,7 @@ export default function CallCenter() {
       // Step 1: Search for stores
       toast.info("Searching for relevant stores...", { icon: <Search className="w-4 h-4" /> });
       const searchResp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-stores`,
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/product-finder?action=find-candidates`,
         {
           method: "POST",
           headers: {
@@ -225,7 +225,15 @@ export default function CallCenter() {
       );
       const searchData = await searchResp.json();
 
-      if (!searchResp.ok || !searchData.success || !searchData.stores?.length) {
+      const finder = searchData.product_finder_result || {};
+      const stores = (finder.candidates || []).map((s: any) => ({
+        name: s.name,
+        phone: s.phone_e164,
+        address: s.address,
+        department_hint: s.department_hint,
+      })).filter((s: any) => !!s.phone);
+
+      if (!searchResp.ok || !stores.length) {
         toast.error("Couldn't find any stores", {
           description: "Try being more specific or switch to manual mode.",
         });
@@ -233,12 +241,11 @@ export default function CallCenter() {
         return;
       }
 
-      const stores = searchData.stores;
       const primaryStore = stores[0];
       const backupStores = stores.slice(1);
 
       toast.success(`Found ${stores.length} stores — calling ${primaryStore.name}`, {
-        description: `Product: ${searchData.product}`,
+        description: `Product: ${finder.product_intent?.normalized_product || prompt}`,
       });
 
       // Set up retry queue with remaining stores
@@ -248,7 +255,7 @@ export default function CallCenter() {
 
       // Step 2: Start a mission with ALL stores for auto-retry
       const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=initiate-mission`,
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mission-executive?action=start`,
         {
           method: "POST",
           headers: {
@@ -260,13 +267,9 @@ export default function CallCenter() {
             objective: prompt,
             caller_name: callerName || "Maya",
             constraints: constraints || undefined,
-            retry_stores: stores.map((s: any) => ({
-              phone: s.phone,
-              name: s.name,
-              address: s.address,
-              department_hint: s.department_hint,
-            })),
+            location: smartLocation || undefined,
             max_attempts: stores.length,
+            store_limit: stores.length,
           }),
         }
       );
@@ -274,10 +277,10 @@ export default function CallCenter() {
       if (!resp.ok) throw new Error(data.error || "Failed to initiate mission");
 
       toast.success("Mission started!", {
-        description: `Calling ${primaryStore.name} (${primaryStore.phone}) · ${stores.length} stores in retry queue`,
+        description: `Calling ${primaryStore.name} (${primaryStore.phone}) · ${stores.length} candidates loaded`,
       });
       // Poll the first child call task, or the mission task
-      startPolling(data.firstCall?.taskId || data.missionId);
+      startPolling(data.firstCall?.child_task_id || data.missionId);
     } catch (e: any) {
       toast.error("Smart call failed", { description: e.message });
     } finally {
@@ -353,7 +356,7 @@ export default function CallCenter() {
     setIsSearchingStores(true);
     try {
       const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-stores`,
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/product-finder?action=find-candidates`,
         {
           method: "POST",
           headers: {
@@ -368,18 +371,20 @@ export default function CallCenter() {
         }
       );
       const data = await resp.json();
-      if (!resp.ok || !data.success) {
+      const finderData = data.product_finder_result || {};
+      const stores = (finderData.candidates || []).map((s: any) => ({ name: s.name, phone: s.phone_e164, why: s.why_ranked })).filter((s: any) => !!s.phone);
+      if (!resp.ok) {
         toast.error("Search failed", { description: data.error || "Could not find stores" });
         return;
       }
-      if (data.stores?.length > 0) {
+      if (stores.length > 0) {
         setRetryStores(prev => {
           const existingPhones = new Set(prev.map((s: any) => s.phone));
-          const newStores = data.stores.filter((s: any) => !existingPhones.has(s.phone));
+          const newStores = stores.filter((s: any) => !existingPhones.has(s.phone));
           return [...prev, ...newStores];
         });
-        toast.success(`Found ${data.stores.length} ${data.product_category || ''} stores`, {
-          description: `Product: ${data.product}`,
+        toast.success(`Found ${stores.length} stores`, {
+          description: `Product: ${finderData.product_intent?.normalized_product || objective}`,
         });
       } else {
         toast.info("No stores found", { description: "Try adding them manually" });
