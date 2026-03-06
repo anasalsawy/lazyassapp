@@ -621,7 +621,9 @@ export default function LovableAgent() {
   const [currentPlans, setCurrentPlans] = useState<ExecutionPlan[]>([]);
   const [currentCallState, setCurrentCallState] = useState<CallState | null>(null);
   const callStateRef = useRef<CallState | null>(null);
-  const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call">("idle");
+  const [browserLiveState, setBrowserLiveState] = useState<BrowserLiveState | null>(null);
+  const browserLiveRef = useRef<BrowserLiveState | null>(null);
+  const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call" | "browsing">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
