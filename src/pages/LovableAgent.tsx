@@ -720,8 +720,14 @@ export default function LovableAgent() {
     setCurrentPlans([]);
     setCurrentCallState(null);
     callStateRef.current = null;
+    // Clear previous browser state and stop any persistent polling
     setBrowserLiveState(null);
     browserLiveRef.current = null;
+    browserUrlsRef.current = null;
+    if (browserPollRef.current) {
+      clearInterval(browserPollRef.current);
+      browserPollRef.current = null;
+    }
     let assistantSoFar = "";
 
     const upsertAssistant = (chunk: string) => {
