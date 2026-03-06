@@ -98,7 +98,7 @@ def read_run(run_id: str) -> Optional[Dict[str, Any]]:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Browser Use Agent Runner
+# Browser Use Agent Runner — with per-step screenshots
 # ═══════════════════════════════════════════════════════════════════════
 async def run_browser_use_agent(
     run_id: str,
@@ -108,12 +108,18 @@ async def run_browser_use_agent(
     model_name: str = "gpt-4o",
     proxy: Optional[Dict[str, Any]] = None,
 ):
-    """Run the Browser Use Agent with full AI loop."""
+    """Run the Browser Use Agent with full AI loop and per-step screenshots."""
+    outdir = RUNS_DIR / run_id
+    outdir.mkdir(parents=True, exist_ok=True)
+
     write_run(run_id, {
         "status": "starting",
         "task": task,
         "steps_taken": 0,
+        "current_step": 0,
         "action_history": [],
+        "has_screenshot": False,
+        "latest_screenshot_step": 0,
     })
 
     if not HAVE_BROWSER_USE:
@@ -157,8 +163,70 @@ async def run_browser_use_agent(
             "status": "running",
             "task": task,
             "steps_taken": 0,
+            "current_step": 0,
             "action_history": [],
+            "has_screenshot": False,
+            "latest_screenshot_step": 0,
         })
+
+        # Run the agent step by step for live progress
+        action_history = []
+        step_count = 0
+
+        # Use agent.run() but capture intermediate state via a step callback approach
+        # browser_use Agent supports register_new_step_callback for per-step hooks
+        async def on_step(step_info):
+            nonlocal step_count
+            step_count += 1
+            step_data = {
+                "step": step_count,
+                "action": str(step_info) if step_info else "unknown",
+            }
+            action_history.append(step_data)
+
+            # Capture screenshot at this step
+            screenshot_path = outdir / f"screenshot_step_{step_count}.png"
+            latest_screenshot_path = outdir / "screenshot.png"
+            try:
+                # Try to get screenshot from the browser context
+                if hasattr(agent, 'browser_context') and agent.browser_context:
+                    pages = agent.browser_context.pages
+                    if pages:
+                        page = pages[-1]
+                        await page.screenshot(path=str(screenshot_path))
+                        # Also copy as latest screenshot
+                        shutil.copy2(str(screenshot_path), str(latest_screenshot_path))
+            except Exception as e:
+                print(f"[step {step_count}] Screenshot capture failed: {e}")
+
+            # Get current URL
+            current_url = None
+            try:
+                if hasattr(agent, 'browser_context') and agent.browser_context:
+                    pages = agent.browser_context.pages
+                    if pages:
+                        current_url = pages[-1].url
+            except Exception:
+                pass
+
+            # Update run status with progress
+            write_run(run_id, {
+                "status": "running",
+                "task": task,
+                "steps_taken": step_count,
+                "current_step": step_count,
+                "action_history": action_history,
+                "current_url": current_url,
+                "has_screenshot": screenshot_path.exists(),
+                "latest_screenshot_step": step_count if screenshot_path.exists() else (step_count - 1),
+            })
+
+        # Register the step callback if supported
+        try:
+            if hasattr(agent, 'register_new_step_callback'):
+                agent.register_new_step_callback(on_step)
+        except Exception as e:
+            print(f"[{run_id}] Could not register step callback: {e}")
 
         # Run the agent
         result = await agent.run()
@@ -167,17 +235,17 @@ async def run_browser_use_agent(
         final_result = result.final_result() if hasattr(result, 'final_result') else None
         history = result.history if hasattr(result, 'history') else []
         
-        # Build action history from agent steps
-        action_history = []
-        for i, step in enumerate(history):
-            step_info = {
-                "step": i + 1,
-                "action": str(step) if step else "unknown",
-            }
-            action_history.append(step_info)
+        # If step callback didn't fire, build history from result
+        if not action_history:
+            for i, step in enumerate(history):
+                step_info = {
+                    "step": i + 1,
+                    "action": str(step) if step else "unknown",
+                }
+                action_history.append(step_info)
 
         # Try to get the last screenshot
-        screenshot_path = RUNS_DIR / run_id / "screenshot.png"
+        screenshot_path = outdir / "screenshot.png"
         try:
             if hasattr(result, 'screenshot') and result.screenshot:
                 screenshot_data = result.screenshot
@@ -209,6 +277,7 @@ async def run_browser_use_agent(
             "current_url": current_url,
             "page_title": page_title,
             "has_screenshot": screenshot_path.exists(),
+            "latest_screenshot_step": len(action_history),
         })
 
         # Clean up browser
@@ -283,6 +352,7 @@ async def run_playwright_fallback(
                 "steps_taken": 1,
                 "action_history": [{"step": 1, "action": f"navigate to {current_url}"}],
                 "has_screenshot": True,
+                "latest_screenshot_step": 1,
                 "page_content": content[:5000] if content else None,
             })
     except Exception as e:
@@ -354,8 +424,12 @@ def run_status(run_id: str, req: Request):
 
 
 @app.get("/runs/{run_id}/screenshot")
-def run_screenshot(run_id: str):
-    p = RUNS_DIR / run_id / "screenshot.png"
+def run_screenshot(run_id: str, step: Optional[int] = None):
+    """Get screenshot — latest or for a specific step."""
+    if step:
+        p = RUNS_DIR / run_id / f"screenshot_step_{step}.png"
+    else:
+        p = RUNS_DIR / run_id / "screenshot.png"
     if p.exists():
         return FileResponse(str(p), media_type="image/png")
     raise HTTPException(status_code=404, detail="screenshot not found")

@@ -51,6 +51,19 @@ type SecretRequest = {
   status: "pending" | "submitted" | "error";
 };
 
+type BrowserLiveState = {
+  runId: string;
+  provider: string;
+  task: string;
+  status: "starting" | "running" | "completed" | "error";
+  step: number;
+  currentUrl: string | null;
+  screenshotUrl: string | null;
+  actionHistory: Array<{ step: number; action: string }>;
+  error: string | null;
+  result: string | null;
+};
+
 type Msg = {
   role: "user" | "assistant";
   content: string;
@@ -393,6 +406,104 @@ function CallMonitorPanel({ callState, isLive }: { callState: CallState; isLive:
   );
 }
 
+// ── Browser Live Panel Component ────────────────────────────────────────────
+function BrowserLivePanel({ state, isLive }: { state: BrowserLiveState; isLive: boolean }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [imgKey, setImgKey] = useState(0);
+
+  // Auto-refresh screenshot key when URL changes
+  useEffect(() => {
+    if (state.screenshotUrl) setImgKey(k => k + 1);
+  }, [state.screenshotUrl]);
+
+  const statusColor = state.status === "completed" ? "text-emerald-500" :
+    state.status === "error" ? "text-destructive" :
+    "text-primary";
+
+  const statusLabel = state.status === "starting" ? "Starting browser..." :
+    state.status === "running" ? `Step ${state.step}` :
+    state.status === "completed" ? "Complete" : "Error";
+
+  return (
+    <div className="my-2 rounded-xl border border-border/60 bg-card/80 overflow-hidden">
+      {/* Header */}
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-muted-foreground hover:bg-muted/30 transition-colors"
+      >
+        {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        <Globe className="w-3.5 h-3.5 text-primary" />
+        <span className="text-foreground/80 font-semibold">
+          Live Browser — {state.task.length > 50 ? state.task.slice(0, 50) + "…" : state.task}
+        </span>
+        <span className={`ml-auto flex items-center gap-1 ${statusColor}`}>
+          {isLive && (state.status === "running" || state.status === "starting") && <Loader2 className="w-3 h-3 animate-spin" />}
+          {state.status === "completed" && <CheckCircle2 className="w-3 h-3" />}
+          {statusLabel}
+        </span>
+      </button>
+
+      {!collapsed && (
+        <div className="space-y-0">
+          {/* Live Screenshot */}
+          {state.screenshotUrl && (
+            <div className="relative border-t border-border/30">
+              <img
+                key={imgKey}
+                src={state.screenshotUrl}
+                alt="Live browser view"
+                className="w-full max-h-[400px] object-contain bg-black/5"
+                loading="eager"
+              />
+              {isLive && (state.status === "running" || state.status === "starting") && (
+                <div className="absolute top-2 right-2 flex items-center gap-1 bg-background/80 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-primary border border-border/40">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                  LIVE
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Current URL bar */}
+          {state.currentUrl && (
+            <div className="flex items-center gap-2 px-3 py-1.5 border-t border-border/30 bg-muted/40">
+              <Globe className="w-3 h-3 text-muted-foreground shrink-0" />
+              <span className="text-[11px] text-muted-foreground truncate font-mono">{state.currentUrl}</span>
+            </div>
+          )}
+
+          {/* Action history */}
+          {state.actionHistory.length > 0 && (
+            <div className="px-3 py-2 border-t border-border/30 space-y-1">
+              {state.actionHistory.map((a, i) => (
+                <div key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground">
+                  <span className="shrink-0 font-mono text-muted-foreground/50">#{a.step}</span>
+                  <span className="truncate">{String(a.action).slice(0, 120)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* No screenshot yet */}
+          {!state.screenshotUrl && (state.status === "starting" || state.status === "running") && (
+            <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground border-t border-border/30">
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+              <span>Waiting for browser to start...</span>
+            </div>
+          )}
+
+          {/* Error */}
+          {state.error && (
+            <div className="px-3 py-2 text-xs text-destructive bg-destructive/10 border-t border-border/30">
+              {state.error}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Steel Embed + Screenshot Parser ──────────────────────────────────────────
 interface SteelEmbedData {
   debugUrl: string;
@@ -510,14 +621,16 @@ export default function LovableAgent() {
   const [currentPlans, setCurrentPlans] = useState<ExecutionPlan[]>([]);
   const [currentCallState, setCurrentCallState] = useState<CallState | null>(null);
   const callStateRef = useRef<CallState | null>(null);
-  const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call">("idle");
+  const [browserLiveState, setBrowserLiveState] = useState<BrowserLiveState | null>(null);
+  const browserLiveRef = useRef<BrowserLiveState | null>(null);
+  const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call" | "browsing">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, currentPlans, phase]);
+  }, [messages, currentPlans, phase, browserLiveState]);
 
   const sendMessage = useCallback(async (text?: string) => {
     const msg = text || input.trim();
@@ -531,6 +644,8 @@ export default function LovableAgent() {
     setCurrentPlans([]);
     setCurrentCallState(null);
     callStateRef.current = null;
+    setBrowserLiveState(null);
+    browserLiveRef.current = null;
     let assistantSoFar = "";
 
     const upsertAssistant = (chunk: string) => {
@@ -837,6 +952,83 @@ export default function LovableAgent() {
         ]);
         break;
 
+      case "browser_started": {
+        setPhase("browsing");
+        const initial: BrowserLiveState = {
+          runId: data.runId,
+          provider: data.provider || "self_hosted_bridge",
+          task: data.task || "",
+          status: "starting",
+          step: 0,
+          currentUrl: null,
+          screenshotUrl: null,
+          actionHistory: [],
+          error: null,
+          result: null,
+        };
+        setBrowserLiveState(initial);
+        browserLiveRef.current = initial;
+        break;
+      }
+
+      case "browser_progress": {
+        setBrowserLiveState(prev => {
+          const updated: BrowserLiveState = prev ? {
+            ...prev,
+            status: "running",
+            step: data.step || prev.step,
+            currentUrl: data.currentUrl || prev.currentUrl,
+            screenshotUrl: data.screenshotUrl || data.stepScreenshotUrl || prev.screenshotUrl,
+            actionHistory: data.actionHistory?.length ? data.actionHistory : prev.actionHistory,
+          } : {
+            runId: data.runId,
+            provider: "self_hosted_bridge",
+            task: "",
+            status: "running",
+            step: data.step || 0,
+            currentUrl: data.currentUrl || null,
+            screenshotUrl: data.screenshotUrl || null,
+            actionHistory: data.actionHistory || [],
+            error: null,
+            result: null,
+          };
+          browserLiveRef.current = updated;
+          return updated;
+        });
+        break;
+      }
+
+      case "browser_completed": {
+        setBrowserLiveState(prev => {
+          const updated: BrowserLiveState = prev ? {
+            ...prev,
+            status: "completed",
+            step: data.stepsTaken || prev.step,
+            currentUrl: data.currentUrl || prev.currentUrl,
+            screenshotUrl: data.screenshotUrl || prev.screenshotUrl,
+            result: data.result || null,
+          } : null as any;
+          browserLiveRef.current = updated;
+          return updated;
+        });
+        setPhase("executing");
+        break;
+      }
+
+      case "browser_error": {
+        setBrowserLiveState(prev => {
+          const updated: BrowserLiveState = prev ? {
+            ...prev,
+            status: "error",
+            error: data.error || "Unknown error",
+          } : null as any;
+          browserLiveRef.current = updated;
+          return updated;
+        });
+        setPhase("executing");
+        break;
+      }
+
       case "error":
         console.error("[agent event] Error:", data.message);
         break;
@@ -1035,7 +1227,18 @@ export default function LovableAgent() {
                   </div>
                 )}
 
-                {/* Live call monitor panel */}
+                {/* Live browser panel */}
+                {isLoading && browserLiveState && (
+                  <div className="flex gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
+                      <Bot className="w-4 h-4 text-white" />
+                    </div>
+                    <div className="max-w-[85%] min-w-0 w-full">
+                      <BrowserLivePanel state={browserLiveState} isLive={browserLiveState.status === "running" || browserLiveState.status === "starting"} />
+                    </div>
+                  </div>
+                )}
+
                 {isLoading && currentCallState && (
                   <div className="flex gap-3">
                     <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
