@@ -14,7 +14,7 @@ import {
   Phone, PhoneOff, Send, Activity, Brain, Eye, Mic,
   AlertTriangle, CheckCircle, Clock, MessageSquare,
   Zap, Users, BarChart3, Radio, Loader2, ChevronDown,
-  ChevronUp, Volume2, RefreshCw, Plus, X,
+  ChevronUp, Volume2, RefreshCw, Plus, X, Sparkles, Search,
 } from "lucide-react";
 
 type CallState = {
@@ -41,7 +41,12 @@ type RecentCall = {
 export default function CallCenter() {
   const { session } = useAuth();
 
-  // Call initiation form
+  // Mode: smart (prompt-only) vs manual (phone number)
+  const [smartMode, setSmartMode] = useState(true);
+  const [prompt, setPrompt] = useState("");
+  const [smartLocation, setSmartLocation] = useState("");
+
+  // Call initiation form (manual mode)
   const [phoneNumber, setPhoneNumber] = useState("");
   const [objective, setObjective] = useState("");
   const [callerName, setCallerName] = useState("");
@@ -194,7 +199,87 @@ export default function CallCenter() {
     })();
   }, [session]);
 
-  // Initiate call
+  // Smart mode: search for stores, then auto-call first one with rest as retries
+  const initiateSmartCall = async () => {
+    if (!prompt.trim() || !session?.access_token) return;
+    setIsInitiating(true);
+    setRetryAttempt(0);
+
+    try {
+      // Step 1: Search for stores
+      toast.info("Searching for relevant stores...", { icon: <Search className="w-4 h-4" /> });
+      const searchResp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-stores`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            objective: prompt,
+            location: smartLocation || undefined,
+          }),
+        }
+      );
+      const searchData = await searchResp.json();
+
+      if (!searchResp.ok || !searchData.success || !searchData.stores?.length) {
+        toast.error("Couldn't find any stores", {
+          description: "Try being more specific or switch to manual mode.",
+        });
+        setIsInitiating(false);
+        return;
+      }
+
+      const stores = searchData.stores;
+      const primaryStore = stores[0];
+      const backupStores = stores.slice(1);
+
+      toast.success(`Found ${stores.length} stores — calling ${primaryStore.name}`, {
+        description: `Product: ${searchData.product}`,
+      });
+
+      // Set up retry queue with remaining stores
+      retryQueueRef.current = [...backupStores];
+      setRetryQueue([...backupStores]);
+      setRetryStores(stores);
+
+      // Step 2: Call the first store
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=initiate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            phone_number: primaryStore.phone,
+            objective: prompt,
+            caller_name: callerName || "Maya",
+            company_name: primaryStore.name,
+            constraints: constraints || undefined,
+          }),
+        }
+      );
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Failed to initiate call");
+
+      toast.success("Call initiated!", {
+        description: `Calling ${primaryStore.name} (${primaryStore.phone})${backupStores.length > 0 ? ` · ${backupStores.length} backups queued` : ""}`,
+      });
+      startPolling(data.taskId);
+    } catch (e: any) {
+      toast.error("Smart call failed", { description: e.message });
+    } finally {
+      setIsInitiating(false);
+    }
+  };
+
+  // Initiate call (manual mode)
   const initiateCall = async () => {
     if (!phoneNumber || !objective || !session?.access_token) return;
     setIsInitiating(true);
@@ -382,179 +467,242 @@ export default function CallCenter() {
                     </div>
                     <h2 className="text-2xl font-bold">New Call</h2>
                     <p className="text-muted-foreground text-sm">
-                      3-agent pipeline: Analyst evaluates, Director strategizes, Caller speaks.
+                      Just say what you need — or switch to manual mode for full control.
                     </p>
                   </div>
 
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium mb-1.5 block">Phone Number</label>
-                      <Input
-                        value={phoneNumber}
-                        onChange={(e) => setPhoneNumber(e.target.value)}
-                        placeholder="+1 (555) 123-4567"
-                        className="bg-muted/30"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium mb-1.5 block">Call Objective</label>
-                      <Textarea
-                        value={objective}
-                        onChange={(e) => setObjective(e.target.value)}
-                        placeholder="What should the AI accomplish on this call? Be specific..."
-                        className="bg-muted/30 min-h-[80px]"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-sm font-medium mb-1.5 block">Agent Name</label>
-                        <Input
-                          value={callerName}
-                          onChange={(e) => setCallerName(e.target.value)}
-                          placeholder="Maya"
-                          className="bg-muted/30"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium mb-1.5 block">Company</label>
-                        <Input
-                          value={companyName}
-                          onChange={(e) => setCompanyName(e.target.value)}
-                          placeholder="Your company name"
-                          className="bg-muted/30"
-                        />
-                      </div>
-                    </div>
-
+                  {/* Mode Toggle */}
+                  <div className="flex items-center justify-center gap-2 p-1 rounded-lg bg-muted/30 border border-border/40">
                     <button
-                      onClick={() => setShowAdvanced(!showAdvanced)}
-                      className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                      onClick={() => setSmartMode(true)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-all ${
+                        smartMode ? "bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30" : "text-muted-foreground hover:text-foreground"
+                      }`}
                     >
-                      {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                      Advanced Settings
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Smart Mode
                     </button>
+                    <button
+                      onClick={() => setSmartMode(false)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-all ${
+                        !smartMode ? "bg-muted/50 text-foreground border border-border/40" : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <Phone className="w-3.5 h-3.5" />
+                      Manual
+                    </button>
+                  </div>
 
-                    {showAdvanced && (
-                      <div>
-                        <label className="text-sm font-medium mb-1.5 block">Constraints / Rules</label>
-                        <Textarea
-                          value={constraints}
-                          onChange={(e) => setConstraints(e.target.value)}
-                          placeholder="e.g., Don't go below $350, max 10 min call, don't discuss competitors..."
-                          className="bg-muted/30 min-h-[60px]"
-                        />
-                      </div>
-                    )}
-
-                    {/* Auto-Retry Toggle */}
-                    <div className="rounded-xl border border-border/40 bg-card/30 p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <RefreshCw className="w-4 h-4 text-amber-400" />
+                  <div className="space-y-4">
+                    {smartMode ? (
+                      /* ── SMART MODE ── */
+                      <>
+                        <div>
+                          <label className="text-sm font-medium mb-1.5 block">What do you need?</label>
+                          <Textarea
+                            value={prompt}
+                            onChange={(e) => setPrompt(e.target.value)}
+                            placeholder={"e.g. Order 2 large pepperoni pizzas for delivery to 123 Main St, Houston TX\ne.g. Buy Meta Ray-Ban smart glasses, Wayfarer style in matte black\ne.g. Book a table for 4 tonight at an Italian restaurant near downtown"}
+                            className="bg-muted/30 min-h-[100px]"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <p className="text-sm font-medium">Auto-Retry on Failure</p>
-                            <p className="text-xs text-muted-foreground">Automatically try backup stores if call fails</p>
+                            <label className="text-sm font-medium mb-1.5 block">Location (optional)</label>
+                            <Input
+                              value={smartLocation}
+                              onChange={(e) => setSmartLocation(e.target.value)}
+                              placeholder="e.g. Houston TX"
+                              className="bg-muted/30"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm font-medium mb-1.5 block">Agent Name</label>
+                            <Input
+                              value={callerName}
+                              onChange={(e) => setCallerName(e.target.value)}
+                              placeholder="Maya"
+                              className="bg-muted/30"
+                            />
                           </div>
                         </div>
-                        <Switch
-                          checked={autoRetryEnabled}
-                          onCheckedChange={setAutoRetryEnabled}
-                        />
-                      </div>
 
-                      {autoRetryEnabled && (
-                        <div className="space-y-3 pt-2 border-t border-border/30">
-                          <p className="text-xs text-muted-foreground">
-                            Search for stores that sell your product, or add manually.
-                          </p>
+                        <button
+                          onClick={() => setShowAdvanced(!showAdvanced)}
+                          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          Constraints
+                        </button>
+                        {showAdvanced && (
+                          <Textarea
+                            value={constraints}
+                            onChange={(e) => setConstraints(e.target.value)}
+                            placeholder="e.g., Max budget $500, don't share email, use card ending 4567..."
+                            className="bg-muted/30 min-h-[60px]"
+                          />
+                        )}
 
-                          {/* Smart Search */}
-                          <div className="flex items-center gap-2">
+                        <Button
+                          onClick={initiateSmartCall}
+                          disabled={!prompt.trim() || isInitiating}
+                          className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white"
+                          size="lg"
+                        >
+                          {isInitiating ? (
+                            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Finding stores & calling...</>
+                          ) : (
+                            <><Sparkles className="w-4 h-4 mr-2" /> Find & Call</>
+                          )}
+                        </Button>
+                      </>
+                    ) : (
+                      /* ── MANUAL MODE ── */
+                      <>
+                        <div>
+                          <label className="text-sm font-medium mb-1.5 block">Phone Number</label>
+                          <Input
+                            value={phoneNumber}
+                            onChange={(e) => setPhoneNumber(e.target.value)}
+                            placeholder="+1 (555) 123-4567"
+                            className="bg-muted/30"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium mb-1.5 block">Call Objective</label>
+                          <Textarea
+                            value={objective}
+                            onChange={(e) => setObjective(e.target.value)}
+                            placeholder="What should the AI accomplish on this call? Be specific..."
+                            className="bg-muted/30 min-h-[80px]"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-sm font-medium mb-1.5 block">Agent Name</label>
                             <Input
-                              value={searchLocation}
-                              onChange={(e) => setSearchLocation(e.target.value)}
-                              placeholder="Location (optional, e.g. Houston TX)"
-                              className="bg-muted/20 text-sm h-8"
+                              value={callerName}
+                              onChange={(e) => setCallerName(e.target.value)}
+                              placeholder="Maya"
+                              className="bg-muted/30"
                             />
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={searchStores}
-                              disabled={isSearchingStores || !objective.trim()}
-                              className="h-8 px-3 shrink-0 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
-                            >
-                              {isSearchingStores ? (
-                                <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Searching...</>
-                              ) : (
-                                <><Zap className="w-3.5 h-3.5 mr-1" /> Find Stores</>
-                              )}
-                            </Button>
                           </div>
-                          
-                          {/* Existing retry stores */}
-                          {retryStores.length > 0 && (
-                            <div className="space-y-1.5">
-                              {retryStores.map((store, i) => (
-                                <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/30 text-sm">
-                                  <span className="text-xs font-mono text-muted-foreground w-5">{i + 1}.</span>
-                                  <span className="flex-1 truncate">{store.name}</span>
-                                  {(store as any).why && (
-                                    <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={(store as any).why}>
-                                      {(store as any).why}
-                                    </span>
+                          <div>
+                            <label className="text-sm font-medium mb-1.5 block">Company</label>
+                            <Input
+                              value={companyName}
+                              onChange={(e) => setCompanyName(e.target.value)}
+                              placeholder="Your company name"
+                              className="bg-muted/30"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => setShowAdvanced(!showAdvanced)}
+                          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          Advanced Settings
+                        </button>
+
+                        {showAdvanced && (
+                          <div>
+                            <label className="text-sm font-medium mb-1.5 block">Constraints / Rules</label>
+                            <Textarea
+                              value={constraints}
+                              onChange={(e) => setConstraints(e.target.value)}
+                              placeholder="e.g., Don't go below $350, max 10 min call..."
+                              className="bg-muted/30 min-h-[60px]"
+                            />
+                          </div>
+                        )}
+
+                        {/* Auto-Retry Toggle */}
+                        <div className="rounded-xl border border-border/40 bg-card/30 p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <RefreshCw className="w-4 h-4 text-amber-400" />
+                              <div>
+                                <p className="text-sm font-medium">Auto-Retry on Failure</p>
+                                <p className="text-xs text-muted-foreground">Automatically try backup stores if call fails</p>
+                              </div>
+                            </div>
+                            <Switch
+                              checked={autoRetryEnabled}
+                              onCheckedChange={setAutoRetryEnabled}
+                            />
+                          </div>
+
+                          {autoRetryEnabled && (
+                            <div className="space-y-3 pt-2 border-t border-border/30">
+                              <p className="text-xs text-muted-foreground">
+                                Search for stores or add manually.
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  value={searchLocation}
+                                  onChange={(e) => setSearchLocation(e.target.value)}
+                                  placeholder="Location (optional)"
+                                  className="bg-muted/20 text-sm h-8"
+                                />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={searchStores}
+                                  disabled={isSearchingStores || !objective.trim()}
+                                  className="h-8 px-3 shrink-0 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                                >
+                                  {isSearchingStores ? (
+                                    <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Searching...</>
+                                  ) : (
+                                    <><Zap className="w-3.5 h-3.5 mr-1" /> Find Stores</>
                                   )}
-                                  <span className="text-xs text-muted-foreground font-mono">{store.phone}</span>
-                                  <button onClick={() => removeRetryStore(i)} className="text-muted-foreground hover:text-destructive transition-colors">
-                                    <X className="w-3.5 h-3.5" />
-                                  </button>
+                                </Button>
+                              </div>
+                              {retryStores.length > 0 && (
+                                <div className="space-y-1.5">
+                                  {retryStores.map((store, i) => (
+                                    <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/30 text-sm">
+                                      <span className="text-xs font-mono text-muted-foreground w-5">{i + 1}.</span>
+                                      <span className="flex-1 truncate">{store.name}</span>
+                                      {store.why && (
+                                        <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={store.why}>{store.why}</span>
+                                      )}
+                                      <span className="text-xs text-muted-foreground font-mono">{store.phone}</span>
+                                      <button onClick={() => removeRetryStore(i)} className="text-muted-foreground hover:text-destructive transition-colors">
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
+                              )}
+                              <div className="flex items-center gap-2">
+                                <Input value={newRetryName} onChange={(e) => setNewRetryName(e.target.value)} placeholder="Store name" className="bg-muted/20 text-sm h-8" />
+                                <Input value={newRetryPhone} onChange={(e) => setNewRetryPhone(e.target.value)} placeholder="+1 555-123-4567" className="bg-muted/20 text-sm h-8 w-40" onKeyDown={(e) => e.key === 'Enter' && addRetryStore()} />
+                                <Button type="button" size="sm" variant="outline" onClick={addRetryStore} disabled={!newRetryName.trim() || !newRetryPhone.trim()} className="h-8 px-2 shrink-0">
+                                  <Plus className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
                             </div>
                           )}
-
-                          {/* Add new store manually */}
-                          <div className="flex items-center gap-2">
-                            <Input
-                              value={newRetryName}
-                              onChange={(e) => setNewRetryName(e.target.value)}
-                              placeholder="Store name"
-                              className="bg-muted/20 text-sm h-8"
-                            />
-                            <Input
-                              value={newRetryPhone}
-                              onChange={(e) => setNewRetryPhone(e.target.value)}
-                              placeholder="+1 555-123-4567"
-                              className="bg-muted/20 text-sm h-8 w-40"
-                              onKeyDown={(e) => e.key === 'Enter' && addRetryStore()}
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={addRetryStore}
-                              disabled={!newRetryName.trim() || !newRetryPhone.trim()}
-                              className="h-8 px-2 shrink-0"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
                         </div>
-                      )}
-                    </div>
 
-                    <Button
-                      onClick={initiateCall}
-                      disabled={!phoneNumber || !objective || isInitiating}
-                      className="w-full bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-600 hover:to-amber-600 text-white"
-                      size="lg"
-                    >
-                      {isInitiating ? (
-                        <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Initiating Call...</>
-                      ) : (
-                        <><Phone className="w-4 h-4 mr-2" /> Start Multi-Agent Call</>
-                      )}
-                    </Button>
+                        <Button
+                          onClick={initiateCall}
+                          disabled={!phoneNumber || !objective || isInitiating}
+                          className="w-full bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-600 hover:to-amber-600 text-white"
+                          size="lg"
+                        >
+                          {isInitiating ? (
+                            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Initiating Call...</>
+                          ) : (
+                            <><Phone className="w-4 h-4 mr-2" /> Start Multi-Agent Call</>
+                          )}
+                        </Button>
+                      </>
+                    )}
                   </div>
 
                   {/* Recent Calls */}
