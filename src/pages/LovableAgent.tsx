@@ -1030,6 +1030,10 @@ export default function LovableAgent() {
 
       case "browser_started": {
         setPhase("browsing");
+        // Capture polling URLs for persistent client-side polling after SSE ends
+        if (data.statusUrl && data.screenshotUrl) {
+          browserUrlsRef.current = { statusUrl: data.statusUrl, screenshotUrl: data.screenshotUrl };
+        }
         const initial: BrowserLiveState = {
           runId: data.runId,
           provider: data.provider || "self_hosted_bridge",
