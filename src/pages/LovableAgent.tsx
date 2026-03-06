@@ -952,6 +952,83 @@ export default function LovableAgent() {
         ]);
         break;
 
+      case "browser_started": {
+        setPhase("browsing");
+        const initial: BrowserLiveState = {
+          runId: data.runId,
+          provider: data.provider || "self_hosted_bridge",
+          task: data.task || "",
+          status: "starting",
+          step: 0,
+          currentUrl: null,
+          screenshotUrl: null,
+          actionHistory: [],
+          error: null,
+          result: null,
+        };
+        setBrowserLiveState(initial);
+        browserLiveRef.current = initial;
+        break;
+      }
+
+      case "browser_progress": {
+        setBrowserLiveState(prev => {
+          const updated: BrowserLiveState = prev ? {
+            ...prev,
+            status: "running",
+            step: data.step || prev.step,
+            currentUrl: data.currentUrl || prev.currentUrl,
+            screenshotUrl: data.screenshotUrl || data.stepScreenshotUrl || prev.screenshotUrl,
+            actionHistory: data.actionHistory?.length ? data.actionHistory : prev.actionHistory,
+          } : {
+            runId: data.runId,
+            provider: "self_hosted_bridge",
+            task: "",
+            status: "running",
+            step: data.step || 0,
+            currentUrl: data.currentUrl || null,
+            screenshotUrl: data.screenshotUrl || null,
+            actionHistory: data.actionHistory || [],
+            error: null,
+            result: null,
+          };
+          browserLiveRef.current = updated;
+          return updated;
+        });
+        break;
+      }
+
+      case "browser_completed": {
+        setBrowserLiveState(prev => {
+          const updated: BrowserLiveState = prev ? {
+            ...prev,
+            status: "completed",
+            step: data.stepsTaken || prev.step,
+            currentUrl: data.currentUrl || prev.currentUrl,
+            screenshotUrl: data.screenshotUrl || prev.screenshotUrl,
+            result: data.result || null,
+          } : null as any;
+          browserLiveRef.current = updated;
+          return updated;
+        });
+        setPhase("executing");
+        break;
+      }
+
+      case "browser_error": {
+        setBrowserLiveState(prev => {
+          const updated: BrowserLiveState = prev ? {
+            ...prev,
+            status: "error",
+            error: data.error || "Unknown error",
+          } : null as any;
+          browserLiveRef.current = updated;
+          return updated;
+        });
+        setPhase("executing");
+        break;
+      }
+
       case "error":
         console.error("[agent event] Error:", data.message);
         break;
