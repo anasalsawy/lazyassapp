@@ -1282,6 +1282,8 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
             const pollHeaders: Record<string, string> = {};
             if (BRIDGE_KEY) pollHeaders["Authorization"] = `Bearer ${BRIDGE_KEY}`;
             let lastStep = 0;
+            let stuckInStartingCount = 0;
+            const STUCK_THRESHOLD = 10; // 10 polls × 4s = 40s stuck in "starting" → give up
 
             for (let attempt = 0; attempt < 30; attempt++) {
               await new Promise(r => setTimeout(r, 4000));
@@ -1291,6 +1293,24 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
                   const pollData = await pollRes.json();
                   const currentStep = pollData.steps_taken || pollData.current_step || 0;
                   console.log(`[browser_task] Bridge poll #${attempt + 1}: status=${pollData.status}, step=${currentStep}`);
+
+                  // Detect stuck-in-starting: bridge accepted but never began processing
+                  if (pollData.status === "starting" && currentStep === 0) {
+                    stuckInStartingCount++;
+                    if (stuckInStartingCount >= STUCK_THRESHOLD) {
+                      console.error(`[browser_task] Bridge stuck in 'starting' for ${stuckInStartingCount} polls (${stuckInStartingCount * 4}s). Abandoning bridge, will fallback.`);
+                      buError = { message: `Bridge stuck in 'starting' state for ${stuckInStartingCount * 4}s — server may be cold-starting or overloaded.` };
+                      if (_sendEventFn) {
+                        _sendEventFn("browser_error", {
+                          runId: bridgeRunId,
+                          error: "Bridge stuck in starting state. Falling back to cloud provider.",
+                        });
+                      }
+                      break;
+                    }
+                  } else {
+                    stuckInStartingCount = 0; // Reset if status progresses
+                  }
 
                   // Stream progress to frontend on every poll
                   if (_sendEventFn) {
