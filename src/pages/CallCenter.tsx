@@ -199,7 +199,87 @@ export default function CallCenter() {
     })();
   }, [session]);
 
-  // Initiate call
+  // Smart mode: search for stores, then auto-call first one with rest as retries
+  const initiateSmartCall = async () => {
+    if (!prompt.trim() || !session?.access_token) return;
+    setIsInitiating(true);
+    setRetryAttempt(0);
+
+    try {
+      // Step 1: Search for stores
+      toast.info("Searching for relevant stores...", { icon: <Search className="w-4 h-4" /> });
+      const searchResp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-stores`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            objective: prompt,
+            location: smartLocation || undefined,
+          }),
+        }
+      );
+      const searchData = await searchResp.json();
+
+      if (!searchResp.ok || !searchData.success || !searchData.stores?.length) {
+        toast.error("Couldn't find any stores", {
+          description: "Try being more specific or switch to manual mode.",
+        });
+        setIsInitiating(false);
+        return;
+      }
+
+      const stores = searchData.stores;
+      const primaryStore = stores[0];
+      const backupStores = stores.slice(1);
+
+      toast.success(`Found ${stores.length} stores — calling ${primaryStore.name}`, {
+        description: `Product: ${searchData.product}`,
+      });
+
+      // Set up retry queue with remaining stores
+      retryQueueRef.current = [...backupStores];
+      setRetryQueue([...backupStores]);
+      setRetryStores(stores);
+
+      // Step 2: Call the first store
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=initiate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({
+            phone_number: primaryStore.phone,
+            objective: prompt,
+            caller_name: callerName || "Maya",
+            company_name: primaryStore.name,
+            constraints: constraints || undefined,
+          }),
+        }
+      );
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Failed to initiate call");
+
+      toast.success("Call initiated!", {
+        description: `Calling ${primaryStore.name} (${primaryStore.phone})${backupStores.length > 0 ? ` · ${backupStores.length} backups queued` : ""}`,
+      });
+      startPolling(data.taskId);
+    } catch (e: any) {
+      toast.error("Smart call failed", { description: e.message });
+    } finally {
+      setIsInitiating(false);
+    }
+  };
+
+  // Initiate call (manual mode)
   const initiateCall = async () => {
     if (!phoneNumber || !objective || !session?.access_token) return;
     setIsInitiating(true);
