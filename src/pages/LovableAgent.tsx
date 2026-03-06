@@ -634,6 +634,80 @@ export default function LovableAgent() {
     }
   }, [messages, currentPlans, phase, browserLiveState]);
 
+  // ── Persistent client-side polling for browser tasks ──────────────────────
+  // Kicks in when SSE stream ends but browser task is still running
+  useEffect(() => {
+    // Only start persistent polling when NOT loading (SSE ended) and browser is still active
+    if (isLoading || !browserLiveState) return;
+    if (browserLiveState.status === "completed" || browserLiveState.status === "error") return;
+    if (!browserUrlsRef.current) return;
+
+    const { statusUrl, screenshotUrl } = browserUrlsRef.current;
+    console.log("[BrowserPoll] Starting persistent client-side polling:", statusUrl);
+
+    const poll = async () => {
+      try {
+        const res = await fetch(statusUrl);
+        if (!res.ok) return;
+        const data = await res.json();
+        const step = data.steps_taken || data.current_step || 0;
+
+        if (data.status === "completed") {
+          setBrowserLiveState(prev => prev ? {
+            ...prev,
+            status: "completed",
+            step: data.steps_taken || prev.step,
+            currentUrl: data.current_url || prev.currentUrl,
+            screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
+            result: data.result || null,
+          } : prev);
+          browserLiveRef.current = null;
+          // Stop polling
+          if (browserPollRef.current) {
+            clearInterval(browserPollRef.current);
+            browserPollRef.current = null;
+          }
+        } else if (data.status === "error") {
+          setBrowserLiveState(prev => prev ? {
+            ...prev,
+            status: "error",
+            error: data.error || "Task failed",
+          } : prev);
+          if (browserPollRef.current) {
+            clearInterval(browserPollRef.current);
+            browserPollRef.current = null;
+          }
+        } else {
+          // Still running — update progress
+          setBrowserLiveState(prev => prev ? {
+            ...prev,
+            status: step > 0 ? "running" : prev.status,
+            step,
+            currentUrl: data.current_url || prev.currentUrl,
+            screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
+            actionHistory: data.action_history?.slice(-5)?.map((a: any, i: number) => ({
+              step: a.step || step - (data.action_history.length - 1 - i),
+              action: typeof a === "string" ? a : a.action || JSON.stringify(a),
+            })) || prev.actionHistory,
+          } : prev);
+        }
+      } catch (err) {
+        console.warn("[BrowserPoll] Poll error:", err);
+      }
+    };
+
+    // Poll immediately, then every 5 seconds
+    poll();
+    browserPollRef.current = setInterval(poll, 5000);
+
+    return () => {
+      if (browserPollRef.current) {
+        clearInterval(browserPollRef.current);
+        browserPollRef.current = null;
+      }
+    };
+  }, [isLoading, browserLiveState?.status]);
+
   const sendMessage = useCallback(async (text?: string) => {
     const msg = text || input.trim();
     if (!msg || isLoading || !session?.access_token) return;
