@@ -45,7 +45,6 @@ import {
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { SteelSessionEmbed } from "@/components/chat/SteelSessionEmbed";
-import { Textarea as InjectionTextarea } from "@/components/ui/textarea";
 
 const SHOP_SITES = [
   { key: "gmail", name: "Gmail", icon: Mail, color: "bg-red-500", description: "Access inbox for codes & shipping updates" },
