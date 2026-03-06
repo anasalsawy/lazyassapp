@@ -1054,65 +1054,91 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
           headers["Authorization"] = `Bearer ${serviceRoleKey}`;
         }
 
-        const voiceUrl = `${supabaseUrl}/functions/v1/voice-agent?action=initiate`;
-        console.log(`[make_phone_call] Calling ${funcBody.phone_number}`);
-
-        const resp = await fetch(voiceUrl, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(funcBody),
-        });
-
-        const responseText = await resp.text();
-        let responseData;
-        try { responseData = JSON.parse(responseText); } catch { responseData = responseText; }
-
-        if (!resp.ok) {
-          return JSON.stringify({ success: false, status: resp.status, error: responseData?.error || responseText });
-        }
-
-        // Store taskId for auto-polling by the stream loop
-        _activeCallTaskId = responseData.taskId || null;
-
-        // Store retry stores and call config for auto-retry on failure
+        // Determine if this should be a MISSION (auto-retry across stores) or a single call
+        let retryStoresParsed: any[] = [];
         try {
           const retryRaw = funcBody.retry_stores as string;
           if (retryRaw) {
             const parsed = typeof retryRaw === 'string' ? JSON.parse(retryRaw) : retryRaw;
-            _activeCallRetryStores = Array.isArray(parsed) ? parsed : [];
-          } else {
-            _activeCallRetryStores = [];
+            retryStoresParsed = Array.isArray(parsed) ? parsed : [];
           }
         } catch (e) { 
           console.error("[make_phone_call] Failed to parse retry_stores:", e);
-          _activeCallRetryStores = []; 
         }
-        
-        // Warn if this looks like an order call but has no retry stores
-        const orderKeywords = ['order', 'buy', 'purchase', 'book', 'reserve', 'pickup'];
-        const objectiveLower = ((funcBody.objective as string) || '').toLowerCase();
-        const isOrderCall = orderKeywords.some(kw => objectiveLower.includes(kw));
-        if (isOrderCall && _activeCallRetryStores.length === 0) {
-          console.warn("[make_phone_call] ⚠️ ORDER CALL WITHOUT RETRY STORES — auto-retry will not work if this call fails!");
-        }
-        console.log(`[make_phone_call] Retry stores loaded: ${_activeCallRetryStores.length} stores`, 
-          _activeCallRetryStores.map(s => s.name).join(', '));
-        // Save config for retries (without retry_stores and phone_number)
-        const retryConfig = { ...funcBody };
-        delete retryConfig.retry_stores;
-        delete retryConfig.phone_number;
-        delete retryConfig.company_name;
-        _activeCallConfig = retryConfig;
 
-        return JSON.stringify({
-          success: true,
-          callSid: responseData.callSid,
-          taskId: responseData.taskId,
-          status: responseData.status,
-          to: responseData.to,
-          greeting: responseData.greeting,
-          message: `Phone call initiated to ${funcBody.phone_number}. The multi-agent system (Analyst → Director → Caller) is now conducting the call autonomously. Task ID: ${responseData.taskId}. Live updates will stream below.`,
-        });
+        let responseData: any;
+
+        if (retryStoresParsed.length > 0) {
+          // ── MISSION MODE: auto-retry across all stores until objective met ──
+          // Build full store list with primary phone as first entry
+          const allStores = [
+            { name: (funcBody.company_name as string) || "Primary", phone: funcBody.phone_number as string },
+            ...retryStoresParsed,
+          ];
+
+          const missionBody = { ...funcBody };
+          delete missionBody.phone_number;
+          delete missionBody.retry_stores;
+          (missionBody as any).retry_stores = allStores;
+
+          const voiceUrl = `${supabaseUrl}/functions/v1/voice-agent?action=initiate-mission`;
+          console.log(`[make_phone_call] 🎯 MISSION MODE — ${allStores.length} stores queued`);
+
+          const resp = await fetch(voiceUrl, { method: "POST", headers, body: JSON.stringify(missionBody) });
+          const responseText = await resp.text();
+          try { responseData = JSON.parse(responseText); } catch { responseData = responseText; }
+
+          if (!resp.ok) {
+            return JSON.stringify({ success: false, status: resp.status, error: responseData?.error || responseText });
+          }
+
+          _activeCallTaskId = responseData.firstCall?.taskId || null;
+          _activeCallRetryStores = [];
+          _activeCallConfig = {};
+
+          return JSON.stringify({
+            success: true,
+            missionId: responseData.missionId,
+            callSid: responseData.firstCall?.callSid,
+            taskId: responseData.firstCall?.taskId,
+            totalStores: allStores.length,
+            message: `🎯 MISSION STARTED — calling ${allStores[0].name} first. If objective isn't met, will auto-retry across ${allStores.length - 1} more stores. No human intervention needed.`,
+          });
+        } else {
+          // ── SINGLE CALL MODE (no retries) ──
+          const voiceUrl = `${supabaseUrl}/functions/v1/voice-agent?action=initiate`;
+          console.log(`[make_phone_call] Calling ${funcBody.phone_number}`);
+
+          const resp = await fetch(voiceUrl, { method: "POST", headers, body: JSON.stringify(funcBody) });
+          const responseText = await resp.text();
+          try { responseData = JSON.parse(responseText); } catch { responseData = responseText; }
+
+          if (!resp.ok) {
+            return JSON.stringify({ success: false, status: resp.status, error: responseData?.error || responseText });
+          }
+
+          _activeCallTaskId = responseData.taskId || null;
+          _activeCallRetryStores = [];
+          _activeCallConfig = {};
+
+          // Warn if this looks like an order call but has no retry stores
+          const orderKeywords = ['order', 'buy', 'purchase', 'book', 'reserve', 'pickup'];
+          const objectiveLower = ((funcBody.objective as string) || '').toLowerCase();
+          const isOrderCall = orderKeywords.some(kw => objectiveLower.includes(kw));
+          if (isOrderCall) {
+            console.warn("[make_phone_call] ⚠️ ORDER CALL WITHOUT RETRY STORES — consider using retry_stores for auto-retry!");
+          }
+
+          return JSON.stringify({
+            success: true,
+            callSid: responseData.callSid,
+            taskId: responseData.taskId,
+            status: responseData.status,
+            to: responseData.to,
+            greeting: responseData.greeting,
+            message: `Phone call initiated to ${funcBody.phone_number}. The multi-agent system (Analyst → Director → Caller) is now conducting the call autonomously. Task ID: ${responseData.taskId}. Live updates will stream below.`,
+          });
+        }
       } catch (err) {
         return JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Phone call failed" });
       }
