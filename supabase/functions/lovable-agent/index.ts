@@ -1189,10 +1189,9 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
     }
 
     case "browser_task": {
-      // Self-hosted Bridge is the PRIMARY browser engine; Cloud API is fallback
+      // Self-hosted Bridge is the ONLY browser engine — no cloud fallback
       const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL");
       const BRIDGE_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY");
-      const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
       const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
       const taskStr = (args.task as string) || "";
       const startUrl = (args.start_url as string) || "";
@@ -1278,42 +1277,24 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
             }
 
             // Poll bridge for completion with live progress streaming
-            // Aggressive stuck detection: 5 polls × 4s = 20s max wait for cold start
+            // Patient polling: wait as long as needed, no stuck detection abandonment
             let bridgeResult: any = null;
             const pollHeaders: Record<string, string> = {};
             if (BRIDGE_KEY) pollHeaders["Authorization"] = `Bearer ${BRIDGE_KEY}`;
             let lastStep = 0;
-            let noProgressCount = 0;
-            const NO_PROGRESS_LIMIT = 5; // 5 polls × 4s = 20s with no progress → abandon bridge
+            let consecutiveErrors = 0;
+            const MAX_CONSECUTIVE_ERRORS = 15; // 15 × 4s = 60s of total network failure before giving up
 
-            for (let attempt = 0; attempt < 30; attempt++) {
+            for (let attempt = 0; attempt < 75; attempt++) { // 75 × 4s = 5 minutes max
               await new Promise(r => setTimeout(r, 4000));
               try {
                 const pollRes = await fetch(statusUrl, { headers: pollHeaders });
                 if (pollRes.ok) {
+                  consecutiveErrors = 0; // Reset on any successful response
                   const pollData = await pollRes.json();
                   const currentStep = pollData.steps_taken || pollData.current_step || 0;
                   const bridgeStatus = pollData.status;
-                  console.log(`[browser_task] Bridge poll #${attempt + 1}: status=${bridgeStatus}, step=${currentStep}, noProgress=${noProgressCount}`);
-
-                  // Detect stuck: bridge never progressed past starting/queued with 0 steps
-                  const isStuck = (bridgeStatus === "starting" || bridgeStatus === "queued") && currentStep === 0;
-                  if (isStuck) {
-                    noProgressCount++;
-                    if (noProgressCount >= NO_PROGRESS_LIMIT) {
-                      console.error(`[browser_task] STUCK DETECTED: ${noProgressCount} polls with no progress (${noProgressCount * 4}s). Abandoning bridge.`);
-                      buError = { message: `Bridge stuck (status=${bridgeStatus}) for ${noProgressCount * 4}s. Server cold-starting or overloaded.` };
-                      if (_sendEventFn) {
-                        _sendEventFn("browser_error", {
-                          runId: bridgeRunId,
-                          error: `Bridge unresponsive for ${noProgressCount * 4}s. Switching to cloud provider.`,
-                        });
-                      }
-                      break;
-                    }
-                  } else if (bridgeStatus === "running" && currentStep > 0) {
-                    noProgressCount = 0; // Reset — bridge is actually working
-                  }
+                  console.log(`[browser_task] Bridge poll #${attempt + 1}: status=${bridgeStatus}, step=${currentStep}`);
 
                   // Stream progress to frontend on every poll
                   if (_sendEventFn) {
@@ -1351,25 +1332,25 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
                     }
                     break;
                   }
+                  // Any other status (starting, queued, running) — just keep waiting patiently
                 } else {
-                  // Bridge returned non-OK — might be down
-                  noProgressCount++;
-                  console.warn(`[browser_task] Bridge poll #${attempt + 1} returned ${pollRes.status}`);
-                  if (noProgressCount >= NO_PROGRESS_LIMIT) {
-                    buError = { message: `Bridge returned errors for ${noProgressCount} consecutive polls.` };
+                  consecutiveErrors++;
+                  console.warn(`[browser_task] Bridge poll #${attempt + 1} returned ${pollRes.status} (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})`);
+                  if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                    buError = { message: `Bridge returned errors for ${consecutiveErrors} consecutive polls (${consecutiveErrors * 4}s).` };
                     if (_sendEventFn) {
-                      _sendEventFn("browser_error", { runId: bridgeRunId, error: "Bridge server not responding." });
+                      _sendEventFn("browser_error", { runId: bridgeRunId, error: "Bridge server not responding after extended wait." });
                     }
                     break;
                   }
                 }
               } catch (pollErr) {
-                noProgressCount++;
+                consecutiveErrors++;
                 console.warn(`[browser_task] Bridge poll #${attempt + 1} fetch error:`, pollErr);
-                if (noProgressCount >= NO_PROGRESS_LIMIT) {
-                  buError = { message: `Bridge unreachable for ${noProgressCount} consecutive polls.` };
+                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                  buError = { message: `Bridge unreachable for ${consecutiveErrors} consecutive polls.` };
                   if (_sendEventFn) {
-                    _sendEventFn("browser_error", { runId: bridgeRunId, error: "Bridge connection lost." });
+                    _sendEventFn("browser_error", { runId: bridgeRunId, error: "Bridge connection lost after extended wait." });
                   }
                   break;
                 }
@@ -1393,10 +1374,10 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
               };
               buError = null;
             } else if (!buError) {
-              console.warn(`[browser_task] Bridge timed out after 120s. Falling back to cloud.`);
-              buError = { message: "Bridge task timed out after 120s polling." };
+              console.warn(`[browser_task] Bridge timed out after 5min polling.`);
+              buError = { message: "Bridge task timed out after 5 minutes of polling." };
               if (_sendEventFn) {
-                _sendEventFn("browser_error", { runId: bridgeRunId, error: "Bridge timed out. Switching to cloud." });
+                _sendEventFn("browser_error", { runId: bridgeRunId, error: "Bridge timed out after 5 minutes." });
               }
             }
           } else {
@@ -1410,61 +1391,7 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         }
       }
 
-      // --- Attempt 2: Browser Use Cloud API (FALLBACK) ---
-      if (!buResult && BU_API_KEY) {
-        console.log(`[browser_task] Bridge failed/unavailable, falling back to Browser Use Cloud API`);
-        usedProvider = "browser_use_cloud";
-        try {
-          const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-          const { data: browserProfile } = await supabase.from("browser_profiles")
-            .select("browser_use_profile_id").eq("user_id", _currentUserId || "").single();
-
-          const taskBody: any = { task: taskStr, maxSteps: 50 };
-          if (startUrl) taskBody.startUrl = startUrl;
-
-          if (browserProfile?.browser_use_profile_id) {
-            try {
-              const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
-                method: "POST",
-                headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
-                body: JSON.stringify({ profileId: browserProfile.browser_use_profile_id }),
-              });
-              if (sessionRes.ok) {
-                const sess = await sessionRes.json();
-                taskBody.sessionId = sess.id;
-              }
-            } catch (_) {}
-          }
-
-          const buRes = await fetch("https://api.browser-use.com/api/v2/tasks", {
-            method: "POST",
-            headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
-            body: JSON.stringify(taskBody),
-          });
-
-          if (buRes.ok) {
-            const buData = await buRes.json();
-            buResult = { runId: buData.id, sessionId: buData.sessionId, status: "running" };
-            if (buData.sessionId) {
-              try {
-                const sessInfoRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${buData.sessionId}`, {
-                  headers: { "X-Browser-Use-API-Key": BU_API_KEY },
-                });
-                if (sessInfoRes.ok) {
-                  const sessInfo = await sessInfoRes.json();
-                  buResult.liveUrl = sessInfo.liveUrl || null;
-                }
-              } catch (_) {}
-            }
-          } else {
-            const errText = await buRes.text();
-            buError = { status: buRes.status, message: errText?.slice(0, 1200) || "Cloud API failed." };
-            console.warn(`[browser_task] Cloud API failed (${buRes.status}): ${errText?.slice(0, 200)}`);
-          }
-        } catch (err: any) {
-          buError = { message: err?.message || "Cloud API request failed." };
-        }
-      }
+      // No cloud fallback — bridge only
 
       // Build response
       const result: any = {
@@ -1512,8 +1439,8 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         result.error = buError?.message || "All browser providers failed.";
         result.statusCode = buError?.status;
         result.message = pageContent
-          ? "Page content was retrieved via Firecrawl, but browser task creation failed on both Cloud and Bridge."
-          : "Browser task creation failed on all providers (Cloud API out of credits, Bridge not available).";
+          ? "Page content was retrieved via Firecrawl, but bridge browser task failed."
+          : "Bridge browser task failed. Check if the bridge server is running.";
       }
 
       return JSON.stringify(result);

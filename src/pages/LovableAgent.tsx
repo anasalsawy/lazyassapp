@@ -637,7 +637,7 @@ export default function LovableAgent() {
   // ── Persistent client-side polling for browser tasks ──────────────────────
   // Kicks in when SSE stream ends but browser task is still running
   const clientStuckCountRef = useRef(0);
-  const CLIENT_STUCK_LIMIT = 6; // 6 polls × 5s = 30s stuck client-side → give up
+  const CLIENT_STUCK_LIMIT = 60; // 60 polls × 5s = 5min — be patient, no cloud fallback
 
   useEffect(() => {
     // Only start persistent polling when NOT loading (SSE ended) and browser is still active
