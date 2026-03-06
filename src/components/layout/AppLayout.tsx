@@ -24,6 +24,8 @@ import {
   Phone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CommandPalette } from "@/components/CommandPalette";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 const NAV_ITEMS = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -89,6 +91,18 @@ export function AppLayout({ children }: AppLayoutProps) {
 
           {/* Right Side */}
           <div className="flex items-center gap-2">
+            {/* CMD+K hint */}
+            <button
+              onClick={() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}
+              className="hidden lg:flex items-center gap-1.5 text-xs text-muted-foreground border border-border/50 rounded-lg px-2.5 py-1.5 hover:bg-accent/50 transition-colors"
+            >
+              <Search className="w-3 h-3" />
+              <span>Search</span>
+              <kbd className="ml-1 px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">⌘K</kbd>
+            </button>
+
+            <ThemeToggle />
+
             {/* Mobile Menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild className="md:hidden">
