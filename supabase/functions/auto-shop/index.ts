@@ -142,13 +142,39 @@ async function runBridgeTask(task: string, startUrl: string, maxSteps: number, p
   }
 }
 
-async function pollTaskStatus(taskId: string, source: string): Promise<{ status: string; result?: string; error?: string }> {
+interface PollResult {
+  status: string;
+  result?: string;
+  error?: string;
+  current_url?: string;
+  current_step?: number;
+  total_steps?: number;
+  step_description?: string;
+  screenshot_url?: string;
+  live_url?: string;
+  output?: string;
+}
+
+async function pollTaskStatus(taskId: string, source: string): Promise<PollResult> {
   if (source === "bridge" && BRIDGE_URL && BRIDGE_API_KEY) {
     try {
       const res = await fetch(`${BRIDGE_URL}/runs/${taskId}/status`, {
         headers: { "X-API-Key": BRIDGE_API_KEY },
       });
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          status: data.status || "unknown",
+          result: data.result || data.output,
+          error: data.error,
+          current_url: data.current_url,
+          current_step: data.current_step || data.step,
+          total_steps: data.total_steps || data.max_steps,
+          step_description: data.step_description || data.last_action || data.description,
+          screenshot_url: data.screenshot_url || data.screenshot,
+          live_url: data.live_url || data.liveUrl,
+        };
+      }
     } catch (_) {}
   }
   // Fallback to cloud polling
@@ -158,7 +184,20 @@ async function pollTaskStatus(taskId: string, source: string): Promise<{ status:
     const res = await fetch(`${BU_API_BASE}/tasks/${taskId}`, {
       headers: { "X-Browser-Use-API-Key": buApiKey },
     });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        status: data.status || "unknown",
+        result: data.result || data.output,
+        error: data.error,
+        current_url: data.currentUrl || data.url,
+        current_step: data.completedSteps || data.step,
+        total_steps: data.totalSteps || data.maxSteps,
+        step_description: data.stepDescription || data.lastAction,
+        screenshot_url: data.screenshotUrl,
+        live_url: data.liveUrl,
+      };
+    }
     return { status: "unknown", error: `${res.status}` };
   } catch (e) {
     return { status: "unknown", error: e instanceof Error ? e.message : String(e) };
@@ -651,6 +690,23 @@ async function handleStartOrder(
           }
 
           const status = await pollTaskStatus(taskResult.taskId!, taskResult.source);
+
+          // ── WRITE LIVE PROGRESS TELEMETRY TO ORDER ──
+          const progressNotes = JSON.stringify({
+            missionState: { totalAttempts: mission.totalAttempts, currentSiteIndex: mission.currentSiteIndex },
+            currentTaskId: taskResult.taskId,
+            source: taskResult.source,
+            liveViewUrl: status.live_url || taskResult.liveViewUrl || null,
+            currentSite: siteName,
+            taskStatus: status.status,
+            currentUrl: status.current_url || null,
+            currentStep: status.current_step || null,
+            totalSteps: status.total_steps || null,
+            stepDescription: status.step_description || null,
+            screenshotUrl: status.screenshot_url || null,
+            lastPollAt: new Date().toISOString(),
+          });
+          await supabase.from("auto_shop_orders").update({ notes: progressNotes }).eq("id", orderId);
           
           if (status.status === "completed" || status.status === "finished" || status.status === "done") {
             finalStatus = "completed";
