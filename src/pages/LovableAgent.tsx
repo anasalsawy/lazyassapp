@@ -1227,7 +1227,18 @@ export default function LovableAgent() {
                   </div>
                 )}
 
-                {/* Live call monitor panel */}
+                {/* Live browser panel */}
+                {isLoading && browserLiveState && (
+                  <div className="flex gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
+                      <Bot className="w-4 h-4 text-white" />
+                    </div>
+                    <div className="max-w-[85%] min-w-0 w-full">
+                      <BrowserLivePanel state={browserLiveState} isLive={browserLiveState.status === "running" || browserLiveState.status === "starting"} />
+                    </div>
+                  </div>
+                )}
+
                 {isLoading && currentCallState && (
                   <div className="flex gap-3">
                     <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
