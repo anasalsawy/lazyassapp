@@ -55,9 +55,102 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled;
 }
 
-// Browser Use API configuration
+// Bridge-first execution: self-hosted bridge → Browser Use Cloud fallback
+const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL");
+const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY");
 const BU_API_BASE = "https://api.browser-use.com/api/v2";
 
+// Retry-til-die constants
+const RETRY_SITES = [
+  "https://www.amazon.com",
+  "https://www.walmart.com",
+  "https://www.target.com",
+  "https://www.bestbuy.com",
+  "https://www.ebay.com",
+];
+const MAX_MISSION_RETRIES = 10; // retry across sites until success or exhaustion
+const RETRY_BACKOFF_MS = 5000; // 5s between retries
+
+interface MissionState {
+  attempts: Array<{ site: string; attemptNum: number; outcome: string; error?: string; timestamp: string }>;
+  currentSiteIndex: number;
+  totalAttempts: number;
+  objectiveMet: boolean;
+  winningSite?: string;
+  confirmationNumber?: string;
+}
+
+async function runBridgeTask(task: string, startUrl: string, maxSteps: number, proxy?: { server: string; username?: string; password?: string }): Promise<{ success: boolean; taskId?: string; error?: string; source: string }> {
+  // Try bridge first
+  if (BRIDGE_URL && BRIDGE_API_KEY) {
+    try {
+      console.log(`[AutoShop] Attempting bridge: ${BRIDGE_URL}`);
+      const bridgePayload: Record<string, unknown> = { task, start_url: startUrl, max_steps: maxSteps };
+      if (proxy?.server) {
+        bridgePayload.proxy = { server: proxy.server, username: proxy.username, password: proxy.password };
+      }
+      const res = await fetch(`${BRIDGE_URL}/run-task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": BRIDGE_API_KEY },
+        body: JSON.stringify(bridgePayload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        console.log(`[AutoShop] Bridge task started: ${data.task_id || data.id}`);
+        return { success: true, taskId: data.task_id || data.id, source: "bridge" };
+      }
+      console.warn(`[AutoShop] Bridge returned ${res.status}, falling back to cloud`);
+    } catch (e) {
+      console.warn(`[AutoShop] Bridge unreachable, falling back to cloud:`, e);
+    }
+  }
+
+  // Fallback: Browser Use Cloud
+  const buApiKey = Deno.env.get("BROWSER_USE_API_KEY");
+  if (!buApiKey) return { success: false, error: "No BROWSER_USE_API_KEY configured", source: "none" };
+
+  try {
+    const res = await fetch(`${BU_API_BASE}/tasks`, {
+      method: "POST",
+      headers: { "X-Browser-Use-API-Key": buApiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ task, startUrl, maxSteps }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      return { success: false, error: `Cloud API ${res.status}: ${err}`, source: "cloud" };
+    }
+    const data = await res.json();
+    console.log(`[AutoShop] Cloud task started: ${data.id}`);
+    return { success: true, taskId: data.id, source: "cloud" };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e), source: "cloud" };
+  }
+}
+
+async function pollTaskStatus(taskId: string, source: string): Promise<{ status: string; result?: string; error?: string }> {
+  if (source === "bridge" && BRIDGE_URL && BRIDGE_API_KEY) {
+    try {
+      const res = await fetch(`${BRIDGE_URL}/runs/${taskId}/status`, {
+        headers: { "X-API-Key": BRIDGE_API_KEY },
+      });
+      if (res.ok) return await res.json();
+    } catch (_) {}
+  }
+  // Fallback to cloud polling
+  const buApiKey = Deno.env.get("BROWSER_USE_API_KEY");
+  if (!buApiKey) return { status: "unknown", error: "No API key" };
+  try {
+    const res = await fetch(`${BU_API_BASE}/tasks/${taskId}`, {
+      headers: { "X-Browser-Use-API-Key": buApiKey },
+    });
+    if (res.ok) return await res.json();
+    return { status: "unknown", error: `${res.status}` };
+  } catch (e) {
+    return { status: "unknown", error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// Legacy wrapper for code that still uses browserUseApi
 async function browserUseApi(
   apiKey: string,
   path: string,
