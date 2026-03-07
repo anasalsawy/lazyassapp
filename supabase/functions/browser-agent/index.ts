@@ -199,6 +199,48 @@ Output EXACTLY one JSON object with one of these top-level keys:
 Do not output markdown. Do not output explanations outside JSON.`;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// COMPACT BRIDGE RESULT — truncate before sending to LLM
+// ═══════════════════════════════════════════════════════════════════════════
+function compactBridgeResult(raw: any): any {
+  if (!raw || typeof raw !== "object") return raw;
+  const compact: any = {
+    status: raw.status,
+    current_url: raw.current_url || raw.url || null,
+    page_title: raw.page_title || raw.title || null,
+  };
+  // Truncate page_content to 4000 chars
+  if (raw.page_content) {
+    compact.page_content = raw.page_content.slice(0, 4000);
+  } else if (raw.content) {
+    compact.page_content = raw.content.slice(0, 4000);
+  }
+  // Truncate html
+  if (raw.html) compact.html = raw.html.slice(0, 2000);
+  // Limit array fields
+  if (Array.isArray(raw.extracted)) {
+    compact.extracted = raw.extracted.slice(0, 40);
+  }
+  if (Array.isArray(raw.links)) compact.links = raw.links.slice(0, 40);
+  if (Array.isArray(raw.forms)) compact.forms = raw.forms.slice(0, 30);
+  if (Array.isArray(raw.buttons)) compact.buttons = raw.buttons.slice(0, 30);
+  // Pass action_results through (small)
+  if (raw.action_results) compact.action_results = raw.action_results;
+  return compact;
+}
+
+// Helper: format actions into micro-action detail for browser_steps
+function formatActionsDetail(actions: any[] | null | undefined, actionResults: any[] | null | undefined): any[] {
+  if (!actions || !Array.isArray(actions)) return [];
+  return actions.map((a: any, i: number) => ({
+    action: a.action || "unknown",
+    selector: a.selector || null,
+    value: a.value || null,
+    result_status: actionResults?.[i]?.status || (actionResults?.[i]?.success !== false ? "ok" : "error"),
+    short_result_text: actionResults?.[i]?.detail?.slice(0, 200) || null,
+  }));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // BRIDGE API — calls simple /run-task endpoint (synchronous Playwright)
 // ═══════════════════════════════════════════════════════════════════════════
 
