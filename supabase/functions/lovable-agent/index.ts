@@ -1458,6 +1458,13 @@ async function buildUserContext(userId: string): Promise<string> {
   return contextParts.join("\n");
 }
 
+function isYesNoStylePrompt(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  if (/\b(yes\s*or\s*no|y\/n|true\s*or\s*false)\b/.test(normalized)) return true;
+  return normalized.length <= 90 && /^(is|are|am|do|does|did|can|could|should|would|will|was|were|have|has|had)\b/.test(normalized);
+}
+
 // ── Server ──────────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -1559,6 +1566,12 @@ serve(async (req) => {
     const contextMessage = userContext
       ? `\n\n## Current User Context (Auto-Loaded)\n${userContext}\n\nUse this context to make informed decisions. When the user asks to optimize their resume, you already know the resume ID. When they ask to search for jobs, you already know their preferences.`
       : "";
+
+    const latestUserText = [...(messages || [])]
+      .reverse()
+      .find((m: any) => m?.role === "user" && typeof m?.content === "string")
+      ?.content ?? "";
+    const finalResponseMaxTokens = isYesNoStylePrompt(latestUserText) ? 24 : 180;
 
     const apiMessages = [
       { role: "system", content: `${SYSTEM_PROMPT}\n\n${RESPONSE_STYLE_GUARDRAIL}${contextMessage}` },
@@ -1850,6 +1863,7 @@ serve(async (req) => {
             },
             body: JSON.stringify({
               model: "google/gemini-3-flash-preview",
+              max_tokens: finalResponseMaxTokens,
               messages: [
                 ...apiMessages,
                 ...(finalContent ? [{ role: "assistant", content: finalContent }] : []),
