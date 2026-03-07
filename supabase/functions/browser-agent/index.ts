@@ -146,6 +146,14 @@ GUIDELINES:
 - Use "selector" to extract specific data (e.g., ".job-listing h2" for job titles)
 - When unsure of page structure, first do a task with just the URL (no actions) to see the content
 - Analyze returned content to find CSS selectors for the next task
+- Keep actions ATOMIC and explicit. Prefer many small actions over one vague action.
+- For shopping goals ("buy", "add to cart", "checkout"), sequence should be:
+  1) search product
+  2) open product page
+  3) set quantity/options
+  4) click add-to-cart
+  5) open cart and verify item exists
+- Every action should include selector when possible.
 
 You must:
 - Track which PHASE you're in and which SITE within that phase
@@ -350,6 +358,43 @@ async function fetchInjections(supabase: any, runId: string): Promise<string[]> 
   return injections;
 }
 
+type ControlCommand = "pause" | "resume" | "stop" | "approve";
+
+async function fetchControlCommands(
+  supabase: any,
+  runId: string,
+): Promise<Array<{ id: string; command: ControlCommand; note?: string }>> {
+  const { data: tasks } = await supabase
+    .from("agent_tasks")
+    .select("id, payload")
+    .eq("task_type", "browser_control")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+
+  if (!tasks || tasks.length === 0) return [];
+
+  const commands: Array<{ id: string; command: ControlCommand; note?: string }> = [];
+  const idsToMark: string[] = [];
+
+  for (const task of tasks) {
+    const payload = task.payload as any;
+    if (payload?.run_id !== runId) continue;
+    const command = String(payload?.command || "").toLowerCase() as ControlCommand;
+    if (!["pause", "resume", "stop", "approve"].includes(command)) continue;
+    commands.push({ id: task.id, command, note: payload?.note || payload?.message || undefined });
+    idsToMark.push(task.id);
+  }
+
+  if (idsToMark.length > 0) {
+    await supabase
+      .from("agent_tasks")
+      .update({ status: "completed", completed_at: new Date().toISOString() })
+      .in("id", idsToMark);
+  }
+
+  return commands;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN 2-AGENT LOOP: Researcher → Planner → (Playwright Bridge)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -374,6 +419,7 @@ async function runTwoAgentLoop(
 ): Promise<any> {
   const maxSteps = 30;
   let stepCount = 0;
+  let paused = false;
   const runId = crypto.randomUUID();
   const milestones: string[] = [];
   const phasesCompleted: string[] = [];
@@ -445,6 +491,68 @@ async function runTwoAgentLoop(
 
     // ── 4. MAIN PLANNER → BRIDGE LOOP ────────────────────────────────
     while (stepCount < maxSteps) {
+      const controlCommands = await fetchControlCommands(supabase, runId);
+      for (const cmd of controlCommands) {
+        if (cmd.command === "stop") {
+          await log("warn", `Operator stop requested${cmd.note ? `: ${cmd.note}` : ""}`);
+          return {
+            success: false,
+            error: "Stopped by operator",
+            stopped: true,
+            stepsUsed: stepCount,
+            milestones,
+            phasesCompleted,
+          };
+        }
+        if (cmd.command === "pause") {
+          paused = true;
+          await log("warn", `Operator pause requested${cmd.note ? `: ${cmd.note}` : ""}`);
+        }
+        if (cmd.command === "resume") {
+          paused = false;
+          await log("info", `Operator resume requested${cmd.note ? `: ${cmd.note}` : ""}`);
+        }
+        if (cmd.command === "approve") {
+          await log("info", `Operator approved next risky step${cmd.note ? `: ${cmd.note}` : ""}`);
+        }
+      }
+
+      while (paused) {
+        await supabase.from("agent_runs").update({
+          summary_json: {
+            architecture: "researcher-planner-playwright",
+            steps_taken: stepCount,
+            current_phase: researcherRoute.phases?.[currentPhaseIndex]?.phase_name || null,
+            phases_completed: phasesCompleted,
+            milestones,
+            paused: true,
+          },
+        }).eq("id", runId).then(() => {}, () => {});
+
+        await new Promise((r) => setTimeout(r, 2000));
+        const resumeCommands = await fetchControlCommands(supabase, runId);
+        for (const cmd of resumeCommands) {
+          if (cmd.command === "stop") {
+            await log("warn", `Operator stop requested while paused${cmd.note ? `: ${cmd.note}` : ""}`);
+            return {
+              success: false,
+              error: "Stopped by operator",
+              stopped: true,
+              stepsUsed: stepCount,
+              milestones,
+              phasesCompleted,
+            };
+          }
+          if (cmd.command === "resume") {
+            paused = false;
+            await log("info", "Operator resumed run");
+          }
+          if (cmd.command === "pause") {
+            paused = true;
+          }
+        }
+      }
+
       stepCount++;
       const turnId = `turn_${stepCount}`;
       const stepStartedAt = Date.now();
@@ -644,6 +752,24 @@ async function runTwoAgentLoop(
           has_extracted: !!lastExecutionResult.extracted,
         });
 
+        const actionResults = Array.isArray(bridgeResult.action_results) ? bridgeResult.action_results : [];
+        for (let i = 0; i < actionResults.length; i++) {
+          const actionItem = actionResults[i] || {};
+          const actionName = String(actionItem.action || "action");
+          const selector = actionItem.selector ? ` ${String(actionItem.selector).slice(0, 120)}` : "";
+          const value = actionItem.value ? ` "${String(actionItem.value).slice(0, 60)}"` : "";
+          const status = String(actionItem.status || "ok");
+          await log("info", `Step ${stepCount}.${i + 1}: ${actionName}${selector}${value} -> ${status}`, {
+            run_id: runId,
+            step_number: stepCount,
+            action_index: i + 1,
+            action: actionName,
+            selector: actionItem.selector || null,
+            status,
+            detail: actionItem.detail || null,
+          });
+        }
+
         // ── PERSIST STEP TO browser_steps ──────────────────────────
         await supabase.from("browser_steps").insert({
           run_id: runId, user_id: userId, step_number: stepCount,
@@ -657,7 +783,7 @@ async function runTwoAgentLoop(
           final_url: lastExecutionResult.current_url,
           page_title: lastExecutionResult.page_title,
           page_content_preview: (lastExecutionResult.page_content || "").slice(0, 2000),
-          action_results: bridgeResult.action_results || [],
+          action_results: actionResults,
           extracted_data: bridgeResult.extracted ? { items: bridgeResult.extracted } : null,
           error_message: lastExecutionResult.status === "failed" ? "Bridge returned failure" : null,
           planner_decision_type: "BROWSER_TASK",
@@ -719,6 +845,7 @@ async function runTwoAgentLoop(
           milestones,
           last_url: urlStack[urlStack.length - 1] || null,
           last_status: lastExecutionResult.status,
+          paused: false,
         },
       }).eq("id", runId).then(() => {}, () => {});
     }
@@ -902,6 +1029,44 @@ serve(async (req) => {
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      // ── CONTROL — pause/resume/stop/approve a live run ────────
+      case "control": {
+        const runId = body.run_id;
+        const command = String(body.command || "").toLowerCase();
+        const note = body.note || body.message || null;
+
+        if (!runId) {
+          return new Response(JSON.stringify({ error: "run_id is required" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (!["pause", "resume", "stop", "approve"].includes(command)) {
+          return new Response(JSON.stringify({ error: "command must be pause|resume|stop|approve" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const { data: task, error: taskErr } = await supabase.from("agent_tasks").insert({
+          user_id: userId,
+          task_type: "browser_control",
+          status: "pending",
+          payload: {
+            run_id: runId,
+            command,
+            note,
+            requested_at: new Date().toISOString(),
+          },
+        }).select().single();
+
+        if (taskErr) throw taskErr;
+
+        return new Response(JSON.stringify({
+          success: true,
+          control_id: task?.id,
+          message: `Control command queued: ${command}`,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       // ── STATUS ─────────────────────────────────────────────────
       case "status": {
         const runId = body.run_id;
@@ -919,9 +1084,16 @@ serve(async (req) => {
           .order("created_at", { ascending: false })
           .limit(20);
 
+        const { data: steps } = await supabase.from("browser_steps")
+          .select("step_number, phase_name, url, final_url, result_status, actions, action_results, created_at")
+          .eq("run_id", runId)
+          .order("step_number", { ascending: false })
+          .limit(25);
+
         return new Response(JSON.stringify({
           run,
           recentLogs: logs || [],
+          recentSteps: steps || [],
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
