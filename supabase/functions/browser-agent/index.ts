@@ -513,10 +513,10 @@ async function runTwoAgentLoop(
     }
 
     // Synthetic initial result for the Planner
-    let lastExecutionResult: any = {
+    let lastExecutionResult: any = compactBridgeResult({
       status: "success",
       commands_executed: 0,
-      result: initialPageContent.slice(0, 6000) || "Ready to start — no initial page loaded yet.",
+      page_content: initialPageContent || "Ready to start — no initial page loaded yet.",
       current_url: startUrl || null,
     };
 
@@ -594,7 +594,7 @@ async function runTwoAgentLoop(
           TASK_SPEC: taskSpec,
           RESEARCHER_ROUTE: researcherRoute,
           CURRENT_PHASE: currentPhase,
-          EXECUTION_RESULT: lastExecutionResult,
+          EXECUTION_RESULT: compactBridgeResult(lastExecutionResult),
           HUMAN_INJECTIONS: newInjections.length > 0 ? newInjections : undefined,
           RUN_STATE: {
             run_id: runId,
@@ -755,7 +755,8 @@ async function runTwoAgentLoop(
           browserTask.selector,
         );
 
-        lastExecutionResult = {
+        // Build full result for DB, compact for LLM
+        const fullBridgeResult = {
           status: bridgeResult.status === "success" ? "success" : "failed",
           current_url: bridgeResult.url || browserTask.url,
           page_title: bridgeResult.title || null,
@@ -763,30 +764,40 @@ async function runTwoAgentLoop(
           extracted: bridgeResult.extracted || null,
           action_results: bridgeResult.action_results || null,
         };
+        // LLM only sees compact version
+        lastExecutionResult = compactBridgeResult(fullBridgeResult);
 
-        await log("info", `Bridge → ${lastExecutionResult.status}`, {
-          url: lastExecutionResult.current_url,
-          title: lastExecutionResult.page_title,
-          content_length: (lastExecutionResult.page_content || "").length,
-          has_extracted: !!lastExecutionResult.extracted,
+        // Log each micro-action in order
+        const microActions = formatActionsDetail(browserTask.actions, bridgeResult.action_results);
+        for (const ma of microActions) {
+          await log("info", `  ↳ ${ma.action}${ma.selector ? ` → ${ma.selector}` : ""}${ma.value ? ` = "${ma.value}"` : ""} [${ma.result_status}]`, {
+            action: ma.action, selector: ma.selector, value: ma.value, result: ma.result_status,
+          });
+        }
+
+        await log("info", `Bridge → ${fullBridgeResult.status}`, {
+          url: fullBridgeResult.current_url,
+          title: fullBridgeResult.page_title,
+          content_length: (fullBridgeResult.page_content || "").length,
+          has_extracted: !!fullBridgeResult.extracted,
         });
 
-        // ── PERSIST STEP TO browser_steps ──────────────────────────
+        // ── PERSIST STEP TO browser_steps (with micro-action detail) ──
         await supabase.from("browser_steps").insert({
           run_id: runId, user_id: userId, step_number: stepCount,
           phase_name: currentPhase?.phase_name, phase_id: currentPhase?.phase_id,
           url: browserTask.url,
-          actions: browserTask.actions || [],
+          actions: microActions.length > 0 ? microActions : (browserTask.actions || []),
           selector: browserTask.selector || null,
           expected_outcome: browserTask.expected_outcome || null,
           risk_level: browserTask.risk_level || "low",
-          result_status: lastExecutionResult.status,
-          final_url: lastExecutionResult.current_url,
-          page_title: lastExecutionResult.page_title,
-          page_content_preview: (lastExecutionResult.page_content || "").slice(0, 2000),
-          action_results: bridgeResult.action_results || [],
+          result_status: fullBridgeResult.status,
+          final_url: fullBridgeResult.current_url,
+          page_title: fullBridgeResult.page_title,
+          page_content_preview: (fullBridgeResult.page_content || "").slice(0, 2000),
+          action_results: microActions.length > 0 ? microActions : (bridgeResult.action_results || []),
           extracted_data: bridgeResult.extracted ? { items: bridgeResult.extracted } : null,
-          error_message: lastExecutionResult.status === "failed" ? "Bridge returned failure" : null,
+          error_message: fullBridgeResult.status === "failed" ? "Bridge returned failure" : null,
           planner_decision_type: "BROWSER_TASK",
           started_at: new Date(bridgeStartedAt).toISOString(),
           completed_at: new Date().toISOString(),
