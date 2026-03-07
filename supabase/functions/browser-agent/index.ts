@@ -351,6 +351,40 @@ async function fetchInjections(supabase: any, runId: string): Promise<string[]> 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// FETCH CONTROL COMMANDS (pause / resume / stop / approve)
+// ═══════════════════════════════════════════════════════════════════════════
+async function fetchControlCommands(supabase: any, runId: string): Promise<string[]> {
+  const { data: tasks } = await supabase
+    .from("agent_tasks")
+    .select("id, payload")
+    .eq("task_type", "browser_control")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+
+  if (!tasks || tasks.length === 0) return [];
+
+  const commands: string[] = [];
+  const idsToMark: string[] = [];
+
+  for (const task of tasks) {
+    const payload = task.payload as any;
+    if (payload?.run_id === runId) {
+      commands.push(payload.command || "unknown");
+      idsToMark.push(task.id);
+    }
+  }
+
+  if (idsToMark.length > 0) {
+    await supabase
+      .from("agent_tasks")
+      .update({ status: "completed", completed_at: new Date().toISOString() })
+      .in("id", idsToMark);
+  }
+
+  return commands;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN 2-AGENT LOOP: Researcher → Planner → (Playwright Bridge)
 // ═══════════════════════════════════════════════════════════════════════════
 interface TaskSpec {
