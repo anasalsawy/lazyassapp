@@ -407,9 +407,22 @@ function CallMonitorPanel({ callState, isLive }: { callState: CallState; isLive:
 }
 
 // ── Browser Live Panel Component ────────────────────────────────────────────
-function BrowserLivePanel({ state, isLive }: { state: BrowserLiveState; isLive: boolean }) {
+function BrowserLivePanel({
+  state,
+  isLive,
+  isCommandBusy,
+  onControl,
+  onInject,
+}: {
+  state: BrowserLiveState;
+  isLive: boolean;
+  isCommandBusy: boolean;
+  onControl: (command: "pause" | "resume" | "stop" | "approve") => void;
+  onInject: (instruction: string) => void;
+}) {
   const [collapsed, setCollapsed] = useState(false);
   const [imgKey, setImgKey] = useState(0);
+  const [liveInstruction, setLiveInstruction] = useState("");
 
   // Auto-refresh screenshot key when URL changes
   useEffect(() => {
@@ -481,6 +494,37 @@ function BrowserLivePanel({ state, isLive }: { state: BrowserLiveState; isLive: 
                   <span className="break-words">{String(a.action)}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Operator controls */}
+          {(state.status === "running" || state.status === "starting") && (
+            <div className="px-3 py-2 border-t border-border/30 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button size="sm" variant="secondary" disabled={isCommandBusy} onClick={() => onControl("pause")}>Pause</Button>
+                <Button size="sm" variant="secondary" disabled={isCommandBusy} onClick={() => onControl("resume")}>Resume</Button>
+                <Button size="sm" variant="outline" disabled={isCommandBusy} onClick={() => onControl("approve")}>Approve Next Risky Step</Button>
+                <Button size="sm" variant="destructive" disabled={isCommandBusy} onClick={() => onControl("stop")}>Stop</Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Textarea
+                  value={liveInstruction}
+                  onChange={(e) => setLiveInstruction(e.target.value)}
+                  placeholder="Live direction: e.g. Skip LinkedIn and switch to Indeed, remote only, max salary filter..."
+                  className="min-h-[56px]"
+                />
+                <Button
+                  disabled={isCommandBusy || !liveInstruction.trim()}
+                  onClick={() => {
+                    const next = liveInstruction.trim();
+                    if (!next) return;
+                    onInject(next);
+                    setLiveInstruction("");
+                  }}
+                >
+                  Send Direction
+                </Button>
+              </div>
             </div>
           )}
 
@@ -626,6 +670,7 @@ export default function LovableAgent() {
   const browserLiveRef = useRef<BrowserLiveState | null>(null);
   const browserPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const browserUrlsRef = useRef<{ statusUrl: string; screenshotUrl: string } | null>(null);
+  const [browserCommandBusy, setBrowserCommandBusy] = useState(false);
   const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call" | "browsing">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -1159,6 +1204,81 @@ export default function LovableAgent() {
     }
   }, []);
 
+  const sendBrowserControl = useCallback(async (command: "pause" | "resume" | "stop" | "approve") => {
+    if (!session?.access_token || !browserLiveRef.current?.runId) return;
+    try {
+      setBrowserCommandBusy(true);
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/browser-agent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+        body: JSON.stringify({
+          action: "control",
+          run_id: browserLiveRef.current.runId,
+          command,
+        }),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data?.error) {
+        throw new Error(data?.error || `control failed (${resp.status})`);
+      }
+
+      setMessages(prev => [
+        ...prev,
+        { role: "assistant", content: `🕹️ Control sent: **${command.toUpperCase()}**` },
+      ]);
+    } catch (err: any) {
+      setMessages(prev => [
+        ...prev,
+        { role: "assistant", content: `⚠️ Failed to send control command: ${err?.message || "Unknown error"}` },
+      ]);
+    } finally {
+      setBrowserCommandBusy(false);
+    }
+  }, [session?.access_token]);
+
+  const injectBrowserDirection = useCallback(async (instruction: string) => {
+    if (!session?.access_token || !browserLiveRef.current?.runId || !instruction.trim()) return;
+    try {
+      setBrowserCommandBusy(true);
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/browser-agent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+        body: JSON.stringify({
+          action: "inject",
+          run_id: browserLiveRef.current.runId,
+          target: "browser_agent",
+          instruction: instruction.trim(),
+        }),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data?.error) {
+        throw new Error(data?.error || `inject failed (${resp.status})`);
+      }
+
+      setMessages(prev => [
+        ...prev,
+        { role: "user", content: `Live direction: ${instruction.trim()}` },
+      ]);
+    } catch (err: any) {
+      setMessages(prev => [
+        ...prev,
+        { role: "assistant", content: `⚠️ Failed to send live direction: ${err?.message || "Unknown error"}` },
+      ]);
+    } finally {
+      setBrowserCommandBusy(false);
+    }
+  }, [session?.access_token]);
+
   // ── Secret Submission ─────────────────────────────────────────────────────
   const submitSecret = useCallback(async (secretName: string, secretValue: string) => {
     if (!session?.access_token) return;
@@ -1358,7 +1478,13 @@ export default function LovableAgent() {
                       <Bot className="w-4 h-4 text-white" />
                     </div>
                     <div className="max-w-[85%] min-w-0 w-full">
-                      <BrowserLivePanel state={browserLiveState} isLive={browserLiveState.status === "running" || browserLiveState.status === "starting"} />
+                      <BrowserLivePanel
+                        state={browserLiveState}
+                        isLive={browserLiveState.status === "running" || browserLiveState.status === "starting"}
+                        isCommandBusy={browserCommandBusy}
+                        onControl={sendBrowserControl}
+                        onInject={injectBrowserDirection}
+                      />
                       {!isLoading && (browserLiveState.status === "running" || browserLiveState.status === "starting") && (
                         <div className="flex items-center gap-2 mt-1.5 px-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
