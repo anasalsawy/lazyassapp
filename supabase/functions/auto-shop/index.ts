@@ -400,7 +400,6 @@ async function handleStartOrder(
   supabase: any,
   user: { id: string; email?: string },
   payload: AutoShopPayload,
-  buApiKey: string,
   lovableApiKey: string,
   supabaseUrl: string,
   supabaseServiceKey: string
