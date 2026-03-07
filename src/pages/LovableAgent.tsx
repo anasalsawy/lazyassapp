@@ -475,10 +475,10 @@ function BrowserLivePanel({ state, isLive }: { state: BrowserLiveState; isLive: 
           {/* Action history */}
           {state.actionHistory.length > 0 && (
             <div className="px-3 py-2 border-t border-border/30 space-y-1">
-              {state.actionHistory.map((a, i) => (
+              {state.actionHistory.slice(-20).map((a, i) => (
                 <div key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground">
                   <span className="shrink-0 font-mono text-muted-foreground/50">#{a.step}</span>
-                  <span className="truncate">{String(a.action).slice(0, 120)}</span>
+                  <span className="break-words">{String(a.action)}</span>
                 </div>
               ))}
             </div>
@@ -488,7 +488,7 @@ function BrowserLivePanel({ state, isLive }: { state: BrowserLiveState; isLive: 
           {!state.screenshotUrl && (state.status === "starting" || state.status === "running") && (
             <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground border-t border-border/30">
               <Loader2 className="w-4 h-4 animate-spin text-primary" />
-              <span>Waiting for browser to start...</span>
+              <span>{state.step > 0 ? `Executing browser actions (step ${state.step})...` : "Waiting for browser to start..."}</span>
             </div>
           )}
 
@@ -605,6 +605,7 @@ function LovableMessageContent({ content, role }: { content: string; role: "user
 // ── Suggestions ─────────────────────────────────────────────────────────────
 const SUGGESTIONS = [
   { icon: Sparkles, text: "Run the full mission and complete each section", color: "text-emerald-400" },
+  { icon: Search, text: "Find a product and add it to cart with click-by-click updates", color: "text-cyan-400" },
   { icon: Code2, text: "Optimize my resume for more interviews", color: "text-rose-400" },
   { icon: Search, text: "Find jobs matching my preferences", color: "text-sky-400" },
   { icon: FileText, text: "Check my application status", color: "text-amber-400" },

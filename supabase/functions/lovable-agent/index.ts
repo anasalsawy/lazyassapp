@@ -1286,6 +1286,8 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
 
         // Poll agent_runs for completion (up to 4 minutes)
         if (runId) {
+          let lastReportedStep = 0;
+          let lastReportedActionCount = 0;
           for (let attempt = 0; attempt < 60; attempt++) {
             await new Promise(r => setTimeout(r, 4000));
             const { data: run } = await supabaseAdmin.from("agent_runs")
@@ -1293,12 +1295,67 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
 
             if (!run) continue;
 
-            if (_sendEventFn && (attempt % 3 === 0)) {
+            const { data: latestStep } = await supabaseAdmin
+              .from("browser_steps")
+              .select("step_number, final_url, action_results, actions, result_status")
+              .eq("run_id", runId)
+              .order("step_number", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            const stepNumber = latestStep?.step_number || lastReportedStep || 0;
+            const currentUrl = latestStep?.final_url || null;
+            const rawActionResults = Array.isArray(latestStep?.action_results) ? latestStep.action_results : [];
+            const rawActions = Array.isArray(latestStep?.actions) ? latestStep.actions : [];
+
+            let actionHistory = (rawActionResults.length > 0 ? rawActionResults : rawActions).map((a: any, idx: number) => {
+              const action = String(a?.action || "action");
+              const selector = a?.selector ? ` ${String(a.selector).slice(0, 80)}` : "";
+              const value = a?.value ? ` "${String(a.value).slice(0, 40)}"` : "";
+              const status = a?.status ? ` -> ${String(a.status)}` : "";
+              return {
+                step: stepNumber,
+                action: `${idx + 1}. ${action}${selector}${value}${status}`,
+              };
+            });
+
+            // Fallback: show latest browser-agent log lines when step action telemetry isn't present yet.
+            if (actionHistory.length === 0) {
+              const { data: recentLogs } = await supabaseAdmin
+                .from("agent_logs")
+                .select("message, metadata")
+                .eq("user_id", _currentUserId)
+                .eq("agent_name", "browser_agent")
+                .order("created_at", { ascending: false })
+                .limit(8);
+
+              const runLogs = (recentLogs || []).filter((l: any) => l?.metadata?.runId === runId);
+              actionHistory = runLogs
+                .slice(0, 4)
+                .reverse()
+                .map((l: any, idx: number) => ({
+                  step: stepNumber,
+                  action: `${idx + 1}. ${String(l.message || "waiting for browser step")}`,
+                }));
+            }
+
+            const shouldEmitProgress =
+              !!_sendEventFn && (
+                stepNumber !== lastReportedStep ||
+                actionHistory.length !== lastReportedActionCount ||
+                attempt % 3 === 0
+              );
+
+            if (shouldEmitProgress && _sendEventFn) {
               _sendEventFn("browser_progress", {
                 runId,
                 status: run.status,
-                step: attempt + 1,
+                step: stepNumber,
+                currentUrl,
+                actionHistory,
               });
+              lastReportedStep = stepNumber;
+              lastReportedActionCount = actionHistory.length;
             }
 
             if (run.status === "completed") {
