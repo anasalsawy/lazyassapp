@@ -494,6 +494,44 @@ async function runTwoAgentLoop(
         await log("info", `📡 Human injection received: ${newInjections.length}`, { injections: newInjections });
       }
 
+      // ── CHECK CONTROL COMMANDS (pause/resume/stop/approve) ─────
+      const controlCmds = await fetchControlCommands(supabase, runId);
+      for (const cmd of controlCmds) {
+        if (cmd === "stop") {
+          await log("info", "🛑 Operator sent STOP command");
+          await supabase.from("agent_runs").update({
+            status: "failed", ended_at: new Date().toISOString(),
+            error_message: "Stopped by operator",
+          }).eq("id", runId);
+          return { success: false, error: "Stopped by operator", stepsUsed: stepCount, milestones };
+        }
+        if (cmd === "pause") {
+          await log("info", "⏸️ Operator sent PAUSE command");
+          await supabase.from("agent_runs").update({ status: "paused" }).eq("id", runId);
+          // Wait loop: poll every 3s for resume/stop
+          let paused = true;
+          while (paused) {
+            await new Promise(r => setTimeout(r, 3000));
+            const resumeCmds = await fetchControlCommands(supabase, runId);
+            for (const rc of resumeCmds) {
+              if (rc === "resume") { paused = false; await log("info", "▶️ Operator sent RESUME command"); }
+              if (rc === "stop") {
+                await log("info", "🛑 Operator sent STOP while paused");
+                await supabase.from("agent_runs").update({
+                  status: "failed", ended_at: new Date().toISOString(),
+                  error_message: "Stopped by operator",
+                }).eq("id", runId);
+                return { success: false, error: "Stopped by operator", stepsUsed: stepCount, milestones };
+              }
+            }
+          }
+          await supabase.from("agent_runs").update({ status: "running" }).eq("id", runId);
+        }
+        if (cmd === "approve") {
+          await log("info", "✅ Operator approved — continuing");
+        }
+      }
+
       // ── PLANNER: decide next command batch ──────────────────────
       const currentPhase = researcherRoute.phases[currentPhaseIndex] || null;
       plannerHistory.push({
