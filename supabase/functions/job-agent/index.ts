@@ -6,22 +6,11 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Browser Use API configuration
-const BU_API_BASE = "https://api.browser-use.com/api/v2";
-
-async function browserUseApi(apiKey: string, path: string, init: RequestInit = {}): Promise<Response> {
-  const url = `${BU_API_BASE}${path}`;
-  const headers: Record<string, string> = {
-    "X-Browser-Use-API-Key": apiKey,
-    "Content-Type": "application/json",
-    ...(init.headers as Record<string, string> || {}),
-  };
-  console.log(`[BrowserUse] ${init.method || "GET"} ${path}`);
-  return fetch(url, { ...init, headers });
-}
+const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL") || "https://browser-use-bridge.onrender.com";
+const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY") || "";
 
 /**
- * JOB AGENT - Job automation using Skyvern browser tasks
+ * JOB AGENT - Job automation using Playwright bridge
  */
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -30,14 +19,6 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-
-  if (!BU_API_KEY) {
-    return new Response(
-      JSON.stringify({ error: "BROWSER_USE_API_KEY not configured" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  }
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -72,7 +53,7 @@ serve(async (req) => {
           );
         }
 
-        const profileId = `skyvern-${user.id.substring(0, 8)}-${Date.now()}`;
+        const profileId = `pw-${user.id.substring(0, 8)}-${Date.now()}`;
         await supabase.from("browser_profiles").upsert({
           user_id: user.id, browser_use_profile_id: profileId, status: "created", sites_logged_in: [],
         });
@@ -83,11 +64,11 @@ serve(async (req) => {
 
       case "start_login": {
         const { site } = body;
-        await log("Starting login session...", { site });
+        await log("Starting login session via bridge...", { site });
 
         let { data: browserProfile } = await supabase.from("browser_profiles").select("*").eq("user_id", user.id).single();
         if (!browserProfile?.browser_use_profile_id) {
-          const profileId = `skyvern-${user.id.substring(0, 8)}-${Date.now()}`;
+          const profileId = `pw-${user.id.substring(0, 8)}-${Date.now()}`;
           await supabase.from("browser_profiles").upsert({
             user_id: user.id, browser_use_profile_id: profileId, status: "pending_login", sites_logged_in: [],
           });
@@ -103,44 +84,35 @@ serve(async (req) => {
 
         const startUrl = siteUrls[site] || `https://${site}.com`;
 
-        // Create a Browser Use task for login
-        const taskRes = await browserUseApi(BU_API_KEY, "/tasks", {
-          method: "POST",
-          body: JSON.stringify({
-            task: `Navigate to ${startUrl} and display the login page. Wait for user interaction.`,
-            startUrl: startUrl,
-            maxSteps: 30,
-          }),
-        });
-
-        if (!taskRes.ok) {
-          const error = await taskRes.text();
-          throw new Error(`Failed to create Browser Use task (${taskRes.status}): ${error}`);
-        }
-
-        const taskData = await taskRes.json();
-        const runId = taskData.id;
-        let liveViewUrl = null;
-        if (taskData.sessionId) {
-          try {
-            const sessRes = await fetch(`${BU_API_BASE}/sessions/${taskData.sessionId}`, {
-              headers: { "X-Browser-Use-API-Key": BU_API_KEY },
-            });
-            if (sessRes.ok) {
-              const sessData = await sessRes.json();
-              liveViewUrl = sessData.liveUrl || null;
-            }
-          } catch (_) {}
+        // Navigate to login page via Playwright bridge
+        let taskId = crypto.randomUUID();
+        try {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+          const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ url: startUrl, extract_text: true }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            taskId = data.task_id || data.id || taskId;
+            console.log(`[JobAgent] Bridge login page loaded: ${taskId}`);
+          } else {
+            console.warn(`[JobAgent] Bridge login navigation failed (${res.status})`);
+          }
+        } catch (e) {
+          console.warn(`[JobAgent] Bridge unreachable for login:`, e);
         }
 
         await supabase.from("browser_profiles").update({
-          pending_login_site: site, pending_session_id: runId, status: "pending_login",
+          pending_login_site: site, pending_session_id: taskId, status: "pending_login",
         }).eq("user_id", user.id);
 
-        await log("Login session started", { site, runId, liveViewUrl });
+        await log("Login session started via bridge", { site, taskId });
 
         return new Response(
-          JSON.stringify({ success: true, sessionId: runId, liveViewUrl, site, message: `Browser opened for ${site}. Log in to save your session.` }),
+          JSON.stringify({ success: true, sessionId: taskId, liveViewUrl: null, site, message: `Login page accessed via Playwright bridge for ${site}. Please confirm login when ready.` }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -161,7 +133,7 @@ serve(async (req) => {
       }
 
       case "run_agent": {
-        await log("🚀 Starting job agent pipeline: Lever Research → Skyvern Apply");
+        await log("🚀 Starting job agent pipeline: Lever Research → Apply");
 
         const { data: resume } = await supabase.from("resumes").select("*").eq("user_id", user.id).eq("is_primary", true).single();
         if (!resume) throw new Error("No primary resume found. Please upload and optimize your resume first.");

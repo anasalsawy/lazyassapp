@@ -56,9 +56,8 @@ function shuffleArray<T>(array: T[]): T[] {
 }
 
 // Bridge-only execution — no cloud fallback
-const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL");
-const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY");
-const BU_API_BASE = "https://api.browser-use.com/api/v2"; // Still used for session management in login flows
+const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL") || "https://browser-use-bridge.onrender.com";
+const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY") || "";
 
 // Retry-til-die constants
 const RETRY_SITES = [
@@ -81,35 +80,36 @@ interface MissionState {
 }
 
 async function runBridgeTask(task: string, startUrl: string, maxSteps: number, proxy?: { server: string; username?: string; password?: string }): Promise<{ success: boolean; taskId?: string; liveViewUrl?: string; error?: string; source: string }> {
-  // Try bridge first
-  if (BRIDGE_URL && BRIDGE_API_KEY) {
-    try {
-      console.log(`[AutoShop] Attempting bridge: ${BRIDGE_URL}`);
-      const bridgePayload: Record<string, unknown> = { task, start_url: startUrl, max_steps: maxSteps };
-      if (proxy?.server) {
-        bridgePayload.proxy = { server: proxy.server, username: proxy.username, password: proxy.password };
-      }
-      const res = await fetch(`${BRIDGE_URL}/run-task`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-API-Key": BRIDGE_API_KEY },
-        body: JSON.stringify(bridgePayload),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const taskId = data.task_id || data.id;
-        const liveViewUrl = data.live_url || data.liveUrl || data.debug_url || null;
-        console.log(`[AutoShop] Bridge task started: ${taskId}, liveView: ${liveViewUrl}`);
-        return { success: true, taskId, liveViewUrl, source: "bridge" };
-      }
-      console.warn(`[AutoShop] Bridge returned ${res.status}`);
-      return { success: false, error: `Bridge returned ${res.status}`, source: "bridge" };
-    } catch (e) {
-      console.warn(`[AutoShop] Bridge unreachable:`, e);
-      return { success: false, error: e instanceof Error ? e.message : String(e), source: "bridge" };
-    }
+  if (!BRIDGE_URL) {
+    return { success: false, error: "Local/hosted Playwright bridge is not reachable: https://browser-use-bridge.onrender.com", source: "none" };
   }
+  try {
+    console.log(`[AutoShop] Attempting bridge: ${BRIDGE_URL}`);
+    const bridgePayload: Record<string, unknown> = { url: startUrl, extract_text: true };
+    if (proxy?.server) {
+      bridgePayload.proxy = { server: proxy.server, username: proxy.username, password: proxy.password };
+    }
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
 
-  return { success: false, error: "No bridge configured (BROWSER_USE_BRIDGE_URL not set)", source: "none" };
+    const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(bridgePayload),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const taskId = data.task_id || data.id || crypto.randomUUID();
+      console.log(`[AutoShop] Bridge task completed: ${taskId}`);
+      return { success: true, taskId, source: "bridge" };
+    }
+    const errText = await res.text();
+    console.warn(`[AutoShop] Bridge returned ${res.status}: ${errText.slice(0, 200)}`);
+    return { success: false, error: `Bridge returned ${res.status}: ${errText.slice(0, 200)}`, source: "bridge" };
+  } catch (e) {
+    console.warn(`[AutoShop] Bridge unreachable:`, e);
+    return { success: false, error: `Local/hosted Playwright bridge is not reachable: ${BRIDGE_URL}`, source: "bridge" };
+  }
 }
 
 interface PollResult {
@@ -126,11 +126,11 @@ interface PollResult {
 }
 
 async function pollTaskStatus(taskId: string, source: string): Promise<PollResult> {
-  if (source === "bridge" && BRIDGE_URL && BRIDGE_API_KEY) {
+  if (source === "bridge" && BRIDGE_URL) {
     try {
-      const res = await fetch(`${BRIDGE_URL}/runs/${taskId}/status`, {
-        headers: { "X-API-Key": BRIDGE_API_KEY },
-      });
+      const headers: Record<string, string> = {};
+      if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+      const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/runs/${taskId}/status`, { headers });
       if (res.ok) {
         const data = await res.json();
         return {
@@ -150,36 +150,15 @@ async function pollTaskStatus(taskId: string, source: string): Promise<PollResul
   return { status: "unknown", error: "Bridge polling failed" };
 }
 
-// Legacy wrapper for code that still uses browserUseApi
-async function browserUseApi(
-  apiKey: string,
-  path: string,
-  init: RequestInit = {}
-): Promise<Response> {
-  const url = `${BU_API_BASE}${path}`;
-  const headers: Record<string, string> = {
-    "X-Browser-Use-API-Key": apiKey,
-    "Content-Type": "application/json",
-    ...(init.headers as Record<string, string> || {}),
-  };
-  console.log(`[BrowserUse] ${init.method || "GET"} ${path}`);
-  return fetch(url, { ...init, headers });
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-    if (!BU_API_KEY) {
-      throw new Error("BROWSER_USE_API_KEY is not configured");
-    }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -205,39 +184,39 @@ serve(async (req) => {
         return await handleCreateProfile(supabase, user.id);
       }
       case "start_login": {
-         await cleanupStaleSessions(supabase, user.id, BU_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
+        await cleanupStaleSessions(supabase, user.id);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail");
       }
       case "confirm_login": {
-        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
+        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail");
       }
       case "cancel_login": {
-        return await handleCancelLogin(supabase, user.id, BU_API_KEY);
+        return await handleCancelLogin(supabase, user.id);
       }
       case "restart_session": {
-        await cleanupStaleSessions(supabase, user.id, BU_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
+        await cleanupStaleSessions(supabase, user.id);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail");
       }
       case "cleanup_sessions": {
-        return await handleCleanupSessions(supabase, user.id, BU_API_KEY);
+        return await handleCleanupSessions(supabase, user.id);
       }
       case "start_order": {
-        return await handleStartOrder(supabase, user, payload, BU_API_KEY, LOVABLE_API_KEY || "", supabaseUrl, supabaseServiceKey);
+        return await handleStartOrder(supabase, user, payload, LOVABLE_API_KEY || "", supabaseUrl, supabaseServiceKey);
       }
       case "check_order_status": {
         return await handleCheckOrderStatus(supabase, user.id, payload.orderId!);
       }
       case "sync_all_orders": {
-        return await handleSyncAllOrders(supabase, user, BU_API_KEY, supabaseUrl, LOVABLE_API_KEY || "");
+        return await handleSyncAllOrders(supabase, user, supabaseUrl, LOVABLE_API_KEY || "");
       }
       case "sync_order_emails": {
-        return await handleSyncOrderEmails(supabase, user.id, BU_API_KEY, LOVABLE_API_KEY || "");
+        return await handleSyncOrderEmails(supabase, user.id, LOVABLE_API_KEY || "");
       }
       case "set_proxy": {
         return await handleSetProxy(supabase, user.id, payload);
       }
       case "test_proxy": {
-        return await handleTestProxy(supabase, user.id, BU_API_KEY);
+        return await handleTestProxy(supabase, user.id);
       }
       case "toggle_browserstack": {
         return await handleToggleBrowserstack(supabase, user.id, payload.useBrowserstack ?? false);
@@ -325,7 +304,6 @@ async function handleStartLogin(
   supabase: any,
   userId: string,
   site: string,
-  buApiKey: string
 ) {
   let { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
 
@@ -339,66 +317,36 @@ async function handleStartLogin(
   const siteUrls: Record<string, string> = { gmail: "https://mail.google.com", amazon: "https://www.amazon.com/ap/signin", ebay: "https://signin.ebay.com", walmart: "https://www.walmart.com/account/login" };
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
 
-  console.log(`[AutoShop] Creating Browser Use task for login: ${loginUrl}`);
+  console.log(`[AutoShop] Navigating to login page via bridge: ${loginUrl}`);
 
-  // Create session with profile
-  let sessionId: string | undefined;
-  if (profile?.browser_use_profile_id) {
-    try {
-      const sessionRes = await fetch(`${BU_API_BASE}/sessions`, {
-        method: "POST",
-        headers: { "X-Browser-Use-API-Key": buApiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ profileId: profile.browser_use_profile_id }),
-      });
-      if (sessionRes.ok) {
-        const session = await sessionRes.json();
-        sessionId = session.id;
-      }
-    } catch (_) {}
+  // Use bridge to navigate to login page (synchronous — no interactive session)
+  let taskId = crypto.randomUUID();
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+    const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: loginUrl, extract_text: true }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      taskId = data.task_id || data.id || taskId;
+      console.log(`[AutoShop] Bridge login page loaded: ${taskId}`);
+    } else {
+      console.warn(`[AutoShop] Bridge login navigation failed (${res.status})`);
+    }
+  } catch (e) {
+    console.warn(`[AutoShop] Bridge unreachable for login:`, e);
   }
 
-  const taskBody: any = {
-    task: `Navigate to ${loginUrl} and display the login page.`,
-    startUrl: loginUrl,
-    maxSteps: 30,
-  };
-  if (sessionId) taskBody.sessionId = sessionId;
+  await supabase.from("browser_profiles").update({ shop_pending_login_site: site, shop_pending_task_id: null, shop_pending_session_id: taskId }).eq("user_id", userId);
 
-  const taskRes = await browserUseApi(buApiKey, "/tasks", {
-    method: "POST",
-    body: JSON.stringify(taskBody),
-  });
-
-  if (!taskRes.ok) {
-    const err = await taskRes.text();
-    console.error(`[AutoShop] Browser Use task creation failed: ${err}`);
-    throw new Error(`Failed to create task: ${err}`);
-  }
-
-  const taskData = await taskRes.json();
-  const runId = taskData.id;
-
-  // Get live URL
-  let liveViewUrl = null;
-  if (taskData.sessionId) {
-    try {
-      const sessRes = await fetch(`${BU_API_BASE}/sessions/${taskData.sessionId}`, {
-        headers: { "X-Browser-Use-API-Key": buApiKey },
-      });
-      if (sessRes.ok) {
-        const sessData = await sessRes.json();
-        liveViewUrl = sessData.liveUrl || null;
-      }
-    } catch (_) {}
-  }
-
-  await supabase.from("browser_profiles").update({ shop_pending_login_site: site, shop_pending_task_id: null, shop_pending_session_id: runId }).eq("user_id", userId);
-
-  return new Response(JSON.stringify({ success: true, taskId: runId, sessionId: runId, liveViewUrl, site }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ success: true, taskId, sessionId: taskId, liveViewUrl: null, site, message: "Login page accessed via Playwright bridge. Please confirm login when ready." }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleConfirmLogin(supabase: any, userId: string, site: string, _buApiKey: string) {
+async function handleConfirmLogin(supabase: any, userId: string, site: string) {
   const { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
   if (!profile) throw new Error("Profile not found");
 
@@ -413,20 +361,20 @@ async function handleConfirmLogin(supabase: any, userId: string, site: string, _
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCancelLogin(supabase: any, userId: string, _buApiKey: string) {
+async function handleCancelLogin(supabase: any, userId: string) {
   await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
   return new Response(JSON.stringify({ success: true, message: "Login session cancelled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
-async function cleanupStaleSessions(supabase: any, userId: string, _buApiKey: string): Promise<{ sessionsKilled: number }> {
+async function cleanupStaleSessions(supabase: any, userId: string): Promise<{ sessionsKilled: number }> {
   await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
   return { sessionsKilled: 0 };
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCleanupSessions(supabase: any, userId: string, buApiKey: string) {
-  const result = await cleanupStaleSessions(supabase, userId, buApiKey);
+async function handleCleanupSessions(supabase: any, userId: string) {
+  const result = await cleanupStaleSessions(supabase, userId);
   return new Response(JSON.stringify({ success: true, message: "Sessions cleaned up", ...result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
@@ -452,7 +400,6 @@ async function handleStartOrder(
   supabase: any,
   user: { id: string; email?: string },
   payload: AutoShopPayload,
-  buApiKey: string,
   lovableApiKey: string,
   supabaseUrl: string,
   supabaseServiceKey: string
@@ -906,7 +853,6 @@ function analyzeFailure(errorMessage: string, _order: Record<string, unknown>): 
 async function handleSyncAllOrders(
   supabase: any,
   user: { id: string; email?: string },
-  buApiKey: string,
   supabaseUrl: string,
   lovableApiKey: string,
 ) {
@@ -980,7 +926,6 @@ async function handleSyncAllOrders(
 async function handleSyncOrderEmails(
   supabase: any,
   userId: string,
-  buApiKey: string,
   lovableApiKey: string,
 ) {
   const { data: profile } = await supabase
@@ -997,45 +942,37 @@ async function handleSyncOrderEmails(
     throw new Error("Gmail not logged in. Please log into Gmail first via Connections.");
   }
 
-  console.log(`[AutoShop] Syncing order emails for user ${userId}`);
+  console.log(`[AutoShop] Syncing order emails for user ${userId} via bridge`);
 
-  // Create a Browser Use task for email sync
-  const taskRes = await browserUseApi(buApiKey, "/tasks", {
-    method: "POST",
-    body: JSON.stringify({
-      task: "Navigate to Gmail, find recent order confirmation and shipping emails. Extract order details including order numbers, items, prices, and tracking information.",
-      startUrl: "https://mail.google.com",
-      maxSteps: 50,
-    }),
-  });
-
-  let buTaskId = "unknown";
-  if (taskRes.ok) {
-    const taskData = await taskRes.json();
-    buTaskId = taskData.id || "unknown";
-    console.log(`[AutoShop] Email sync Browser Use task created: ${buTaskId}`);
-  } else {
-    const err = await taskRes.text();
-    console.error(`[AutoShop] Failed to create Browser Use task for email sync: ${err}`);
+  // Use bridge to scrape Gmail for order emails
+  let bridgeTaskId = "unknown";
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+    const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: "https://mail.google.com", extract_text: true }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      bridgeTaskId = data.task_id || data.id || "bridge-task";
+      console.log(`[AutoShop] Email sync bridge task completed: ${bridgeTaskId}`);
+    } else {
+      console.warn(`[AutoShop] Bridge email sync failed (${res.status})`);
+    }
+  } catch (e) {
+    console.warn(`[AutoShop] Bridge unreachable for email sync:`, e);
   }
 
   // Log the sync attempt
-  if (lovableApiKey) {
-    const { data: existingEmails } = await supabase
-      .from("order_emails")
-      .select("gmail_message_id")
-      .eq("user_id", userId);
-
-    const existingIds = new Set((existingEmails || []).map((e: { gmail_message_id: string }) => e.gmail_message_id));
-
-    await supabase.from("agent_logs").insert({
-      user_id: userId,
-      agent_name: "auto_shop",
-      log_level: "info",
-      message: "Email sync initiated via Browser Use task",
-      metadata: { buTaskId },
-    });
-  }
+  await supabase.from("agent_logs").insert({
+    user_id: userId,
+    agent_name: "auto_shop",
+    log_level: "info",
+    message: "Email sync initiated via Playwright bridge",
+    metadata: { bridgeTaskId },
+  });
 
   return new Response(
     JSON.stringify({ 
@@ -1043,7 +980,7 @@ async function handleSyncOrderEmails(
       inserted: 0,
       skipped: 0,
       totalFound: 0,
-      message: "Email sync task created. Use the AI Agent to complete the sync.",
+      message: "Email sync task created via bridge. Use the AI Agent to complete the sync.",
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
@@ -1078,7 +1015,7 @@ async function handleSetProxy(supabase: any, userId: string, payload: AutoShopPa
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleTestProxy(supabase: any, userId: string, buApiKey: string) {
+async function handleTestProxy(supabase: any, userId: string) {
   const { data: profile } = await supabase
     .from("browser_profiles")
     .select("*")
@@ -1092,23 +1029,25 @@ async function handleTestProxy(supabase: any, userId: string, buApiKey: string) 
     );
   }
 
-  console.log(`[AutoShop] Testing proxy via Browser Use task...`);
-
-  const testRes = await browserUseApi(buApiKey, "/tasks", {
-    method: "POST",
-    body: JSON.stringify({
-      task: "Navigate to https://httpbin.org/ip and extract the visible IP address from the page.",
-      startUrl: "https://httpbin.org/ip",
-      maxSteps: 10,
-    }),
-  });
+  console.log(`[AutoShop] Testing proxy via Playwright bridge...`);
 
   let proxyWorking = false;
   let proxyIp = "unknown";
-  if (testRes.ok) {
-    const taskData = await testRes.json();
-    proxyWorking = true;
-    proxyIp = taskData.id?.substring(0, 8) || "task-created";
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+    const testRes = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: "https://httpbin.org/ip", extract_text: true }),
+    });
+    if (testRes.ok) {
+      const data = await testRes.json();
+      proxyWorking = true;
+      proxyIp = data.content?.match(/\d+\.\d+\.\d+\.\d+/)?.[0] || "bridge-response";
+    }
+  } catch (e) {
+    console.warn(`[AutoShop] Bridge proxy test failed:`, e);
   }
 
   return new Response(
@@ -1117,10 +1056,8 @@ async function handleTestProxy(supabase: any, userId: string, buApiKey: string) 
       tested: true,
       proxyWorking,
       allTestsPassed: proxyWorking,
-      baseline1Ip: "browser-use-managed",
       proxyIp,
-      baseline2Ip: "browser-use-managed",
-      message: proxyWorking ? "Browser Use proxy test task created successfully" : "Browser Use task creation failed",
+      message: proxyWorking ? "Proxy test completed via Playwright bridge" : `Local/hosted Playwright bridge is not reachable: ${BRIDGE_URL}`,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );

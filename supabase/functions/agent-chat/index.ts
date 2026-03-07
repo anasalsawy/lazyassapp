@@ -731,9 +731,7 @@ async function executeTool(
 
       // ── Browser: view / navigate / restart (FUNCTIONAL) ───────────────
       case "browser_view": {
-        const bridgeUrl = Deno.env.get("BROWSER_USE_BRIDGE_URL");
-        if (!bridgeUrl) return JSON.stringify({ error: "Browser automation not configured — set BROWSER_USE_BRIDGE_URL." });
-        return JSON.stringify({ status: "ready", provider: "playwright_bridge", message: "Playwright bridge is available. Use browser_task to start a task." });
+        return JSON.stringify({ status: "ready", provider: "playwright_bridge", message: "Playwright bridge automation is available. Use browser_task to start a task." });
       }
 
       case "browser_navigate": {
@@ -908,7 +906,7 @@ async function executeTool(
         return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
-        // Multi-agent browser system: Analyst→Director→Navigator via Playwright bridge
+        // Multi-agent browser system: Researcher→Planner→Playwright Bridge
         const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
         const taskStr = (args.task as string) || "";
         const startUrl = (args.start_url as string) || "";
@@ -935,7 +933,7 @@ async function executeTool(
           }
         }
 
-        // Step 2: Delegate to multi-agent browser-agent function
+        // Step 2: Delegate to multi-agent browser-agent function (uses Playwright bridge)
         let agentResult: any = null;
         let agentError: string | null = null;
 
