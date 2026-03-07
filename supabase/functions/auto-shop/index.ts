@@ -304,7 +304,6 @@ async function handleStartLogin(
   supabase: any,
   userId: string,
   site: string,
-  buApiKey: string
 ) {
   let { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
 
@@ -318,66 +317,36 @@ async function handleStartLogin(
   const siteUrls: Record<string, string> = { gmail: "https://mail.google.com", amazon: "https://www.amazon.com/ap/signin", ebay: "https://signin.ebay.com", walmart: "https://www.walmart.com/account/login" };
   const loginUrl = siteUrls[site] || `https://www.${site}.com/login`;
 
-  console.log(`[AutoShop] Creating Browser Use task for login: ${loginUrl}`);
+  console.log(`[AutoShop] Navigating to login page via bridge: ${loginUrl}`);
 
-  // Create session with profile
-  let sessionId: string | undefined;
-  if (profile?.browser_use_profile_id) {
-    try {
-      const sessionRes = await fetch(`${BU_API_BASE}/sessions`, {
-        method: "POST",
-        headers: { "X-Browser-Use-API-Key": buApiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ profileId: profile.browser_use_profile_id }),
-      });
-      if (sessionRes.ok) {
-        const session = await sessionRes.json();
-        sessionId = session.id;
-      }
-    } catch (_) {}
+  // Use bridge to navigate to login page (synchronous — no interactive session)
+  let taskId = crypto.randomUUID();
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+    const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: loginUrl, extract_text: true }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      taskId = data.task_id || data.id || taskId;
+      console.log(`[AutoShop] Bridge login page loaded: ${taskId}`);
+    } else {
+      console.warn(`[AutoShop] Bridge login navigation failed (${res.status})`);
+    }
+  } catch (e) {
+    console.warn(`[AutoShop] Bridge unreachable for login:`, e);
   }
 
-  const taskBody: any = {
-    task: `Navigate to ${loginUrl} and display the login page.`,
-    startUrl: loginUrl,
-    maxSteps: 30,
-  };
-  if (sessionId) taskBody.sessionId = sessionId;
+  await supabase.from("browser_profiles").update({ shop_pending_login_site: site, shop_pending_task_id: null, shop_pending_session_id: taskId }).eq("user_id", userId);
 
-  const taskRes = await browserUseApi(buApiKey, "/tasks", {
-    method: "POST",
-    body: JSON.stringify(taskBody),
-  });
-
-  if (!taskRes.ok) {
-    const err = await taskRes.text();
-    console.error(`[AutoShop] Browser Use task creation failed: ${err}`);
-    throw new Error(`Failed to create task: ${err}`);
-  }
-
-  const taskData = await taskRes.json();
-  const runId = taskData.id;
-
-  // Get live URL
-  let liveViewUrl = null;
-  if (taskData.sessionId) {
-    try {
-      const sessRes = await fetch(`${BU_API_BASE}/sessions/${taskData.sessionId}`, {
-        headers: { "X-Browser-Use-API-Key": buApiKey },
-      });
-      if (sessRes.ok) {
-        const sessData = await sessRes.json();
-        liveViewUrl = sessData.liveUrl || null;
-      }
-    } catch (_) {}
-  }
-
-  await supabase.from("browser_profiles").update({ shop_pending_login_site: site, shop_pending_task_id: null, shop_pending_session_id: runId }).eq("user_id", userId);
-
-  return new Response(JSON.stringify({ success: true, taskId: runId, sessionId: runId, liveViewUrl, site }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ success: true, taskId, sessionId: taskId, liveViewUrl: null, site, message: "Login page accessed via Playwright bridge. Please confirm login when ready." }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleConfirmLogin(supabase: any, userId: string, site: string, _buApiKey: string) {
+async function handleConfirmLogin(supabase: any, userId: string, site: string) {
   const { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", userId).single();
   if (!profile) throw new Error("Profile not found");
 
@@ -392,20 +361,20 @@ async function handleConfirmLogin(supabase: any, userId: string, site: string, _
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCancelLogin(supabase: any, userId: string, _buApiKey: string) {
+async function handleCancelLogin(supabase: any, userId: string) {
   await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
   return new Response(JSON.stringify({ success: true, message: "Login session cancelled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 // deno-lint-ignore no-explicit-any
-async function cleanupStaleSessions(supabase: any, userId: string, _buApiKey: string): Promise<{ sessionsKilled: number }> {
+async function cleanupStaleSessions(supabase: any, userId: string): Promise<{ sessionsKilled: number }> {
   await supabase.from("browser_profiles").update({ shop_pending_login_site: null, shop_pending_task_id: null, shop_pending_session_id: null }).eq("user_id", userId);
   return { sessionsKilled: 0 };
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleCleanupSessions(supabase: any, userId: string, buApiKey: string) {
-  const result = await cleanupStaleSessions(supabase, userId, buApiKey);
+async function handleCleanupSessions(supabase: any, userId: string) {
+  const result = await cleanupStaleSessions(supabase, userId);
   return new Response(JSON.stringify({ success: true, message: "Sessions cleaned up", ...result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
