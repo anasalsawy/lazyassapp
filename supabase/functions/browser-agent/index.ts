@@ -518,7 +518,7 @@ async function runTwoAgentLoop(
       commands_executed: 0,
       page_content: initialPageContent || "Ready to start — no initial page loaded yet.",
       current_url: startUrl || null,
-    };
+    });
 
     // ── 4. MAIN PLANNER → BRIDGE LOOP ────────────────────────────────
     while (stepCount < maxSteps) {
