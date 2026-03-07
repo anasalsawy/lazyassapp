@@ -405,10 +405,11 @@ async function runTwoAgentLoop(
   bridgeKey: string,
   openaiKey: string,
   firecrawlKey?: string,
+  externalRunId?: string,
 ): Promise<any> {
   const maxSteps = 30;
   let stepCount = 0;
-  const runId = crypto.randomUUID();
+  const runId = externalRunId || crypto.randomUUID();
   const milestones: string[] = [];
   const phasesCompleted: string[] = [];
   const urlStack: string[] = [];
