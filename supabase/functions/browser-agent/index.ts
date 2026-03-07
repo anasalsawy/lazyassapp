@@ -1091,10 +1091,10 @@ serve(async (req) => {
             .order("created_at", { ascending: false })
             .limit(20),
           supabase.from("browser_steps")
-            .select("step_number, url, actions, action_results, result_status, final_url, phase_name, page_title, extracted_data, planner_decision_type, duration_ms, error_message")
+            .select("step_number, url, actions, action_results, result_status, final_url, phase_name, page_title, extracted_data, planner_decision_type, duration_ms, error_message, selector, expected_outcome, risk_level")
             .eq("run_id", runId)
             .order("step_number", { ascending: true })
-            .limit(20),
+            .limit(30),
         ]);
 
         return new Response(JSON.stringify({
