@@ -731,9 +731,9 @@ async function executeTool(
 
       // ── Browser: view / navigate / restart (FUNCTIONAL) ───────────────
       case "browser_view": {
-        const BU_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-        if (!BU_KEY) return JSON.stringify({ error: "Browser automation not configured — BROWSER_USE_API_KEY needed." });
-        return JSON.stringify({ status: "ready", provider: "browser_use", message: "Browser Use automation is available. Use browser_task to start a task." });
+        const bridgeUrl = Deno.env.get("BROWSER_USE_BRIDGE_URL");
+        if (!bridgeUrl) return JSON.stringify({ error: "Browser automation not configured — set BROWSER_USE_BRIDGE_URL." });
+        return JSON.stringify({ status: "ready", provider: "playwright_bridge", message: "Playwright bridge is available. Use browser_task to start a task." });
       }
 
       case "browser_navigate": {
@@ -908,8 +908,7 @@ async function executeTool(
         return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
-        // Multi-agent browser system: Analyst→Director→Navigator via Browser Use
-        const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+        // Multi-agent browser system: Analyst→Director→Navigator via Playwright bridge
         const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
         const taskStr = (args.task as string) || "";
         const startUrl = (args.start_url as string) || "";
@@ -940,40 +939,36 @@ async function executeTool(
         let agentResult: any = null;
         let agentError: string | null = null;
 
-        if (!BU_API_KEY) {
-          agentError = "BROWSER_USE_API_KEY not configured.";
-        } else {
-          try {
-            const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-            const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        try {
+          const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+          const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-            const agentRes = await fetch(`${supabaseUrl}/functions/v1/browser-agent`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${serviceKey}`,
-                "Content-Type": "application/json",
-                apikey: serviceKey,
-              },
-              body: JSON.stringify({
-                action: "run",
-                goal: taskStr,
-                start_url: startUrl || undefined,
-                context: { userId, source: "manus_agent" },
-              }),
-            });
+          const agentRes = await fetch(`${supabaseUrl}/functions/v1/browser-agent`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${serviceKey}`,
+              "Content-Type": "application/json",
+              apikey: serviceKey,
+            },
+            body: JSON.stringify({
+              action: "run",
+              goal: taskStr,
+              start_url: startUrl || undefined,
+              context: { userId, source: "manus_agent" },
+            }),
+          });
 
-            if (agentRes.ok) {
-              agentResult = await agentRes.json();
-              console.log(`[browser_task] Multi-agent browser task started: ${agentResult.runId}`);
-            } else {
-              const errText = await agentRes.text();
-              agentError = `Browser agent failed (${agentRes.status}): ${errText.slice(0, 500)}`;
-              console.error(`[browser_task] Browser agent error: ${agentError}`);
-            }
-          } catch (err: any) {
-            agentError = err?.message || "Browser agent request failed.";
-            console.error("[browser_task] Browser agent error:", err);
+          if (agentRes.ok) {
+            agentResult = await agentRes.json();
+            console.log(`[browser_task] Multi-agent browser task started: ${agentResult.runId}`);
+          } else {
+            const errText = await agentRes.text();
+            agentError = `Browser agent failed (${agentRes.status}): ${errText.slice(0, 500)}`;
+            console.error(`[browser_task] Browser agent error: ${agentError}`);
           }
+        } catch (err: any) {
+          agentError = err?.message || "Browser agent request failed.";
+          console.error("[browser_task] Browser agent error:", err);
         }
 
         // Log

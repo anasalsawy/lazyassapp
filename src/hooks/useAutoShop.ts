@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useToast } from "@/hooks/use-toast";
+import { getAutoBuyProvider, getOssRunnerUrl } from "@/lib/autoBuyProvider";
 
 export interface PaymentCard {
   id: string;
@@ -98,6 +99,8 @@ const decryptData = (data: string): string => {
 };
 
 export const useAutoShop = () => {
+  const autoBuyProvider = getAutoBuyProvider();
+  const ossRunnerUrl = getOssRunnerUrl();
   const { user } = useAuth();
   const { isOwner, ownerId, loading: roleLoading } = useUserRole();
   const { toast } = useToast();
@@ -111,24 +114,19 @@ export const useAutoShop = () => {
     setLoading(true);
 
     try {
-      // Cards: owner's cards are used for everyone
-      // The RLS policy allows family to see owner's cards
       const effectiveOwnerId = ownerId || user.id;
-      
+
       const [cardsRes, addressesRes, ordersRes] = await Promise.all([
-        // Fetch cards from owner (or self if owner)
         supabase
           .from("payment_cards")
           .select("*")
           .eq("user_id", effectiveOwnerId)
           .order("is_default", { ascending: false }),
-        // Addresses can be user's own or from owner
         supabase
           .from("shipping_addresses")
           .select("*")
           .or(`user_id.eq.${user.id},user_id.eq.${effectiveOwnerId}`)
           .order("is_default", { ascending: false }),
-        // Orders are always user's own
         supabase
           .from("auto_shop_orders")
           .select("*")
@@ -152,7 +150,6 @@ export const useAutoShop = () => {
     }
   }, [fetchData, roleLoading]);
 
-  // Card operations
   const addCard = async (cardData: {
     card_name: string;
     card_number: string;
@@ -213,7 +210,6 @@ export const useAutoShop = () => {
     return true;
   };
 
-  // Address operations
   const addAddress = async (addressData: Omit<ShippingAddress, "id" | "created_at" | "user_id">) => {
     if (!user) return null;
 
@@ -252,7 +248,6 @@ export const useAutoShop = () => {
     return true;
   };
 
-  // Order operations
   const startOrder = async (orderData: {
     product_query: string;
     max_price?: number;
@@ -272,7 +267,6 @@ export const useAutoShop = () => {
     }
 
     try {
-      // Create the order record first
       const { data: order, error } = await supabase
         .from("auto_shop_orders")
         .insert({
@@ -293,10 +287,8 @@ export const useAutoShop = () => {
         description: `Searching for "${orderData.product_query}"...`,
       });
 
-      // Get shipping address details
       const selectedAddress = addresses.find(a => a.id === orderData.shipping_address_id);
-      
-      // Get all card details (decrypted) for the agent
+
       const cardDetails = cards.map(card => ({
         id: card.id,
         cardNumber: decryptData(card.card_number_enc),
@@ -310,10 +302,8 @@ export const useAutoShop = () => {
         billingCountry: card.billing_country,
       }));
 
-      // Call the auto-shop edge function
-      const { data: agentResult, error: agentError } = await supabase.functions.invoke(
-        "auto-shop",
-        {
+      const runCloudOrder = async () => {
+        const { error: agentError } = await supabase.functions.invoke("auto-shop", {
           body: {
             action: "start_order",
             orderId: order.id,
@@ -323,10 +313,53 @@ export const useAutoShop = () => {
             shippingAddress: selectedAddress,
             paymentCards: cardDetails,
           },
-        }
-      );
+        });
+        if (agentError) throw agentError;
+      };
 
-      if (agentError) throw agentError;
+      if (autoBuyProvider === "oss") {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+
+        try {
+          const response = await fetch(`${ossRunnerUrl}/run`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: user.id,
+              action: "start_order",
+              payload: {
+                orderId: order.id,
+                productQuery: orderData.product_query,
+                maxPrice: orderData.max_price,
+                quantity: orderData.quantity || 1,
+                shippingAddress: selectedAddress,
+                paymentCards: cardDetails,
+              },
+            }),
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || "OSS runner error");
+          }
+
+          await response.json();
+        } catch (ossError) {
+          console.error("[AutoShop] OSS runner failed", ossError);
+          toast({
+            title: "Local OSS runner unavailable",
+            description: "Start it with: cd services/oss-runner && node index.js",
+            variant: "destructive",
+          });
+          return null;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      } else {
+        await runCloudOrder();
+      }
 
       toast({
         title: "🔍 Agent Searching",
@@ -335,11 +368,12 @@ export const useAutoShop = () => {
 
       fetchData();
       return order;
-    } catch (error: any) {
-      console.error("Order error:", error);
+    } catch (error: unknown) {
+      console.error("[AutoShop] Order error:", error);
+      const message = error instanceof Error ? error.message : "Unknown error";
       toast({
         title: "Failed to start order",
-        description: error.message,
+        description: message,
         variant: "destructive",
       });
       return null;
@@ -362,7 +396,6 @@ export const useAutoShop = () => {
     return true;
   };
 
-  // Get masked card number for display
   const getMaskedCardNumber = (encryptedNumber: string) => {
     try {
       const decrypted = decryptData(encryptedNumber);
