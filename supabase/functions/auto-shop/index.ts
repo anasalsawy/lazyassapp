@@ -853,7 +853,6 @@ function analyzeFailure(errorMessage: string, _order: Record<string, unknown>): 
 async function handleSyncAllOrders(
   supabase: any,
   user: { id: string; email?: string },
-  buApiKey: string,
   supabaseUrl: string,
   lovableApiKey: string,
 ) {
@@ -927,7 +926,6 @@ async function handleSyncAllOrders(
 async function handleSyncOrderEmails(
   supabase: any,
   userId: string,
-  buApiKey: string,
   lovableApiKey: string,
 ) {
   const { data: profile } = await supabase
@@ -944,45 +942,37 @@ async function handleSyncOrderEmails(
     throw new Error("Gmail not logged in. Please log into Gmail first via Connections.");
   }
 
-  console.log(`[AutoShop] Syncing order emails for user ${userId}`);
+  console.log(`[AutoShop] Syncing order emails for user ${userId} via bridge`);
 
-  // Create a Browser Use task for email sync
-  const taskRes = await browserUseApi(buApiKey, "/tasks", {
-    method: "POST",
-    body: JSON.stringify({
-      task: "Navigate to Gmail, find recent order confirmation and shipping emails. Extract order details including order numbers, items, prices, and tracking information.",
-      startUrl: "https://mail.google.com",
-      maxSteps: 50,
-    }),
-  });
-
-  let buTaskId = "unknown";
-  if (taskRes.ok) {
-    const taskData = await taskRes.json();
-    buTaskId = taskData.id || "unknown";
-    console.log(`[AutoShop] Email sync Browser Use task created: ${buTaskId}`);
-  } else {
-    const err = await taskRes.text();
-    console.error(`[AutoShop] Failed to create Browser Use task for email sync: ${err}`);
+  // Use bridge to scrape Gmail for order emails
+  let bridgeTaskId = "unknown";
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+    const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: "https://mail.google.com", extract_text: true }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      bridgeTaskId = data.task_id || data.id || "bridge-task";
+      console.log(`[AutoShop] Email sync bridge task completed: ${bridgeTaskId}`);
+    } else {
+      console.warn(`[AutoShop] Bridge email sync failed (${res.status})`);
+    }
+  } catch (e) {
+    console.warn(`[AutoShop] Bridge unreachable for email sync:`, e);
   }
 
   // Log the sync attempt
-  if (lovableApiKey) {
-    const { data: existingEmails } = await supabase
-      .from("order_emails")
-      .select("gmail_message_id")
-      .eq("user_id", userId);
-
-    const existingIds = new Set((existingEmails || []).map((e: { gmail_message_id: string }) => e.gmail_message_id));
-
-    await supabase.from("agent_logs").insert({
-      user_id: userId,
-      agent_name: "auto_shop",
-      log_level: "info",
-      message: "Email sync initiated via Browser Use task",
-      metadata: { buTaskId },
-    });
-  }
+  await supabase.from("agent_logs").insert({
+    user_id: userId,
+    agent_name: "auto_shop",
+    log_level: "info",
+    message: "Email sync initiated via Playwright bridge",
+    metadata: { bridgeTaskId },
+  });
 
   return new Response(
     JSON.stringify({ 
@@ -990,7 +980,7 @@ async function handleSyncOrderEmails(
       inserted: 0,
       skipped: 0,
       totalFound: 0,
-      message: "Email sync task created. Use the AI Agent to complete the sync.",
+      message: "Email sync task created via bridge. Use the AI Agent to complete the sync.",
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
@@ -1025,7 +1015,7 @@ async function handleSetProxy(supabase: any, userId: string, payload: AutoShopPa
 }
 
 // deno-lint-ignore no-explicit-any
-async function handleTestProxy(supabase: any, userId: string, buApiKey: string) {
+async function handleTestProxy(supabase: any, userId: string) {
   const { data: profile } = await supabase
     .from("browser_profiles")
     .select("*")
@@ -1039,23 +1029,25 @@ async function handleTestProxy(supabase: any, userId: string, buApiKey: string) 
     );
   }
 
-  console.log(`[AutoShop] Testing proxy via Browser Use task...`);
-
-  const testRes = await browserUseApi(buApiKey, "/tasks", {
-    method: "POST",
-    body: JSON.stringify({
-      task: "Navigate to https://httpbin.org/ip and extract the visible IP address from the page.",
-      startUrl: "https://httpbin.org/ip",
-      maxSteps: 10,
-    }),
-  });
+  console.log(`[AutoShop] Testing proxy via Playwright bridge...`);
 
   let proxyWorking = false;
   let proxyIp = "unknown";
-  if (testRes.ok) {
-    const taskData = await testRes.json();
-    proxyWorking = true;
-    proxyIp = taskData.id?.substring(0, 8) || "task-created";
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+    const testRes = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: "https://httpbin.org/ip", extract_text: true }),
+    });
+    if (testRes.ok) {
+      const data = await testRes.json();
+      proxyWorking = true;
+      proxyIp = data.content?.match(/\d+\.\d+\.\d+\.\d+/)?.[0] || "bridge-response";
+    }
+  } catch (e) {
+    console.warn(`[AutoShop] Bridge proxy test failed:`, e);
   }
 
   return new Response(
@@ -1064,10 +1056,8 @@ async function handleTestProxy(supabase: any, userId: string, buApiKey: string) 
       tested: true,
       proxyWorking,
       allTestsPassed: proxyWorking,
-      baseline1Ip: "browser-use-managed",
       proxyIp,
-      baseline2Ip: "browser-use-managed",
-      message: proxyWorking ? "Browser Use proxy test task created successfully" : "Browser Use task creation failed",
+      message: proxyWorking ? "Proxy test completed via Playwright bridge" : `Local/hosted Playwright bridge is not reachable: ${BRIDGE_URL}`,
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
