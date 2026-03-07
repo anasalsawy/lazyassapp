@@ -351,6 +351,40 @@ async function fetchInjections(supabase: any, runId: string): Promise<string[]> 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// FETCH CONTROL COMMANDS (pause / resume / stop / approve)
+// ═══════════════════════════════════════════════════════════════════════════
+async function fetchControlCommands(supabase: any, runId: string): Promise<string[]> {
+  const { data: tasks } = await supabase
+    .from("agent_tasks")
+    .select("id, payload")
+    .eq("task_type", "browser_control")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+
+  if (!tasks || tasks.length === 0) return [];
+
+  const commands: string[] = [];
+  const idsToMark: string[] = [];
+
+  for (const task of tasks) {
+    const payload = task.payload as any;
+    if (payload?.run_id === runId) {
+      commands.push(payload.command || "unknown");
+      idsToMark.push(task.id);
+    }
+  }
+
+  if (idsToMark.length > 0) {
+    await supabase
+      .from("agent_tasks")
+      .update({ status: "completed", completed_at: new Date().toISOString() })
+      .in("id", idsToMark);
+  }
+
+  return commands;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN 2-AGENT LOOP: Researcher → Planner → (Playwright Bridge)
 // ═══════════════════════════════════════════════════════════════════════════
 interface TaskSpec {
@@ -371,10 +405,11 @@ async function runTwoAgentLoop(
   bridgeKey: string,
   openaiKey: string,
   firecrawlKey?: string,
+  externalRunId?: string,
 ): Promise<any> {
   const maxSteps = 30;
   let stepCount = 0;
-  const runId = crypto.randomUUID();
+  const runId = externalRunId || crypto.randomUUID();
   const milestones: string[] = [];
   const phasesCompleted: string[] = [];
   const urlStack: string[] = [];
@@ -457,6 +492,44 @@ async function runTwoAgentLoop(
         allInjections.push(...newInjections);
         currentInjection = newInjections.join("; ");
         await log("info", `📡 Human injection received: ${newInjections.length}`, { injections: newInjections });
+      }
+
+      // ── CHECK CONTROL COMMANDS (pause/resume/stop/approve) ─────
+      const controlCmds = await fetchControlCommands(supabase, runId);
+      for (const cmd of controlCmds) {
+        if (cmd === "stop") {
+          await log("info", "🛑 Operator sent STOP command");
+          await supabase.from("agent_runs").update({
+            status: "failed", ended_at: new Date().toISOString(),
+            error_message: "Stopped by operator",
+          }).eq("id", runId);
+          return { success: false, error: "Stopped by operator", stepsUsed: stepCount, milestones };
+        }
+        if (cmd === "pause") {
+          await log("info", "⏸️ Operator sent PAUSE command");
+          await supabase.from("agent_runs").update({ status: "paused" }).eq("id", runId);
+          // Wait loop: poll every 3s for resume/stop
+          let paused = true;
+          while (paused) {
+            await new Promise(r => setTimeout(r, 3000));
+            const resumeCmds = await fetchControlCommands(supabase, runId);
+            for (const rc of resumeCmds) {
+              if (rc === "resume") { paused = false; await log("info", "▶️ Operator sent RESUME command"); }
+              if (rc === "stop") {
+                await log("info", "🛑 Operator sent STOP while paused");
+                await supabase.from("agent_runs").update({
+                  status: "failed", ended_at: new Date().toISOString(),
+                  error_message: "Stopped by operator",
+                }).eq("id", runId);
+                return { success: false, error: "Stopped by operator", stepsUsed: stepCount, milestones };
+              }
+            }
+          }
+          await supabase.from("agent_runs").update({ status: "running" }).eq("id", runId);
+        }
+        if (cmd === "approve") {
+          await log("info", "✅ Operator approved — continuing");
+        }
       }
 
       // ── PLANNER: decide next command batch ──────────────────────
@@ -807,7 +880,7 @@ serve(async (req) => {
         const backgroundWork = async () => {
           try {
             const result = await runTwoAgentLoop(
-              taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY,
+              taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY, agentRun?.id,
             );
             await supabase.from("agent_runs").update({
               status: result.success ? "completed" : "failed",
@@ -856,7 +929,7 @@ serve(async (req) => {
         }
 
         const result = await runTwoAgentLoop(
-          taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY,
+          taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY, undefined,
         );
 
         return new Response(JSON.stringify(result), {
@@ -897,6 +970,44 @@ serve(async (req) => {
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      // ── CONTROL — pause / resume / stop / approve ─────────────
+      case "control": {
+        const runId = body.run_id;
+        const command = body.command;
+        const validCommands = ["pause", "resume", "stop", "approve"];
+
+        if (!runId) {
+          return new Response(JSON.stringify({ error: "run_id is required" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (!command || !validCommands.includes(command)) {
+          return new Response(JSON.stringify({ error: `command must be one of: ${validCommands.join(", ")}` }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const { data: ctrlTask, error: ctrlErr } = await supabase.from("agent_tasks").insert({
+          user_id: userId,
+          task_type: "browser_control",
+          status: "pending",
+          payload: {
+            run_id: runId,
+            command,
+            issued_at: new Date().toISOString(),
+          },
+        }).select().single();
+
+        if (ctrlErr) throw ctrlErr;
+
+        return new Response(JSON.stringify({
+          success: true,
+          control_id: ctrlTask?.id,
+          command,
+          message: `Control command '${command}' queued for run ${runId}. Will take effect on next cycle.`,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       // ── STATUS ─────────────────────────────────────────────────
       case "status": {
         const runId = body.run_id;
@@ -907,16 +1018,24 @@ serve(async (req) => {
           .single();
         if (!run) throw new Error("Run not found");
 
-        const { data: logs } = await supabase.from("agent_logs")
-          .select("message, metadata, created_at")
-          .eq("user_id", userId)
-          .eq("agent_name", "browser_agent")
-          .order("created_at", { ascending: false })
-          .limit(20);
+        const [logsRes, stepsRes] = await Promise.all([
+          supabase.from("agent_logs")
+            .select("message, metadata, created_at")
+            .eq("user_id", userId)
+            .eq("agent_name", "browser_agent")
+            .order("created_at", { ascending: false })
+            .limit(20),
+          supabase.from("browser_steps")
+            .select("step_number, url, actions, action_results, result_status, final_url, phase_name, page_title, extracted_data, planner_decision_type, duration_ms, error_message")
+            .eq("run_id", runId)
+            .order("step_number", { ascending: true })
+            .limit(20),
+        ]);
 
         return new Response(JSON.stringify({
           run,
-          recentLogs: logs || [],
+          recentLogs: logsRes.data || [],
+          recentSteps: stepsRes.data || [],
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
