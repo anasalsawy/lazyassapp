@@ -873,16 +873,11 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL");
-  const BRIDGE_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY");
+  const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || "https://browser-use-bridge.onrender.com";
+  const BRIDGE_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY") || "";
   const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
   const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
-  if (!BRIDGE_URL) {
-    return new Response(JSON.stringify({ error: "BROWSER_USE_BRIDGE_URL not configured" }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
   if (!OPENAI_KEY) {
     return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },

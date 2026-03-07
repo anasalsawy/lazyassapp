@@ -715,19 +715,71 @@ export default function LovableAgent() {
           return;
         }
         const data = await res.json();
-        const step = data.steps_taken || data.current_step || 0;
 
-        if (data.status === "completed") {
+        // Fallback/augmentation: query browser-agent status for rich step telemetry.
+        let agentStatus: any = null;
+        if (session?.access_token && browserLiveRef.current?.runId) {
+          try {
+            const statusResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/browser-agent`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${session.access_token}`,
+                apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+              },
+              body: JSON.stringify({
+                action: "status",
+                run_id: browserLiveRef.current.runId,
+                context: { userId: session.user.id },
+              }),
+            });
+            if (statusResp.ok) {
+              agentStatus = await statusResp.json();
+            }
+          } catch {
+            // Ignore fallback status errors; bridge poll still drives liveness.
+          }
+        }
+
+        const stepFromAgent = agentStatus?.recentSteps?.[0]?.step_number || 0;
+        const step = stepFromAgent || data.steps_taken || data.current_step || 0;
+        const currentUrlFromAgent = agentStatus?.recentSteps?.[0]?.final_url || agentStatus?.recentSteps?.[0]?.url || null;
+        const actionHistoryFromAgent = (() => {
+          const steps = Array.isArray(agentStatus?.recentSteps) ? agentStatus.recentSteps.slice(0, 6) : [];
+          if (steps.length === 0) return [];
+          const out: Array<{ step: number; action: string }> = [];
+          for (const s of steps.reverse()) {
+            const sn = Number(s.step_number || step || 0);
+            const ars = Array.isArray(s.action_results) ? s.action_results : [];
+            if (ars.length > 0) {
+              for (let i = 0; i < ars.length; i++) {
+                const a = ars[i] || {};
+                const action = String(a.action || "action");
+                const selector = a.selector ? ` ${String(a.selector).slice(0, 80)}` : "";
+                const value = a.value ? ` "${String(a.value).slice(0, 40)}"` : "";
+                const status = a.status ? ` -> ${String(a.status)}` : "";
+                out.push({ step: sn, action: `${i + 1}. ${action}${selector}${value}${status}` });
+              }
+            } else {
+              out.push({ step: sn, action: `${s.result_status || "running"} @ ${(s.final_url || s.url || "").slice(0, 120)}` });
+            }
+          }
+          return out.slice(-20);
+        })();
+        const statusFromAgent = agentStatus?.run?.status || null;
+
+        if (data.status === "completed" || statusFromAgent === "completed") {
           setBrowserLiveState(prev => prev ? {
             ...prev, status: "completed", step: data.steps_taken || prev.step,
-            currentUrl: data.current_url || prev.currentUrl,
+            currentUrl: currentUrlFromAgent || data.current_url || prev.currentUrl,
             screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
-            result: data.result || null,
+            result: agentStatus?.run?.summary_json?.finalResult?.summary || data.result || null,
+            actionHistory: actionHistoryFromAgent.length > 0 ? actionHistoryFromAgent : prev.actionHistory,
           } : prev);
           browserLiveRef.current = null;
           stopPolling();
-        } else if (data.status === "error") {
-          setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: data.error || "Task failed" } : prev);
+        } else if (data.status === "error" || statusFromAgent === "failed") {
+          setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: data.error || agentStatus?.run?.error_message || "Task failed" } : prev);
           stopPolling();
         } else {
           // Check if stuck at step 0
@@ -747,9 +799,11 @@ export default function LovableAgent() {
             ...prev,
             status: step > 0 ? "running" : prev.status,
             step,
-            currentUrl: data.current_url || prev.currentUrl,
+            currentUrl: currentUrlFromAgent || data.current_url || prev.currentUrl,
             screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
-            actionHistory: data.action_history?.slice(-5)?.map((a: any, i: number) => ({
+            actionHistory: actionHistoryFromAgent.length > 0
+              ? actionHistoryFromAgent
+              : data.action_history?.slice(-5)?.map((a: any, i: number) => ({
               step: a.step || step - (data.action_history.length - 1 - i),
               action: typeof a === "string" ? a : a.action || JSON.stringify(a),
             })) || prev.actionHistory,
@@ -770,7 +824,7 @@ export default function LovableAgent() {
     browserPollRef.current = setInterval(poll, 5000);
 
     return () => { stopPolling(); };
-  }, [isLoading, browserLiveState?.status]);
+  }, [isLoading, browserLiveState?.status, session?.access_token, session?.user?.id]);
 
   const sendMessage = useCallback(async (text?: string) => {
     const msg = text || input.trim();
