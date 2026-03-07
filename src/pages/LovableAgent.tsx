@@ -407,9 +407,22 @@ function CallMonitorPanel({ callState, isLive }: { callState: CallState; isLive:
 }
 
 // ── Browser Live Panel Component ────────────────────────────────────────────
-function BrowserLivePanel({ state, isLive }: { state: BrowserLiveState; isLive: boolean }) {
+function BrowserLivePanel({
+  state,
+  isLive,
+  isCommandBusy,
+  onControl,
+  onInject,
+}: {
+  state: BrowserLiveState;
+  isLive: boolean;
+  isCommandBusy: boolean;
+  onControl: (command: "pause" | "resume" | "stop" | "approve") => void;
+  onInject: (instruction: string) => void;
+}) {
   const [collapsed, setCollapsed] = useState(false);
   const [imgKey, setImgKey] = useState(0);
+  const [liveInstruction, setLiveInstruction] = useState("");
 
   // Auto-refresh screenshot key when URL changes
   useEffect(() => {
@@ -475,12 +488,43 @@ function BrowserLivePanel({ state, isLive }: { state: BrowserLiveState; isLive: 
           {/* Action history */}
           {state.actionHistory.length > 0 && (
             <div className="px-3 py-2 border-t border-border/30 space-y-1">
-              {state.actionHistory.map((a, i) => (
+              {state.actionHistory.slice(-20).map((a, i) => (
                 <div key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground">
                   <span className="shrink-0 font-mono text-muted-foreground/50">#{a.step}</span>
-                  <span className="truncate">{String(a.action).slice(0, 120)}</span>
+                  <span className="break-words">{String(a.action)}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Operator controls */}
+          {(state.status === "running" || state.status === "starting") && (
+            <div className="px-3 py-2 border-t border-border/30 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button size="sm" variant="secondary" disabled={isCommandBusy} onClick={() => onControl("pause")}>Pause</Button>
+                <Button size="sm" variant="secondary" disabled={isCommandBusy} onClick={() => onControl("resume")}>Resume</Button>
+                <Button size="sm" variant="outline" disabled={isCommandBusy} onClick={() => onControl("approve")}>Approve Next Risky Step</Button>
+                <Button size="sm" variant="destructive" disabled={isCommandBusy} onClick={() => onControl("stop")}>Stop</Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Textarea
+                  value={liveInstruction}
+                  onChange={(e) => setLiveInstruction(e.target.value)}
+                  placeholder="Live direction: e.g. Skip LinkedIn and switch to Indeed, remote only, max salary filter..."
+                  className="min-h-[56px]"
+                />
+                <Button
+                  disabled={isCommandBusy || !liveInstruction.trim()}
+                  onClick={() => {
+                    const next = liveInstruction.trim();
+                    if (!next) return;
+                    onInject(next);
+                    setLiveInstruction("");
+                  }}
+                >
+                  Send Direction
+                </Button>
+              </div>
             </div>
           )}
 
@@ -488,7 +532,7 @@ function BrowserLivePanel({ state, isLive }: { state: BrowserLiveState; isLive: 
           {!state.screenshotUrl && (state.status === "starting" || state.status === "running") && (
             <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground border-t border-border/30">
               <Loader2 className="w-4 h-4 animate-spin text-primary" />
-              <span>Waiting for browser to start...</span>
+              <span>{state.step > 0 ? `Executing browser actions (step ${state.step})...` : "Waiting for browser to start..."}</span>
             </div>
           )}
 
@@ -605,6 +649,7 @@ function LovableMessageContent({ content, role }: { content: string; role: "user
 // ── Suggestions ─────────────────────────────────────────────────────────────
 const SUGGESTIONS = [
   { icon: Sparkles, text: "Run the full mission and complete each section", color: "text-emerald-400" },
+  { icon: Search, text: "Find a product and add it to cart with click-by-click updates", color: "text-cyan-400" },
   { icon: Code2, text: "Optimize my resume for more interviews", color: "text-rose-400" },
   { icon: Search, text: "Find jobs matching my preferences", color: "text-sky-400" },
   { icon: FileText, text: "Check my application status", color: "text-amber-400" },
@@ -625,6 +670,7 @@ export default function LovableAgent() {
   const browserLiveRef = useRef<BrowserLiveState | null>(null);
   const browserPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const browserUrlsRef = useRef<{ statusUrl: string; screenshotUrl: string } | null>(null);
+  const [browserCommandBusy, setBrowserCommandBusy] = useState(false);
   const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call" | "browsing">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -669,19 +715,71 @@ export default function LovableAgent() {
           return;
         }
         const data = await res.json();
-        const step = data.steps_taken || data.current_step || 0;
 
-        if (data.status === "completed") {
+        // Fallback/augmentation: query browser-agent status for rich step telemetry.
+        let agentStatus: any = null;
+        if (session?.access_token && browserLiveRef.current?.runId) {
+          try {
+            const statusResp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/browser-agent`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${session.access_token}`,
+                apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+              },
+              body: JSON.stringify({
+                action: "status",
+                run_id: browserLiveRef.current.runId,
+                context: { userId: session.user.id },
+              }),
+            });
+            if (statusResp.ok) {
+              agentStatus = await statusResp.json();
+            }
+          } catch {
+            // Ignore fallback status errors; bridge poll still drives liveness.
+          }
+        }
+
+        const stepFromAgent = agentStatus?.recentSteps?.[0]?.step_number || 0;
+        const step = stepFromAgent || data.steps_taken || data.current_step || 0;
+        const currentUrlFromAgent = agentStatus?.recentSteps?.[0]?.final_url || agentStatus?.recentSteps?.[0]?.url || null;
+        const actionHistoryFromAgent = (() => {
+          const steps = Array.isArray(agentStatus?.recentSteps) ? agentStatus.recentSteps.slice(0, 6) : [];
+          if (steps.length === 0) return [];
+          const out: Array<{ step: number; action: string }> = [];
+          for (const s of steps.reverse()) {
+            const sn = Number(s.step_number || step || 0);
+            const ars = Array.isArray(s.action_results) ? s.action_results : [];
+            if (ars.length > 0) {
+              for (let i = 0; i < ars.length; i++) {
+                const a = ars[i] || {};
+                const action = String(a.action || "action");
+                const selector = a.selector ? ` ${String(a.selector).slice(0, 80)}` : "";
+                const value = a.value ? ` "${String(a.value).slice(0, 40)}"` : "";
+                const status = a.status ? ` -> ${String(a.status)}` : "";
+                out.push({ step: sn, action: `${i + 1}. ${action}${selector}${value}${status}` });
+              }
+            } else {
+              out.push({ step: sn, action: `${s.result_status || "running"} @ ${(s.final_url || s.url || "").slice(0, 120)}` });
+            }
+          }
+          return out.slice(-20);
+        })();
+        const statusFromAgent = agentStatus?.run?.status || null;
+
+        if (data.status === "completed" || statusFromAgent === "completed") {
           setBrowserLiveState(prev => prev ? {
             ...prev, status: "completed", step: data.steps_taken || prev.step,
-            currentUrl: data.current_url || prev.currentUrl,
+            currentUrl: currentUrlFromAgent || data.current_url || prev.currentUrl,
             screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
-            result: data.result || null,
+            result: agentStatus?.run?.summary_json?.finalResult?.summary || data.result || null,
+            actionHistory: actionHistoryFromAgent.length > 0 ? actionHistoryFromAgent : prev.actionHistory,
           } : prev);
           browserLiveRef.current = null;
           stopPolling();
-        } else if (data.status === "error") {
-          setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: data.error || "Task failed" } : prev);
+        } else if (data.status === "error" || statusFromAgent === "failed") {
+          setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: data.error || agentStatus?.run?.error_message || "Task failed" } : prev);
           stopPolling();
         } else {
           // Check if stuck at step 0
@@ -701,9 +799,11 @@ export default function LovableAgent() {
             ...prev,
             status: step > 0 ? "running" : prev.status,
             step,
-            currentUrl: data.current_url || prev.currentUrl,
+            currentUrl: currentUrlFromAgent || data.current_url || prev.currentUrl,
             screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
-            actionHistory: data.action_history?.slice(-5)?.map((a: any, i: number) => ({
+            actionHistory: actionHistoryFromAgent.length > 0
+              ? actionHistoryFromAgent
+              : data.action_history?.slice(-5)?.map((a: any, i: number) => ({
               step: a.step || step - (data.action_history.length - 1 - i),
               action: typeof a === "string" ? a : a.action || JSON.stringify(a),
             })) || prev.actionHistory,
@@ -724,7 +824,7 @@ export default function LovableAgent() {
     browserPollRef.current = setInterval(poll, 5000);
 
     return () => { stopPolling(); };
-  }, [isLoading, browserLiveState?.status]);
+  }, [isLoading, browserLiveState?.status, session?.access_token, session?.user?.id]);
 
   const sendMessage = useCallback(async (text?: string) => {
     const msg = text || input.trim();
@@ -1158,6 +1258,81 @@ export default function LovableAgent() {
     }
   }, []);
 
+  const sendBrowserControl = useCallback(async (command: "pause" | "resume" | "stop" | "approve") => {
+    if (!session?.access_token || !browserLiveRef.current?.runId) return;
+    try {
+      setBrowserCommandBusy(true);
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/browser-agent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+        body: JSON.stringify({
+          action: "control",
+          run_id: browserLiveRef.current.runId,
+          command,
+        }),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data?.error) {
+        throw new Error(data?.error || `control failed (${resp.status})`);
+      }
+
+      setMessages(prev => [
+        ...prev,
+        { role: "assistant", content: `🕹️ Control sent: **${command.toUpperCase()}**` },
+      ]);
+    } catch (err: any) {
+      setMessages(prev => [
+        ...prev,
+        { role: "assistant", content: `⚠️ Failed to send control command: ${err?.message || "Unknown error"}` },
+      ]);
+    } finally {
+      setBrowserCommandBusy(false);
+    }
+  }, [session?.access_token]);
+
+  const injectBrowserDirection = useCallback(async (instruction: string) => {
+    if (!session?.access_token || !browserLiveRef.current?.runId || !instruction.trim()) return;
+    try {
+      setBrowserCommandBusy(true);
+      const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/browser-agent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+        body: JSON.stringify({
+          action: "inject",
+          run_id: browserLiveRef.current.runId,
+          target: "browser_agent",
+          instruction: instruction.trim(),
+        }),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data?.error) {
+        throw new Error(data?.error || `inject failed (${resp.status})`);
+      }
+
+      setMessages(prev => [
+        ...prev,
+        { role: "user", content: `Live direction: ${instruction.trim()}` },
+      ]);
+    } catch (err: any) {
+      setMessages(prev => [
+        ...prev,
+        { role: "assistant", content: `⚠️ Failed to send live direction: ${err?.message || "Unknown error"}` },
+      ]);
+    } finally {
+      setBrowserCommandBusy(false);
+    }
+  }, [session?.access_token]);
+
   // ── Secret Submission ─────────────────────────────────────────────────────
   const submitSecret = useCallback(async (secretName: string, secretValue: string) => {
     if (!session?.access_token) return;
@@ -1357,7 +1532,13 @@ export default function LovableAgent() {
                       <Bot className="w-4 h-4 text-white" />
                     </div>
                     <div className="max-w-[85%] min-w-0 w-full">
-                      <BrowserLivePanel state={browserLiveState} isLive={browserLiveState.status === "running" || browserLiveState.status === "starting"} />
+                      <BrowserLivePanel
+                        state={browserLiveState}
+                        isLive={browserLiveState.status === "running" || browserLiveState.status === "starting"}
+                        isCommandBusy={browserCommandBusy}
+                        onControl={sendBrowserControl}
+                        onInject={injectBrowserDirection}
+                      />
                       {!isLoading && (browserLiveState.status === "running" || browserLiveState.status === "starting") && (
                         <div className="flex items-center gap-2 mt-1.5 px-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />

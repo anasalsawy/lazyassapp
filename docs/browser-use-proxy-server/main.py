@@ -1,4 +1,5 @@
 import asyncio
+import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
@@ -46,6 +47,7 @@ async def run_task(task: TaskRequest):
                     a = act.get("action", "")
                     sel = act.get("selector", "")
                     val = act.get("value", "")
+                    started_ms = int(time.time() * 1000)
                     try:
                         if a == "click" and sel:
                             await page.click(sel, timeout=10000)
@@ -64,9 +66,26 @@ async def run_task(task: TaskRequest):
                             await page.select_option(sel, val, timeout=10000)
                         elif a == "wait_for_selector" and sel:
                             await page.wait_for_selector(sel, timeout=int(val or 10000))
-                        action_results.append({"action": a, "status": "ok"})
+                        ended_ms = int(time.time() * 1000)
+                        action_results.append({
+                            "action": a,
+                            "selector": sel or None,
+                            "value": val if val != "" else None,
+                            "status": "ok",
+                            "url_after": page.url,
+                            "duration_ms": ended_ms - started_ms,
+                        })
                     except Exception as e:
-                        action_results.append({"action": a, "status": "error", "detail": str(e)[:200]})
+                        ended_ms = int(time.time() * 1000)
+                        action_results.append({
+                            "action": a,
+                            "selector": sel or None,
+                            "value": val if val != "" else None,
+                            "status": "error",
+                            "detail": str(e)[:200],
+                            "url_after": page.url,
+                            "duration_ms": ended_ms - started_ms,
+                        })
 
             title = await page.title()
             current_url = page.url
