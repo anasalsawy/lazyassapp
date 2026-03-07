@@ -906,8 +906,7 @@ async function executeTool(
         return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
-        // Multi-agent browser system: Analyst→Director→Navigator via Browser Use
-        const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+        // Multi-agent browser system: Researcher→Planner→Playwright Bridge
         const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
         const taskStr = (args.task as string) || "";
         const startUrl = (args.start_url as string) || "";
@@ -934,44 +933,40 @@ async function executeTool(
           }
         }
 
-        // Step 2: Delegate to multi-agent browser-agent function
+        // Step 2: Delegate to multi-agent browser-agent function (uses Playwright bridge)
         let agentResult: any = null;
         let agentError: string | null = null;
 
-        if (!BU_API_KEY) {
-          agentError = "BROWSER_USE_API_KEY not configured.";
-        } else {
-          try {
-            const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-            const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        try {
+          const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+          const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-            const agentRes = await fetch(`${supabaseUrl}/functions/v1/browser-agent`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${serviceKey}`,
-                "Content-Type": "application/json",
-                apikey: serviceKey,
-              },
-              body: JSON.stringify({
-                action: "run",
-                goal: taskStr,
-                start_url: startUrl || undefined,
-                context: { userId, source: "manus_agent" },
-              }),
-            });
+          const agentRes = await fetch(`${supabaseUrl}/functions/v1/browser-agent`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${serviceKey}`,
+              "Content-Type": "application/json",
+              apikey: serviceKey,
+            },
+            body: JSON.stringify({
+              action: "run",
+              goal: taskStr,
+              start_url: startUrl || undefined,
+              context: { userId, source: "manus_agent" },
+            }),
+          });
 
-            if (agentRes.ok) {
-              agentResult = await agentRes.json();
-              console.log(`[browser_task] Multi-agent browser task started: ${agentResult.runId}`);
-            } else {
-              const errText = await agentRes.text();
-              agentError = `Browser agent failed (${agentRes.status}): ${errText.slice(0, 500)}`;
-              console.error(`[browser_task] Browser agent error: ${agentError}`);
-            }
-          } catch (err: any) {
-            agentError = err?.message || "Browser agent request failed.";
-            console.error("[browser_task] Browser agent error:", err);
+          if (agentRes.ok) {
+            agentResult = await agentRes.json();
+            console.log(`[browser_task] Multi-agent browser task started: ${agentResult.runId}`);
+          } else {
+            const errText = await agentRes.text();
+            agentError = `Browser agent failed (${agentRes.status}): ${errText.slice(0, 500)}`;
+            console.error(`[browser_task] Browser agent error: ${agentError}`);
           }
+        } catch (err: any) {
+          agentError = err?.message || "Browser agent request failed.";
+          console.error("[browser_task] Browser agent error:", err);
         }
 
         // Log
