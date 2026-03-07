@@ -756,11 +756,6 @@ serve(async (req) => {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  if (!BRIDGE_KEY) {
-    return new Response(JSON.stringify({ error: "BROWSER_USE_BRIDGE_API_KEY not configured" }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
   if (!OPENAI_KEY) {
     return new Response(JSON.stringify({ error: "OPENAI_API_KEY not configured" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -817,7 +812,7 @@ serve(async (req) => {
         const backgroundWork = async () => {
           try {
             const result = await runTwoAgentLoop(
-              taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY,
+              taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY || "", OPENAI_KEY!, FIRECRAWL_KEY,
             );
             await supabase.from("agent_runs").update({
               status: result.success ? "completed" : "failed",
@@ -866,7 +861,7 @@ serve(async (req) => {
         }
 
         const result = await runTwoAgentLoop(
-          taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY,
+          taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY || "", OPENAI_KEY!, FIRECRAWL_KEY,
         );
 
         return new Response(JSON.stringify(result), {
