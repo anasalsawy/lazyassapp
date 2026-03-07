@@ -496,40 +496,52 @@ async function runTwoAgentLoop(
 
       // ── CHECK CONTROL COMMANDS (pause/resume/stop/approve) ─────
       const controlCmds = await fetchControlCommands(supabase, runId);
-      for (const cmd of controlCmds) {
-        if (cmd === "stop") {
-          await log("info", "🛑 Operator sent STOP command");
-          await supabase.from("agent_runs").update({
-            status: "failed", ended_at: new Date().toISOString(),
-            error_message: "Stopped by operator",
-          }).eq("id", runId);
-          return { success: false, error: "Stopped by operator", stepsUsed: stepCount, milestones };
-        }
-        if (cmd === "pause") {
-          await log("info", "⏸️ Operator sent PAUSE command");
-          await supabase.from("agent_runs").update({ status: "paused" }).eq("id", runId);
-          // Wait loop: poll every 3s for resume/stop
-          let paused = true;
-          while (paused) {
-            await new Promise(r => setTimeout(r, 3000));
-            const resumeCmds = await fetchControlCommands(supabase, runId);
-            for (const rc of resumeCmds) {
-              if (rc === "resume") { paused = false; await log("info", "▶️ Operator sent RESUME command"); }
-              if (rc === "stop") {
-                await log("info", "🛑 Operator sent STOP while paused");
-                await supabase.from("agent_runs").update({
-                  status: "failed", ended_at: new Date().toISOString(),
-                  error_message: "Stopped by operator",
-                }).eq("id", runId);
-                return { success: false, error: "Stopped by operator", stepsUsed: stepCount, milestones };
-              }
+      // Resolve contradictions in the same batch: if both pause+resume exist, they cancel out
+      const hasStop = controlCmds.includes("stop");
+      const hasPause = controlCmds.includes("pause");
+      const hasResume = controlCmds.includes("resume");
+      const hasApprove = controlCmds.includes("approve");
+
+      if (hasStop) {
+        await log("info", "🛑 Operator sent STOP command");
+        await supabase.from("agent_runs").update({
+          status: "failed", ended_at: new Date().toISOString(),
+          error_message: "Stopped by operator",
+        }).eq("id", runId);
+        return { success: false, error: "Stopped by operator", stepsUsed: stepCount, milestones };
+      }
+      if (hasApprove) {
+        await log("info", "✅ Operator approved — continuing");
+      }
+      if (hasPause && !hasResume) {
+        await log("info", "⏸️ Operator sent PAUSE command");
+        await supabase.from("agent_runs").update({ status: "paused" }).eq("id", runId);
+        // Wait loop: poll every 3s for resume/stop (max 120s to avoid edge timeout)
+        let paused = true;
+        let pauseWaitMs = 0;
+        const maxPauseMs = 120_000;
+        while (paused && pauseWaitMs < maxPauseMs) {
+          await new Promise(r => setTimeout(r, 3000));
+          pauseWaitMs += 3000;
+          const resumeCmds = await fetchControlCommands(supabase, runId);
+          for (const rc of resumeCmds) {
+            if (rc === "resume") { paused = false; await log("info", "▶️ Operator sent RESUME command"); }
+            if (rc === "stop") {
+              await log("info", "🛑 Operator sent STOP while paused");
+              await supabase.from("agent_runs").update({
+                status: "failed", ended_at: new Date().toISOString(),
+                error_message: "Stopped by operator",
+              }).eq("id", runId);
+              return { success: false, error: "Stopped by operator", stepsUsed: stepCount, milestones };
             }
           }
-          await supabase.from("agent_runs").update({ status: "running" }).eq("id", runId);
         }
-        if (cmd === "approve") {
-          await log("info", "✅ Operator approved — continuing");
+        if (paused) {
+          await log("warn", "⏸️ Pause timeout (120s) — auto-resuming");
         }
+        await supabase.from("agent_runs").update({ status: "running" }).eq("id", runId);
+      } else if (hasPause && hasResume) {
+        await log("info", "⏸️↔️▶️ Pause+Resume in same batch — cancelled out, continuing");
       }
 
       // ── PLANNER: decide next command batch ──────────────────────
