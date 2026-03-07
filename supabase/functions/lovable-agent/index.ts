@@ -368,6 +368,14 @@ Let me check your resume status and start the optimization pipeline.
 [Uses invoke_edge_function to call optimize-resume with action: start]
 Your resume optimization has started! The agent is using ChatGPT Deep Research to analyze and improve your resume. I'll check progress — this typically takes 5-10 minutes.`;
 
+const RESPONSE_STYLE_GUARDRAIL = `
+## Response Length Guardrail (HIGHEST PRIORITY)
+- Default to 1-3 short sentences.
+- For yes/no questions, start with "Yes." or "No." and add at most one short follow-up sentence.
+- Never add unrelated history, analogies, or long background unless the user explicitly asks for detail.
+- If tools were used, summarize only the key outcome in at most 2 short sentences.
+`;
+
 // ── Tool Definitions — ALL 16 from docs/AgentTools-2.json + 5 real tools ────
 const AGENT_TOOLS = [
   // ========== REAL BACKEND TOOLS ==========
@@ -1553,7 +1561,7 @@ serve(async (req) => {
       : "";
 
     const apiMessages = [
-      { role: "system", content: SYSTEM_PROMPT + contextMessage },
+      { role: "system", content: `${SYSTEM_PROMPT}\n\n${RESPONSE_STYLE_GUARDRAIL}${contextMessage}` },
       ...messages,
     ];
 
@@ -1845,7 +1853,7 @@ serve(async (req) => {
               messages: [
                 ...apiMessages,
                 ...(finalContent ? [{ role: "assistant", content: finalContent }] : []),
-                { role: "user", content: "Please provide your final response now, incorporating any tool results above. Do NOT reveal raw API keys or secret values to the user — only show masked versions. Summarize what you did and the results. When reporting pipeline status, be clear about what happened and next steps." },
+                { role: "user", content: "Provide the final user-facing reply now. Keep it concise (1-3 short sentences max unless the user explicitly asks for detail). For yes/no questions, begin with 'Yes.' or 'No.'. Do not add unrelated background. Do NOT reveal raw API keys or secret values to the user — only masked values if needed." },
               ],
               stream: true,
             }),
