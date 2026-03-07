@@ -199,6 +199,48 @@ Output EXACTLY one JSON object with one of these top-level keys:
 Do not output markdown. Do not output explanations outside JSON.`;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// COMPACT BRIDGE RESULT — truncate before sending to LLM
+// ═══════════════════════════════════════════════════════════════════════════
+function compactBridgeResult(raw: any): any {
+  if (!raw || typeof raw !== "object") return raw;
+  const compact: any = {
+    status: raw.status,
+    current_url: raw.current_url || raw.url || null,
+    page_title: raw.page_title || raw.title || null,
+  };
+  // Truncate page_content to 4000 chars
+  if (raw.page_content) {
+    compact.page_content = raw.page_content.slice(0, 4000);
+  } else if (raw.content) {
+    compact.page_content = raw.content.slice(0, 4000);
+  }
+  // Truncate html
+  if (raw.html) compact.html = raw.html.slice(0, 2000);
+  // Limit array fields
+  if (Array.isArray(raw.extracted)) {
+    compact.extracted = raw.extracted.slice(0, 40);
+  }
+  if (Array.isArray(raw.links)) compact.links = raw.links.slice(0, 40);
+  if (Array.isArray(raw.forms)) compact.forms = raw.forms.slice(0, 30);
+  if (Array.isArray(raw.buttons)) compact.buttons = raw.buttons.slice(0, 30);
+  // Pass action_results through (small)
+  if (raw.action_results) compact.action_results = raw.action_results;
+  return compact;
+}
+
+// Helper: format actions into micro-action detail for browser_steps
+function formatActionsDetail(actions: any[] | null | undefined, actionResults: any[] | null | undefined): any[] {
+  if (!actions || !Array.isArray(actions)) return [];
+  return actions.map((a: any, i: number) => ({
+    action: a.action || "unknown",
+    selector: a.selector || null,
+    value: a.value || null,
+    result_status: actionResults?.[i]?.status || (actionResults?.[i]?.success !== false ? "ok" : "error"),
+    short_result_text: actionResults?.[i]?.detail?.slice(0, 200) || null,
+  }));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // BRIDGE API — calls simple /run-task endpoint (synchronous Playwright)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -471,12 +513,12 @@ async function runTwoAgentLoop(
     }
 
     // Synthetic initial result for the Planner
-    let lastExecutionResult: any = {
+    let lastExecutionResult: any = compactBridgeResult({
       status: "success",
       commands_executed: 0,
-      result: initialPageContent.slice(0, 6000) || "Ready to start — no initial page loaded yet.",
+      page_content: initialPageContent || "Ready to start — no initial page loaded yet.",
       current_url: startUrl || null,
-    };
+    });
 
     // ── 4. MAIN PLANNER → BRIDGE LOOP ────────────────────────────────
     while (stepCount < maxSteps) {
@@ -552,7 +594,7 @@ async function runTwoAgentLoop(
           TASK_SPEC: taskSpec,
           RESEARCHER_ROUTE: researcherRoute,
           CURRENT_PHASE: currentPhase,
-          EXECUTION_RESULT: lastExecutionResult,
+          EXECUTION_RESULT: compactBridgeResult(lastExecutionResult),
           HUMAN_INJECTIONS: newInjections.length > 0 ? newInjections : undefined,
           RUN_STATE: {
             run_id: runId,
@@ -713,7 +755,8 @@ async function runTwoAgentLoop(
           browserTask.selector,
         );
 
-        lastExecutionResult = {
+        // Build full result for DB, compact for LLM
+        const fullBridgeResult = {
           status: bridgeResult.status === "success" ? "success" : "failed",
           current_url: bridgeResult.url || browserTask.url,
           page_title: bridgeResult.title || null,
@@ -721,30 +764,40 @@ async function runTwoAgentLoop(
           extracted: bridgeResult.extracted || null,
           action_results: bridgeResult.action_results || null,
         };
+        // LLM only sees compact version
+        lastExecutionResult = compactBridgeResult(fullBridgeResult);
 
-        await log("info", `Bridge → ${lastExecutionResult.status}`, {
-          url: lastExecutionResult.current_url,
-          title: lastExecutionResult.page_title,
-          content_length: (lastExecutionResult.page_content || "").length,
-          has_extracted: !!lastExecutionResult.extracted,
+        // Log each micro-action in order
+        const microActions = formatActionsDetail(browserTask.actions, bridgeResult.action_results);
+        for (const ma of microActions) {
+          await log("info", `  ↳ ${ma.action}${ma.selector ? ` → ${ma.selector}` : ""}${ma.value ? ` = "${ma.value}"` : ""} [${ma.result_status}]`, {
+            action: ma.action, selector: ma.selector, value: ma.value, result: ma.result_status,
+          });
+        }
+
+        await log("info", `Bridge → ${fullBridgeResult.status}`, {
+          url: fullBridgeResult.current_url,
+          title: fullBridgeResult.page_title,
+          content_length: (fullBridgeResult.page_content || "").length,
+          has_extracted: !!fullBridgeResult.extracted,
         });
 
-        // ── PERSIST STEP TO browser_steps ──────────────────────────
+        // ── PERSIST STEP TO browser_steps (with micro-action detail) ──
         await supabase.from("browser_steps").insert({
           run_id: runId, user_id: userId, step_number: stepCount,
           phase_name: currentPhase?.phase_name, phase_id: currentPhase?.phase_id,
           url: browserTask.url,
-          actions: browserTask.actions || [],
+          actions: microActions.length > 0 ? microActions : (browserTask.actions || []),
           selector: browserTask.selector || null,
           expected_outcome: browserTask.expected_outcome || null,
           risk_level: browserTask.risk_level || "low",
-          result_status: lastExecutionResult.status,
-          final_url: lastExecutionResult.current_url,
-          page_title: lastExecutionResult.page_title,
-          page_content_preview: (lastExecutionResult.page_content || "").slice(0, 2000),
-          action_results: bridgeResult.action_results || [],
+          result_status: fullBridgeResult.status,
+          final_url: fullBridgeResult.current_url,
+          page_title: fullBridgeResult.page_title,
+          page_content_preview: (fullBridgeResult.page_content || "").slice(0, 2000),
+          action_results: microActions.length > 0 ? microActions : (bridgeResult.action_results || []),
           extracted_data: bridgeResult.extracted ? { items: bridgeResult.extracted } : null,
-          error_message: lastExecutionResult.status === "failed" ? "Bridge returned failure" : null,
+          error_message: fullBridgeResult.status === "failed" ? "Bridge returned failure" : null,
           planner_decision_type: "BROWSER_TASK",
           started_at: new Date(bridgeStartedAt).toISOString(),
           completed_at: new Date().toISOString(),
@@ -1038,10 +1091,10 @@ serve(async (req) => {
             .order("created_at", { ascending: false })
             .limit(20),
           supabase.from("browser_steps")
-            .select("step_number, url, actions, action_results, result_status, final_url, phase_name, page_title, extracted_data, planner_decision_type, duration_ms, error_message")
+            .select("step_number, url, actions, action_results, result_status, final_url, phase_name, page_title, extracted_data, planner_decision_type, duration_ms, error_message, selector, expected_outcome, risk_level")
             .eq("run_id", runId)
             .order("step_number", { ascending: true })
-            .limit(20),
+            .limit(30),
         ]);
 
         return new Response(JSON.stringify({
