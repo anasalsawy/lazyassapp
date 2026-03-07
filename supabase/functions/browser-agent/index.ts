@@ -880,7 +880,7 @@ serve(async (req) => {
         const backgroundWork = async () => {
           try {
             const result = await runTwoAgentLoop(
-              taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY,
+              taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY, agentRun?.id,
             );
             await supabase.from("agent_runs").update({
               status: result.success ? "completed" : "failed",
@@ -929,7 +929,7 @@ serve(async (req) => {
         }
 
         const result = await runTwoAgentLoop(
-          taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY,
+          taskSpec, userId, supabase, BRIDGE_URL!, BRIDGE_KEY!, OPENAI_KEY!, FIRECRAWL_KEY, undefined,
         );
 
         return new Response(JSON.stringify(result), {
@@ -970,6 +970,44 @@ serve(async (req) => {
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      // ── CONTROL — pause / resume / stop / approve ─────────────
+      case "control": {
+        const runId = body.run_id;
+        const command = body.command;
+        const validCommands = ["pause", "resume", "stop", "approve"];
+
+        if (!runId) {
+          return new Response(JSON.stringify({ error: "run_id is required" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        if (!command || !validCommands.includes(command)) {
+          return new Response(JSON.stringify({ error: `command must be one of: ${validCommands.join(", ")}` }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const { data: ctrlTask, error: ctrlErr } = await supabase.from("agent_tasks").insert({
+          user_id: userId,
+          task_type: "browser_control",
+          status: "pending",
+          payload: {
+            run_id: runId,
+            command,
+            issued_at: new Date().toISOString(),
+          },
+        }).select().single();
+
+        if (ctrlErr) throw ctrlErr;
+
+        return new Response(JSON.stringify({
+          success: true,
+          control_id: ctrlTask?.id,
+          command,
+          message: `Control command '${command}' queued for run ${runId}. Will take effect on next cycle.`,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       // ── STATUS ─────────────────────────────────────────────────
       case "status": {
         const runId = body.run_id;
@@ -980,16 +1018,24 @@ serve(async (req) => {
           .single();
         if (!run) throw new Error("Run not found");
 
-        const { data: logs } = await supabase.from("agent_logs")
-          .select("message, metadata, created_at")
-          .eq("user_id", userId)
-          .eq("agent_name", "browser_agent")
-          .order("created_at", { ascending: false })
-          .limit(20);
+        const [logsRes, stepsRes] = await Promise.all([
+          supabase.from("agent_logs")
+            .select("message, metadata, created_at")
+            .eq("user_id", userId)
+            .eq("agent_name", "browser_agent")
+            .order("created_at", { ascending: false })
+            .limit(20),
+          supabase.from("browser_steps")
+            .select("step_number, url, actions, action_results, result_status, final_url, phase_name, page_title, extracted_data, planner_decision_type, duration_ms, error_message")
+            .eq("run_id", runId)
+            .order("step_number", { ascending: true })
+            .limit(20),
+        ]);
 
         return new Response(JSON.stringify({
           run,
-          recentLogs: logs || [],
+          recentLogs: logsRes.data || [],
+          recentSteps: stepsRes.data || [],
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
