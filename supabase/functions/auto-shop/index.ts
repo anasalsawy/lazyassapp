@@ -56,9 +56,8 @@ function shuffleArray<T>(array: T[]): T[] {
 }
 
 // Bridge-only execution — no cloud fallback
-const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL");
-const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY");
-const BU_API_BASE = "https://api.browser-use.com/api/v2"; // Still used for session management in login flows
+const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL") || "https://browser-use-bridge.onrender.com";
+const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY") || "";
 
 // Retry-til-die constants
 const RETRY_SITES = [
@@ -81,35 +80,36 @@ interface MissionState {
 }
 
 async function runBridgeTask(task: string, startUrl: string, maxSteps: number, proxy?: { server: string; username?: string; password?: string }): Promise<{ success: boolean; taskId?: string; liveViewUrl?: string; error?: string; source: string }> {
-  // Try bridge first
-  if (BRIDGE_URL && BRIDGE_API_KEY) {
-    try {
-      console.log(`[AutoShop] Attempting bridge: ${BRIDGE_URL}`);
-      const bridgePayload: Record<string, unknown> = { task, start_url: startUrl, max_steps: maxSteps };
-      if (proxy?.server) {
-        bridgePayload.proxy = { server: proxy.server, username: proxy.username, password: proxy.password };
-      }
-      const res = await fetch(`${BRIDGE_URL}/run-task`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-API-Key": BRIDGE_API_KEY },
-        body: JSON.stringify(bridgePayload),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const taskId = data.task_id || data.id;
-        const liveViewUrl = data.live_url || data.liveUrl || data.debug_url || null;
-        console.log(`[AutoShop] Bridge task started: ${taskId}, liveView: ${liveViewUrl}`);
-        return { success: true, taskId, liveViewUrl, source: "bridge" };
-      }
-      console.warn(`[AutoShop] Bridge returned ${res.status}`);
-      return { success: false, error: `Bridge returned ${res.status}`, source: "bridge" };
-    } catch (e) {
-      console.warn(`[AutoShop] Bridge unreachable:`, e);
-      return { success: false, error: e instanceof Error ? e.message : String(e), source: "bridge" };
-    }
+  if (!BRIDGE_URL) {
+    return { success: false, error: "Local/hosted Playwright bridge is not reachable: https://browser-use-bridge.onrender.com", source: "none" };
   }
+  try {
+    console.log(`[AutoShop] Attempting bridge: ${BRIDGE_URL}`);
+    const bridgePayload: Record<string, unknown> = { url: startUrl, extract_text: true };
+    if (proxy?.server) {
+      bridgePayload.proxy = { server: proxy.server, username: proxy.username, password: proxy.password };
+    }
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
 
-  return { success: false, error: "No bridge configured (BROWSER_USE_BRIDGE_URL not set)", source: "none" };
+    const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(bridgePayload),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const taskId = data.task_id || data.id || crypto.randomUUID();
+      console.log(`[AutoShop] Bridge task completed: ${taskId}`);
+      return { success: true, taskId, source: "bridge" };
+    }
+    const errText = await res.text();
+    console.warn(`[AutoShop] Bridge returned ${res.status}: ${errText.slice(0, 200)}`);
+    return { success: false, error: `Bridge returned ${res.status}: ${errText.slice(0, 200)}`, source: "bridge" };
+  } catch (e) {
+    console.warn(`[AutoShop] Bridge unreachable:`, e);
+    return { success: false, error: `Local/hosted Playwright bridge is not reachable: ${BRIDGE_URL}`, source: "bridge" };
+  }
 }
 
 interface PollResult {
@@ -126,11 +126,11 @@ interface PollResult {
 }
 
 async function pollTaskStatus(taskId: string, source: string): Promise<PollResult> {
-  if (source === "bridge" && BRIDGE_URL && BRIDGE_API_KEY) {
+  if (source === "bridge" && BRIDGE_URL) {
     try {
-      const res = await fetch(`${BRIDGE_URL}/runs/${taskId}/status`, {
-        headers: { "X-API-Key": BRIDGE_API_KEY },
-      });
+      const headers: Record<string, string> = {};
+      if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+      const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/runs/${taskId}/status`, { headers });
       if (res.ok) {
         const data = await res.json();
         return {
@@ -150,36 +150,15 @@ async function pollTaskStatus(taskId: string, source: string): Promise<PollResul
   return { status: "unknown", error: "Bridge polling failed" };
 }
 
-// Legacy wrapper for code that still uses browserUseApi
-async function browserUseApi(
-  apiKey: string,
-  path: string,
-  init: RequestInit = {}
-): Promise<Response> {
-  const url = `${BU_API_BASE}${path}`;
-  const headers: Record<string, string> = {
-    "X-Browser-Use-API-Key": apiKey,
-    "Content-Type": "application/json",
-    ...(init.headers as Record<string, string> || {}),
-  };
-  console.log(`[BrowserUse] ${init.method || "GET"} ${path}`);
-  return fetch(url, { ...init, headers });
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-    if (!BU_API_KEY) {
-      throw new Error("BROWSER_USE_API_KEY is not configured");
-    }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -205,39 +184,39 @@ serve(async (req) => {
         return await handleCreateProfile(supabase, user.id);
       }
       case "start_login": {
-         await cleanupStaleSessions(supabase, user.id, BU_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
+        await cleanupStaleSessions(supabase, user.id);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail");
       }
       case "confirm_login": {
-        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
+        return await handleConfirmLogin(supabase, user.id, payload.site || "gmail");
       }
       case "cancel_login": {
-        return await handleCancelLogin(supabase, user.id, BU_API_KEY);
+        return await handleCancelLogin(supabase, user.id);
       }
       case "restart_session": {
-        await cleanupStaleSessions(supabase, user.id, BU_API_KEY);
-        return await handleStartLogin(supabase, user.id, payload.site || "gmail", BU_API_KEY);
+        await cleanupStaleSessions(supabase, user.id);
+        return await handleStartLogin(supabase, user.id, payload.site || "gmail");
       }
       case "cleanup_sessions": {
-        return await handleCleanupSessions(supabase, user.id, BU_API_KEY);
+        return await handleCleanupSessions(supabase, user.id);
       }
       case "start_order": {
-        return await handleStartOrder(supabase, user, payload, BU_API_KEY, LOVABLE_API_KEY || "", supabaseUrl, supabaseServiceKey);
+        return await handleStartOrder(supabase, user, payload, LOVABLE_API_KEY || "", supabaseUrl, supabaseServiceKey);
       }
       case "check_order_status": {
         return await handleCheckOrderStatus(supabase, user.id, payload.orderId!);
       }
       case "sync_all_orders": {
-        return await handleSyncAllOrders(supabase, user, BU_API_KEY, supabaseUrl, LOVABLE_API_KEY || "");
+        return await handleSyncAllOrders(supabase, user, supabaseUrl, LOVABLE_API_KEY || "");
       }
       case "sync_order_emails": {
-        return await handleSyncOrderEmails(supabase, user.id, BU_API_KEY, LOVABLE_API_KEY || "");
+        return await handleSyncOrderEmails(supabase, user.id, LOVABLE_API_KEY || "");
       }
       case "set_proxy": {
         return await handleSetProxy(supabase, user.id, payload);
       }
       case "test_proxy": {
-        return await handleTestProxy(supabase, user.id, BU_API_KEY);
+        return await handleTestProxy(supabase, user.id);
       }
       case "toggle_browserstack": {
         return await handleToggleBrowserstack(supabase, user.id, payload.useBrowserstack ?? false);

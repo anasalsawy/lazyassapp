@@ -731,9 +731,7 @@ async function executeTool(
 
       // ── Browser: view / navigate / restart (FUNCTIONAL) ───────────────
       case "browser_view": {
-        const BU_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-        if (!BU_KEY) return JSON.stringify({ error: "Browser automation not configured — BROWSER_USE_API_KEY needed." });
-        return JSON.stringify({ status: "ready", provider: "browser_use", message: "Browser Use automation is available. Use browser_task to start a task." });
+        return JSON.stringify({ status: "ready", provider: "playwright_bridge", message: "Playwright bridge automation is available. Use browser_task to start a task." });
       }
 
       case "browser_navigate": {
