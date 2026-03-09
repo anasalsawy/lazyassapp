@@ -1571,7 +1571,7 @@ serve(async (req) => {
       .reverse()
       .find((m: any) => m?.role === "user" && typeof m?.content === "string")
       ?.content ?? "";
-    const finalResponseMaxTokens = isYesNoStylePrompt(latestUserText) ? 24 : 180;
+    const finalResponseMaxTokens = isYesNoStylePrompt(latestUserText) ? 24 : 400;
 
     const apiMessages = [
       { role: "system", content: `${SYSTEM_PROMPT}\n\n${RESPONSE_STYLE_GUARDRAIL}${contextMessage}` },
