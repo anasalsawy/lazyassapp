@@ -1855,6 +1855,14 @@ serve(async (req) => {
 
           sendEvent("phase", { status: "generating" });
 
+          // Build final messages — if the tool loop already produced content, include it
+          const finalMessages = [
+            { role: "system", content: `${SYSTEM_PROMPT}\n\n${RESPONSE_STYLE_GUARDRAIL}` },
+            ...apiMessages.slice(1), // skip the original system message (already included above)
+            ...(finalContent ? [{ role: "assistant", content: finalContent }] : []),
+            { role: "user", content: "Based on the tool results above, provide the final user-facing reply now. Synthesize the information from the tool outputs into a natural, conversational answer. Keep it concise (1-3 short sentences max unless the user explicitly asks for detail). For yes/no questions, begin with 'Yes.' or 'No.'. Do not echo these instructions. Do NOT reveal raw API keys or secret values to the user." },
+          ];
+
           const streamResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -1864,11 +1872,7 @@ serve(async (req) => {
             body: JSON.stringify({
               model: "google/gemini-3-flash-preview",
               max_tokens: finalResponseMaxTokens,
-              messages: [
-                ...apiMessages,
-                ...(finalContent ? [{ role: "assistant", content: finalContent }] : []),
-                { role: "user", content: "Provide the final user-facing reply now. Keep it concise (1-3 short sentences max unless the user explicitly asks for detail). For yes/no questions, begin with 'Yes.' or 'No.'. Do not add unrelated background. Do NOT reveal raw API keys or secret values to the user — only masked values if needed." },
-              ],
+              messages: finalMessages,
               stream: true,
             }),
           });
