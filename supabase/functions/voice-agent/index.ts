@@ -327,8 +327,7 @@ function buildEndCallTwiml(speech: string, voice = POLLY_VOICE): string {
 }
 
 function selectVoice(voice: string): string {
-  // Kept for API compatibility but ElevenLabs voice is set in elevenlabs-tts function
-  return voice || "elevenlabs-sarah";
+  return POLLY_VOICE;
 }
 
 function getSupabase() {
