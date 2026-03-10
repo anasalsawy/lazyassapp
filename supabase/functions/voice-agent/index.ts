@@ -283,8 +283,9 @@ function escapeXml(str: string): string {
 function buildGatherTwiml(speech: string, webhookUrl: string, voice = POLLY_VOICE): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST" bargeIn="true">
-    <Say voice="${escapeXml(voice)}">${escapeXml(speech)}</Say>
+  <Say voice="${escapeXml(voice)}">${escapeXml(speech)}</Say>
+  <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
+    <Pause length="1"/>
   </Gather>
   <Gather input="speech dtmf" speechTimeout="4" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Say voice="${escapeXml(voice)}">I didn't catch that. Are you still there?</Say>
