@@ -273,39 +273,33 @@ async function runCaller(
   return { speech: speech || "I apologize, could you repeat that?", shouldEnd };
 }
 
-// ── TwiML Builders (ElevenLabs TTS via <Play>) ─────────────────────────────
+// ── TwiML Builders (Twilio Polly TTS via <Say>) ────────────────────────────
+const POLLY_VOICE = "Polly.Joanna-Neural"; // Warm, natural female neural voice
+
 function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-function ttsUrl(text: string, voiceId?: string): string {
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
-  const params = new URLSearchParams({ text });
-  if (voiceId) params.set("voice_id", voiceId);
-  return `${SUPABASE_URL}/functions/v1/elevenlabs-tts?${params.toString()}`;
-}
-
-function buildGatherTwiml(speech: string, webhookUrl: string, voice = "Polly.Matthew-Neural"): string {
-  const audioUrl = ttsUrl(speech);
+function buildGatherTwiml(speech: string, webhookUrl: string, voice = POLLY_VOICE): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST" bargeIn="true">
-    <Play>${escapeXml(audioUrl)}</Play>
+    <Say voice="${escapeXml(voice)}">${escapeXml(speech)}</Say>
   </Gather>
   <Gather input="speech dtmf" speechTimeout="4" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
-    <Play>${escapeXml(ttsUrl("I didn't catch that. Are you still there?"))}</Play>
+    <Say voice="${escapeXml(voice)}">I didn't catch that. Are you still there?</Say>
   </Gather>
-  <Play>${escapeXml(ttsUrl("It seems like the connection dropped. Have a great day!"))}</Play>
+  <Say voice="${escapeXml(voice)}">It seems like the connection dropped. Have a great day!</Say>
 </Response>`;
 }
 
 // Build TwiML that sends a DTMF tone (presses a button on an IVR)
-function buildDtmfTwiml(digit: string, webhookUrl: string, speechAfter?: string, voice = "Polly.Matthew-Neural"): string {
-  const playAfter = speechAfter ? `\n  <Play>${escapeXml(ttsUrl(speechAfter))}</Play>` : "";
+function buildDtmfTwiml(digit: string, webhookUrl: string, speechAfter?: string, voice = POLLY_VOICE): string {
+  const sayAfter = speechAfter ? `\n  <Say voice="${escapeXml(voice)}">${escapeXml(speechAfter)}</Say>` : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Play digits="${escapeXml(digit)}"/>
-  <Pause length="2"/>${playAfter}
+  <Pause length="2"/>${sayAfter}
   <Gather input="speech dtmf" speechTimeout="3" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(webhookUrl)}" method="POST">
     <Pause length="1"/>
   </Gather>
@@ -313,7 +307,7 @@ function buildDtmfTwiml(digit: string, webhookUrl: string, speechAfter?: string,
 }
 
 // Build TwiML for waiting silently (hold/transfer)
-function buildWaitTwiml(webhookUrl: string, voice = "Polly.Matthew-Neural"): string {
+function buildWaitTwiml(webhookUrl: string, voice = POLLY_VOICE): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Pause length="5"/>
@@ -323,10 +317,10 @@ function buildWaitTwiml(webhookUrl: string, voice = "Polly.Matthew-Neural"): str
 </Response>`;
 }
 
-function buildEndCallTwiml(speech: string, voice = "Polly.Matthew-Neural"): string {
+function buildEndCallTwiml(speech: string, voice = POLLY_VOICE): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Play>${escapeXml(ttsUrl(speech))}</Play>
+  <Say voice="${escapeXml(voice)}">${escapeXml(speech)}</Say>
   <Pause length="1"/>
   <Hangup/>
 </Response>`;
