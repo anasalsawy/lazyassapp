@@ -753,6 +753,7 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
           lastAnalysis: analystReport,
           lastDirective: directorResult,
           pendingTranscriptBuffer: "",
+          consecutiveSilences: 0,
         },
       }).eq("id", taskId);
 
