@@ -595,6 +595,9 @@ serve(async (req) => {
         console.log(`[voice-agent] 🔗 MERGED buffered + current speech: "${fullSpeech}"`);
       }
 
+      // Reset silence counter since we got speech
+      // (will be saved in the main state update later)
+
       // Add user speech to history (full merged version)
       history.push({ role: "user", content: fullSpeech });
 
