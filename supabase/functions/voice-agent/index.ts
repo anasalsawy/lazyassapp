@@ -546,10 +546,30 @@ serve(async (req) => {
           console.log(`[voice-agent] Silence after buffered speech — flushing buffer: "${pendingBuffer}"`);
           // Fall through to process the buffer as the full speech
         } else {
-          console.log(`[voice-agent] Silence detected, re-gathering...`);
-          return new Response(buildGatherTwiml("I'm still here. Go ahead.", gatherUrl, voice), {
-            headers: { "Content-Type": "text/xml" },
-          });
+          const consecutiveSilences = (result?.consecutiveSilences || 0) + 1;
+          console.log(`[voice-agent] Silence detected (consecutive: ${consecutiveSilences}), re-gathering...`);
+          
+          // Save silence counter
+          await supabase.from("agent_tasks").update({
+            result: { ...result, consecutiveSilences },
+          }).eq("id", taskId);
+
+          // First 2 silences: prompt gently. After that: stay silent (likely on hold/IVR music)
+          if (consecutiveSilences <= 2) {
+            const prompts = ["I'm still here. Go ahead.", "Hello? Are you still there?"];
+            return new Response(buildGatherTwiml(prompts[consecutiveSilences - 1], gatherUrl, voice), {
+              headers: { "Content-Type": "text/xml" },
+            });
+          } else {
+            // Silent wait — don't talk over hold music or IVR, just keep listening
+            console.log(`[voice-agent] On hold/waiting — silent re-gather (silence #${consecutiveSilences})`);
+            return new Response(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="speech dtmf" speechTimeout="4" speechModel="experimental_conversations" enhanced="true" actionOnEmptyResult="true" action="${escapeXml(gatherUrl)}" method="POST">
+    <Pause length="8"/>
+  </Gather>
+</Response>`, { headers: { "Content-Type": "text/xml" } });
+          }
         }
       } else if (isFragment) {
         // Short fragment — buffer it and re-gather without running agents
@@ -574,6 +594,9 @@ serve(async (req) => {
       if (pendingBuffer) {
         console.log(`[voice-agent] 🔗 MERGED buffered + current speech: "${fullSpeech}"`);
       }
+
+      // Reset silence counter since we got speech
+      // (will be saved in the main state update later)
 
       // Add user speech to history (full merged version)
       history.push({ role: "user", content: fullSpeech });
@@ -730,6 +753,7 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
           lastAnalysis: analystReport,
           lastDirective: directorResult,
           pendingTranscriptBuffer: "",
+          consecutiveSilences: 0,
         },
       }).eq("id", taskId);
 
