@@ -23,8 +23,11 @@ type CallState = {
   callSid?: string;
   turnCount: number;
   conversationHistory: Array<{ role: string; content: string }>;
-  lastAnalysis: any;
-  lastDirective: any;
+  lastAnalysis?: any;
+  lastDirective?: any; // legacy shape
+  lastDirectorDirective?: string | null;
+  directorDirectiveHistory?: Array<{ directive: string; turnNumber?: number; createdAt?: string }>;
+  operatorInjectionHistory?: Array<{ instruction: string; status?: string; createdAt?: string; consumedAt?: string }>;
   pendingInjections: number;
   config: any;
 };
