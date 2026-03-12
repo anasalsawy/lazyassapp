@@ -30,18 +30,20 @@ function getSupabase() {
   );
 }
 
-/** Call the Lovable AI gateway */
+/** Call OpenAI API directly with gpt-oss-120b */
 async function llm(
   systemPrompt: string,
   userMessage: string,
-  model = "google/gemini-2.5-flash",
+  model = "gpt-oss-120b",
 ): Promise<string> {
-  const apiKey = Deno.env.get("LOVABLE_API_KEY");
-  const res = await fetch("https://ai.gateway.lovable.dev/chat/completions", {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(apiKey ? { "Lovable-API-Key": apiKey } : {}),
+      "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model,
@@ -422,7 +424,7 @@ serve(async (req) => {
 
     let spokenResponse: string;
     try {
-      spokenResponse = await llm(CALLER_SYSTEM, callerInput, "google/gemini-2.5-flash-lite");
+      spokenResponse = await llm(CALLER_SYSTEM, callerInput);
     } catch {
       spokenResponse = "I'm sorry, could you repeat that?";
     }
