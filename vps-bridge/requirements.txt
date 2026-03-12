@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pydantic
+playwright
+browser-use
+langchain-openai
+python-dotenv
