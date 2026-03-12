@@ -86,7 +86,7 @@ export default function Agent() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showVoice, setShowVoice] = useState(false);
-  const [voiceAgentId, setVoiceAgentId] = useState("");
+  const [voiceAgentId, setVoiceAgentId] = useState("agent_8401kkgdds3de8p949kwdvhhhgr1");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
