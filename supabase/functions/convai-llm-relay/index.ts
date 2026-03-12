@@ -36,9 +36,13 @@ async function llm(
   userMessage: string,
   model = "google/gemini-2.5-flash",
 ): Promise<string> {
+  const apiKey = Deno.env.get("LOVABLE_API_KEY");
   const res = await fetch("https://ai.gateway.lovable.dev/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(apiKey ? { "Lovable-API-Key": apiKey } : {}),
+    },
     body: JSON.stringify({
       model,
       messages: [
