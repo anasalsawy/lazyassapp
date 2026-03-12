@@ -415,6 +415,39 @@ serve(async (req) => {
 
     console.log("[relay] Director:", directive.substring(0, 250));
 
+    // Persist Director output so the operator UI can show strategy in real time
+    if (taskId) {
+      try {
+        const supabase = getSupabase();
+        const { data: task } = await supabase
+          .from("agent_tasks")
+          .select("result")
+          .eq("id", taskId)
+          .single();
+
+        const result = (task?.result as any) || {};
+        const history = Array.isArray(result?.directorDirectiveHistory)
+          ? [...result.directorDirectiveHistory]
+          : [];
+
+        history.push({
+          directive,
+          turnNumber,
+          createdAt: new Date().toISOString(),
+        });
+
+        await supabase.from("agent_tasks").update({
+          result: {
+            ...result,
+            lastDirectorDirective: directive,
+            directorDirectiveHistory: history.slice(-60),
+          },
+        }).eq("id", taskId);
+      } catch (e) {
+        console.warn("[relay] Could not persist director directive:", e);
+      }
+    }
+
     // Check for END_CALL
     if (directive.includes("END_CALL")) {
       const isSuccess = directive.toLowerCase().includes("objective met");
@@ -424,17 +457,25 @@ serve(async (req) => {
 
       // Log outcome
       try {
-        const taskIdMatch = systemMessage.match(/task_id[:\s="']+([a-f0-9-]+)/i);
-        if (taskIdMatch) {
+        if (taskId) {
           const supabase = getSupabase();
+          const { data: existingTask } = await supabase
+            .from("agent_tasks")
+            .select("result")
+            .eq("id", taskId)
+            .single();
+
+          const existingResult = (existingTask?.result as any) || {};
+
           await supabase.from("agent_tasks").update({
             status: isSuccess ? "completed" : "failed",
             completed_at: new Date().toISOString(),
             result: {
+              ...existingResult,
               objective_met: isSuccess,
               final_directive: directive,
             },
-          }).eq("id", taskIdMatch[1]);
+          }).eq("id", taskId);
         }
       } catch (e) {
         console.warn("[relay] Could not update task:", e);
