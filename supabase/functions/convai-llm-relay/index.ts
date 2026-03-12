@@ -424,7 +424,7 @@ serve(async (req) => {
 
     let spokenResponse: string;
     try {
-      spokenResponse = await llm(CALLER_SYSTEM, callerInput, "google/gemini-2.5-flash-lite");
+      spokenResponse = await llm(CALLER_SYSTEM, callerInput);
     } catch {
       spokenResponse = "I'm sorry, could you repeat that?";
     }
