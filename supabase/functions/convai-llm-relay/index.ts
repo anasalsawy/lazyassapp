@@ -457,9 +457,13 @@ serve(async (req) => {
     const assistantMessages = conversationMessages.filter((m) => m.role === "assistant");
     const lastUserMessage = userMessages.pop()?.content || "";
     const turnNumber = userMessages.length + (lastUserMessage ? 1 : 0);
-    const taskId = systemMessage.match(/task_id[:\s="']+([a-f0-9-]+)/i)?.[1] || null;
 
-    console.log(`[relay] Turn ${turnNumber}, user msgs: ${userMessages.length + (lastUserMessage ? 1 : 0)}, assistant msgs: ${assistantMessages.length}, lastUser: "${lastUserMessage.substring(0, 60)}"`);
+    const relayContext = await resolveRelayContext(systemMessage, body);
+    const taskId = relayContext.taskId;
+
+    console.log(
+      `[relay] Turn ${turnNumber}, user msgs: ${userMessages.length + (lastUserMessage ? 1 : 0)}, assistant msgs: ${assistantMessages.length}, taskId: ${taskId || "none"}, callSid: ${relayContext.callSid || "none"}, conv: ${relayContext.conversationId || "none"}, lastUser: "${lastUserMessage.substring(0, 60)}"`,
+    );
 
     // No conversation yet and no user message — generate opening line
     if (!lastUserMessage && conversationMessages.length === 0) {
