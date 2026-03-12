@@ -460,10 +460,23 @@ export default function CallCenter() {
 
   const killCall = async (taskId: string) => {
     try {
-      const { error } = await supabase.functions.invoke("voice-agent", {
-        body: { action: "end-call", taskId },
-      });
-      if (error) throw error;
+      if (!session?.access_token) throw new Error("Not authenticated");
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=end-call`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ task_id: taskId }),
+        },
+      );
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.error || "Unknown error");
+
       toast.success("Call terminated");
       if (activeCall?.taskId === taskId) {
         setActiveCall(null);
