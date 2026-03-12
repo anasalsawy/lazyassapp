@@ -224,8 +224,13 @@ serve(async (req) => {
     }
 
     // ── Step 1: DIRECTOR (analysis + strategy in one pass) ───────────────
+    // Inject current date/time so Director can validate dates
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/Chicago" });
+    const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "America/Chicago" });
+
     const directorSystem = buildDirectorSystem(systemMessage, operatorInjections, turnNumber);
-    const directorInput = `CONVERSATION:\n${transcript}\n\nLATEST HUMAN MESSAGE: "${lastUserMessage}"`;
+    const directorInput = `CURRENT DATE/TIME: ${dateStr}, ${timeStr} (Central Time)\n\nCONVERSATION:\n${transcript}\n\nLATEST HUMAN MESSAGE: "${lastUserMessage}"`;
 
     let directive: string;
     try {
