@@ -207,7 +207,7 @@ serve(async (req) => {
     }
 
     // ── Step 1: DIRECTOR (analysis + strategy in one pass) ───────────────
-    const directorSystem = buildDirectorSystem(systemMessage, operatorInjections);
+    const directorSystem = buildDirectorSystem(systemMessage, operatorInjections, turnNumber);
     const directorInput = `CONVERSATION:\n${transcript}\n\nLATEST HUMAN MESSAGE: "${lastUserMessage}"`;
 
     let directive: string;
