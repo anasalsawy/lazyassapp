@@ -507,16 +507,20 @@ serve(async (req) => {
       return buildResponse("...");
     }
 
-    // ── Fetch operator injections from DB ────────────────────────────────
+    // ── Fetch task payload + operator injections from DB ─────────────────
     let operatorInjections: string[] = [];
+    let taskPayload: Record<string, any> = {};
     try {
       if (taskId) {
         const supabase = getSupabase();
         const { data: task } = await supabase
           .from("agent_tasks")
-          .select("result")
+          .select("result, payload")
           .eq("id", taskId)
           .single();
+
+        // Extract task payload (objective, script, company_name, etc.)
+        taskPayload = (task?.payload as any) || {};
 
         const result = task?.result as any;
         const queued = Array.isArray(result?.operatorInjections)
@@ -555,13 +559,34 @@ serve(async (req) => {
       console.warn("[relay] Could not fetch operator injections:", e);
     }
 
+    // ── Build enriched mission context from DB payload + ElevenLabs system message ──
+    let enrichedMissionContext = systemMessage;
+    if (taskPayload.objective || taskPayload.script || taskPayload.company_name) {
+      const missionParts: string[] = [];
+      if (taskPayload.objective) missionParts.push(`OBJECTIVE: ${taskPayload.objective}`);
+      if (taskPayload.company_name) missionParts.push(`COMPANY: ${taskPayload.company_name}`);
+      if (taskPayload.call_type) missionParts.push(`CALL TYPE: ${taskPayload.call_type}`);
+      if (taskPayload.caller_name) missionParts.push(`CALLER NAME: ${taskPayload.caller_name}`);
+      if (taskPayload.agent_name) missionParts.push(`AGENT NAME: ${taskPayload.agent_name}`);
+      if (taskPayload.tone) missionParts.push(`TONE: ${taskPayload.tone}`);
+      if (taskPayload.success_criteria) missionParts.push(`SUCCESS CRITERIA: ${taskPayload.success_criteria}`);
+      if (taskPayload.constraints) missionParts.push(`CONSTRAINTS: ${taskPayload.constraints}`);
+      if (taskPayload.allowed_actions) missionParts.push(`ALLOWED ACTIONS: ${taskPayload.allowed_actions}`);
+      if (taskPayload.script) missionParts.push(`SCRIPT/INSTRUCTIONS:\n${taskPayload.script}`);
+      
+      const payloadBlock = `\n\n═══ MISSION FROM DATABASE ═══\n${missionParts.join("\n")}\n═══ END MISSION ═══`;
+      enrichedMissionContext = payloadBlock + (systemMessage ? `\n\nELEVENLABS SYSTEM MESSAGE:\n${systemMessage}` : "");
+      
+      console.log(`[relay] Enriched mission context with DB payload: objective="${(taskPayload.objective || "").substring(0, 80)}"`);
+    }
+
     // ── Step 1: DIRECTOR (analysis + strategy in one pass) ───────────────
     // Inject current date/time so Director can validate dates
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/Chicago" });
     const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "America/Chicago" });
 
-    const directorSystem = buildDirectorSystem(systemMessage, operatorInjections, turnNumber);
+    const directorSystem = buildDirectorSystem(enrichedMissionContext, operatorInjections, turnNumber);
     const directorInput = `CURRENT DATE/TIME: ${dateStr}, ${timeStr} (Central Time)\n\nCONVERSATION:\n${transcript}\n\nLATEST HUMAN MESSAGE: "${lastUserMessage}"`;
 
     let directive: string;
