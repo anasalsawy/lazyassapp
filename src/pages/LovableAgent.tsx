@@ -946,10 +946,21 @@ export default function LovableAgent() {
       }
 
       case "call_update":
+        if (data.status === "ringing" || data.status === "running") {
+          setPhase("on_call");
+        }
+
         setCurrentCallState(prev => {
           const updated = prev ? {
             ...prev,
-            status: (data.status === "completed" || data.status === "failed" ? data.status : "running") as CallState["status"],
+            status: (
+              data.status === "ringing" ||
+              data.status === "completed" ||
+              data.status === "failed" ||
+              data.status === "error"
+                ? data.status
+                : "running"
+            ) as CallState["status"],
             turnCount: data.turnCount || prev.turnCount,
             transcript: data.transcript || prev.transcript,
             lastAnalysis: data.lastAnalysis ? (typeof data.lastAnalysis === 'string' ? data.lastAnalysis : JSON.stringify(data.lastAnalysis)) : prev.lastAnalysis,
