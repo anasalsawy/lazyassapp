@@ -84,15 +84,24 @@ serve(async (req) => {
 
         const startUrl = siteUrls[site] || `https://${site}.com`;
 
-        // Navigate to login page via Playwright bridge
+        // Navigate to login page via Playwright bridge with persistent profile
         let taskId = crypto.randomUUID();
         try {
           const headers: Record<string, string> = { "Content-Type": "application/json" };
-          if (BRIDGE_API_KEY) headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+          if (BRIDGE_API_KEY) {
+            headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
+            headers["X-API-Key"] = BRIDGE_API_KEY;
+          }
           const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
             method: "POST",
             headers,
-            body: JSON.stringify({ url: startUrl, extract_text: true }),
+            body: JSON.stringify({
+              url: startUrl,
+              extract_text: true,
+              user_id: user.id,
+              profile_name: site,
+              save_profile: true,
+            }),
           });
           if (res.ok) {
             const data = await res.json();

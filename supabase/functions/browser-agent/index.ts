@@ -251,14 +251,23 @@ async function callBridge(
   actions?: any[] | null,
   extractText: boolean = true,
   selector?: string | null,
-): Promise<{ status: string; url: string; title: string; content: string; extracted: any; action_results: any }> {
+  userId?: string | null,
+  profileName?: string | null,
+): Promise<{ status: string; url: string; title: string; content: string; extracted: any; action_results: any; profile_saved?: boolean }> {
   const baseUrl = bridgeUrl.replace(/\/$/, "");
   const body: any = { url, extract_text: extractText };
   if (actions && actions.length > 0) body.actions = actions;
   if (selector) body.selector = selector;
+  // Persistent profile support — VPS bridge saves/loads cookies per user+site
+  if (userId) body.user_id = userId;
+  if (profileName) body.profile_name = profileName;
+  if (userId && profileName) body.save_profile = true;
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (bridgeKey) headers["Authorization"] = `Bearer ${bridgeKey}`;
+  if (bridgeKey) {
+    headers["Authorization"] = `Bearer ${bridgeKey}`;
+    headers["X-API-Key"] = bridgeKey;
+  }
 
   const res = await fetch(`${baseUrl}/run-task`, {
     method: "POST",
@@ -746,6 +755,15 @@ async function runTwoAgentLoop(
       // ── SEND TO BRIDGE ──────────────────────────────────────────
       const bridgeStartedAt = Date.now();
       try {
+        // Derive profile name from URL domain for persistent sessions
+        let profileName: string | null = null;
+        try {
+          const domain = new URL(browserTask.url).hostname.replace("www.", "").split(".")[0];
+          if (["linkedin", "indeed", "glassdoor", "amazon", "walmart", "target", "bestbuy", "ebay", "google"].includes(domain)) {
+            profileName = domain;
+          }
+        } catch {}
+
         const bridgeResult = await callBridge(
           bridgeUrl,
           bridgeKey,
@@ -753,6 +771,8 @@ async function runTwoAgentLoop(
           browserTask.actions,
           browserTask.extract_text !== false,
           browserTask.selector,
+          userId,
+          profileName,
         );
 
         // Build full result for DB, compact for LLM
