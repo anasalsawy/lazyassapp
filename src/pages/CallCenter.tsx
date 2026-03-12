@@ -486,6 +486,28 @@ export default function CallCenter() {
               /* ── CALL INITIATION FORM ── */
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="max-w-lg mx-auto space-y-6">
+                  {runningCalls.length > 0 && (
+                    <div className="rounded-xl border border-border/40 bg-card/30 p-3 space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        {runningCalls.length} call{runningCalls.length > 1 ? "s" : ""} currently running
+                      </p>
+                      <div className="space-y-2">
+                        {runningCalls.slice(0, 3).map((call) => (
+                          <Button
+                            key={call.taskId}
+                            variant="outline"
+                            size="sm"
+                            className="w-full justify-start"
+                            onClick={() => resumeMonitoring(call.taskId)}
+                          >
+                            <Radio className="w-3.5 h-3.5 mr-2" />
+                            <span className="truncate">{call.objective || call.taskId}</span>
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="text-center space-y-2 mb-8">
                     <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-red-500/20 to-amber-500/20 border border-red-500/30 flex items-center justify-center">
                       <Users className="w-8 h-8 text-red-400" />
