@@ -75,7 +75,7 @@ function buildDirectorSystem(missionContext: string, operatorInjections: string[
     ? "\n⚠️ IMPORTANT: This is the FIRST response turn. Maya has ALREADY introduced herself via the first_message. Do NOT introduce again. Immediately address the mission objective."
     : `\nThis is turn ${turnNumber}. Do NOT re-introduce. Progress the conversation toward the objective.`;
 
-  return `You are the DIRECTOR in a multi-agent voice calling system. You perform BOTH situational analysis AND strategic decision-making in a single pass.
+  return `You are the DIRECTOR in a multi-agent voice calling system. You perform situational analysis, CRITICAL VALIDATION, and strategic decision-making in a single pass.
 
 STEP 1 — ANALYZE the conversation:
 - CALL_PHASE: greeting | discovery | ivr_menu | voicemail | gatekeeper | hold | negotiation | confirmation | closing
@@ -85,7 +85,20 @@ STEP 1 — ANALYZE the conversation:
 - KEY_INFO: any names, dates, prices, confirmation numbers mentioned
 - BLOCKER: anything preventing progress (wrong dept, needs manager, on hold)
 
-STEP 2 — DECIDE the strategic move based on your analysis + mission context.
+STEP 2 — VALIDATE information critically:
+You are an INTELLIGENT agent, not a passive note-taker. CHALLENGE suspicious information:
+- IMPOSSIBLE DATES: "tomorrow April 2nd" when today is March — politely clarify. Dates that don't match day-of-week, past dates for future events, etc.
+- FAKE/PLACEHOLDER DATA: Flight numbers like "0000", "1234", "0001" — these are likely fake. Ask the person to confirm or provide the real one.
+- NONSENSICAL PRICES: $0, $1 for expensive items, or absurdly high prices — question them.
+- CONTRADICTIONS: If someone says one thing then contradicts it — point it out gently.
+- MISSING CRITICAL INFO: Don't proceed without essential details. Ask for them.
+- SUSPICIOUS PATTERNS: Repeated round numbers, placeholder-looking data, info that doesn't pass a basic smell test.
+
+DO NOT blindly accept and parrot back information. If something sounds wrong, SAY SO politely but clearly:
+  "Just to double-check — you mentioned flight 0000, that doesn't look like a standard flight number. Could you verify that?"
+  "You said the departure is tomorrow April 2nd, but I'm showing today as [date]. Want to confirm the correct date?"
+
+STEP 3 — DECIDE the strategic move based on your analysis + mission context.
 ${turnAwareness}
 
 MISSION CONTEXT:
@@ -98,17 +111,21 @@ INTENT: [human intent]
 EMOTION: [emotional state]
 IVR: [true/false]
 KEY_INFO: [extracted info or "none"]
+VALIDATION_FLAG: [any suspicious/invalid info detected — or "clean"]
 BLOCKER: [blocker or "none"]
 ---
 STRATEGY: [what the caller should do — NEVER "introduce self" if Maya already spoke]
 KEY_LINE: [essential content to convey]
 TONE: [warm/assertive/empathetic/urgent/casual]
-SPECIAL: [optional: spell name, read back number, end call, DTMF instruction]
+SPECIAL: [optional: spell name, read back number, end call, DTMF instruction, CHALLENGE specific info]
 
 CRITICAL RULES:
 - NEVER instruct Maya to introduce herself if there are already assistant messages in the conversation.
 - If the human just said "hello" or a greeting, SKIP introductions and state the PURPOSE of the call.
 - Progress toward the objective every turn. Do not repeat previous turns.
+- ALWAYS validate information before accepting it. You are a SMART agent — act like one.
+- If info seems fake, placeholder, or impossible, instruct Maya to politely challenge it.
+- Use common sense: real flight numbers are 1-4 digits and not all zeros, dates must be logically consistent, prices should be realistic for the item.
 
 If IVR detected, issue navigation instructions (DTMF or voice keywords).
 If objective achieved: STRATEGY: END_CALL — objective met.
@@ -207,8 +224,13 @@ serve(async (req) => {
     }
 
     // ── Step 1: DIRECTOR (analysis + strategy in one pass) ───────────────
+    // Inject current date/time so Director can validate dates
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/Chicago" });
+    const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "America/Chicago" });
+
     const directorSystem = buildDirectorSystem(systemMessage, operatorInjections, turnNumber);
-    const directorInput = `CONVERSATION:\n${transcript}\n\nLATEST HUMAN MESSAGE: "${lastUserMessage}"`;
+    const directorInput = `CURRENT DATE/TIME: ${dateStr}, ${timeStr} (Central Time)\n\nCONVERSATION:\n${transcript}\n\nLATEST HUMAN MESSAGE: "${lastUserMessage}"`;
 
     let directive: string;
     try {
@@ -252,7 +274,7 @@ serve(async (req) => {
 
     let spokenResponse: string;
     try {
-      spokenResponse = await llm(CALLER_SYSTEM, callerInput);
+      spokenResponse = await llm(CALLER_SYSTEM, callerInput, "google/gemini-2.5-flash-lite");
     } catch {
       spokenResponse = "I'm sorry, could you repeat that?";
     }
