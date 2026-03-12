@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { SteelSessionEmbed } from "@/components/chat/SteelSessionEmbed";
+import { VoiceRelayAgent } from "@/components/voice/VoiceRelayAgent";
 import { useAuth } from "@/hooks/useAuth";
 import {
   Bot, Send, Loader2, Sparkles, Briefcase, FileText,
-  Search, Mail, Activity, User, Zap,
+  Search, Mail, Activity, User, Zap, Mic,
 } from "lucide-react";
 
 type Msg = { role: "user" | "assistant"; content: string };
