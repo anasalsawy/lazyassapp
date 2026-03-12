@@ -466,7 +466,7 @@ export default function CallCenter() {
         setActiveCall(null);
         if (pollRef.current) clearInterval(pollRef.current);
       }
-      loadRecentCalls();
+      setRecentCalls(prev => prev.map(c => c.taskId === taskId ? { ...c, status: "failed" } : c));
     } catch (err: any) {
       toast.error("Failed to kill call: " + (err.message || "Unknown error"));
     }
