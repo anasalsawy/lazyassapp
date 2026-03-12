@@ -736,7 +736,8 @@ serve(async (req) => {
     }
 
     // ── Step 2: CALLER (Maya) ────────────────────────────────────────────
-    const callerInput = `DIRECTIVE FROM DIRECTOR:\n${directive}\n\nCONVERSATION SO FAR:\n${transcript}\n\nRespond as Maya. Say ONLY what you would speak aloud.`;
+    const objectiveContext = taskPayload.objective ? `\nYOUR MISSION: ${taskPayload.objective}\nYou are MAKING an outbound call to ${taskPayload.company_name || "a business"}. You are the CALLER.\n` : "";
+    const callerInput = `${objectiveContext}DIRECTIVE FROM DIRECTOR:\n${directive}\n\nCONVERSATION SO FAR:\n${transcript}\n\nRespond as Maya. Say ONLY what you would speak aloud.`;
 
     let spokenResponse: string;
     try {
