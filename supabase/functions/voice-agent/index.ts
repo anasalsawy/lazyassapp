@@ -353,7 +353,8 @@ serve(async (req) => {
       const {
         phone_number, objective, tone, script, caller_name, voice,
         company_name, agent_name, agent_role, success_criteria,
-        allowed_actions, constraints, disclosure_policy, call_type
+        allowed_actions, constraints, disclosure_policy, call_type,
+        use_legacy_twiml, // Force old Polly/TwiML path if true
       } = body;
 
       if (!phone_number || !objective) {
@@ -362,19 +363,12 @@ serve(async (req) => {
         });
       }
 
-      const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
-      const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
-      const TWILIO_NUMBER = Deno.env.get("TWILIO_WHATSAPP_NUMBER")?.replace("whatsapp:", "") || "";
       const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-
-      if (!TWILIO_SID || !TWILIO_TOKEN) {
-        return new Response(JSON.stringify({ error: "Twilio credentials not configured" }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY");
+      const ELEVENLABS_AGENT_ID = "agent_8401kkgdds3de8p949kwdvhhhgr1";
+      const ELEVENLABS_PHONE_NUMBER_ID = Deno.env.get("ELEVENLABS_PHONE_NUMBER_ID") || "";
 
       const supabase = getSupabase();
-      const selectedVoice = selectVoice(voice || tone || "professional");
 
       const callConfig = {
         objective,
@@ -389,7 +383,7 @@ serve(async (req) => {
         constraints: constraints || "",
         disclosure_policy: disclosure_policy || "disclose_if_asked",
         call_type: call_type || "outbound",
-        voice: selectedVoice,
+        voice: voice || "Polly.Joanna-Neural",
       };
 
       // Get user ID from auth
@@ -403,7 +397,7 @@ serve(async (req) => {
       // Create task record
       const { data: task } = await supabase.from("agent_tasks").insert({
         user_id: userId,
-        task_type: "voice_call_multi_agent",
+        task_type: "voice_call_elevenlabs",
         status: "running",
         payload: callConfig,
       }).select("id").single();
@@ -411,9 +405,114 @@ serve(async (req) => {
       const taskId = task?.id || "unknown";
       const missionId = url.searchParams.get("mission_id") || "";
       const storeIndex = url.searchParams.get("store_index") || "";
+
+      // ── PRIMARY PATH: ElevenLabs ConvAI Outbound Call ──────────────────
+      // Uses ElevenLabs agent (V3) with convai-llm-relay as custom LLM brain
+      // ElevenLabs handles: STT, TTS, turn-taking, Twilio integration
+      // convai-llm-relay handles: Analyst, Director, Maya persona
+      const canUseElevenLabs = ELEVENLABS_API_KEY && ELEVENLABS_PHONE_NUMBER_ID && !use_legacy_twiml;
+
+      if (canUseElevenLabs) {
+        console.log(`[voice-agent] 🎙️ Using ElevenLabs ConvAI for outbound call to ${phone_number}`);
+
+        // Save initial state with call context for the relay
+        await supabase.from("agent_tasks").update({
+          result: {
+            conversationHistory: [],
+            analystReports: [],
+            operatorInjections: [],
+            turnCount: 0,
+            config: callConfig,
+            engine: "elevenlabs-convai",
+          },
+        }).eq("id", taskId);
+
+        // Call ElevenLabs outbound API
+        // The agent uses convai-llm-relay as its Custom LLM,
+        // which receives call context via conversation_initiation_client_data
+        const elevenLabsRes = await fetch(
+          "https://api.elevenlabs.io/v1/convai/twilio/outbound-call",
+          {
+            method: "POST",
+            headers: {
+              "xi-api-key": ELEVENLABS_API_KEY,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              agent_id: ELEVENLABS_AGENT_ID,
+              agent_phone_number_id: ELEVENLABS_PHONE_NUMBER_ID,
+              to_number: phone_number,
+              call_recording_enabled: true,
+              conversation_initiation_client_data: {
+                dynamic_variables: {
+                  objective: callConfig.objective,
+                  constraints: callConfig.constraints,
+                  agent_name: callConfig.agent_name,
+                  agent_role: callConfig.agent_role,
+                  company_name: callConfig.company_name,
+                  call_type: callConfig.call_type,
+                  success_criteria: callConfig.success_criteria,
+                  script: callConfig.script,
+                  disclosure_policy: callConfig.disclosure_policy,
+                  task_id: taskId,
+                },
+              },
+            }),
+          }
+        );
+
+        if (!elevenLabsRes.ok) {
+          const errData = await elevenLabsRes.json().catch(() => ({}));
+          console.error("[voice-agent] ElevenLabs outbound error:", elevenLabsRes.status, errData);
+
+          // Fallback to legacy TwiML if ElevenLabs fails
+          console.log("[voice-agent] ⚠️ ElevenLabs failed, falling back to legacy TwiML...");
+          // Continue to legacy path below
+        } else {
+          const elData = await elevenLabsRes.json();
+          console.log(`[voice-agent] 🎙️ ElevenLabs call initiated: conversationId=${elData.conversation_id}, callSid=${elData.callSid}`);
+
+          await supabase.from("agent_tasks").update({
+            result: {
+              callSid: elData.callSid || null,
+              conversationId: elData.conversation_id || null,
+              conversationHistory: [],
+              analystReports: [],
+              operatorInjections: [],
+              turnCount: 0,
+              config: callConfig,
+              engine: "elevenlabs-convai",
+            },
+          }).eq("id", taskId);
+
+          return new Response(JSON.stringify({
+            success: true,
+            callSid: elData.callSid,
+            conversationId: elData.conversation_id,
+            taskId,
+            to: phone_number,
+            engine: "elevenlabs-convai",
+            architecture: "ElevenLabs ConvAI → convai-llm-relay (analyst → director-caller)",
+            message: `ElevenLabs ConvAI call initiated to ${phone_number}. Low-latency voice with full multi-agent brain.`,
+          }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+      }
+
+      // ── FALLBACK PATH: Legacy Twilio TwiML + Polly ──────────────────────
+      console.log(`[voice-agent] Using legacy TwiML/Polly path for ${phone_number}`);
+      const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
+      const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
+      const TWILIO_NUMBER = Deno.env.get("TWILIO_WHATSAPP_NUMBER")?.replace("whatsapp:", "") || "";
+
+      if (!TWILIO_SID || !TWILIO_TOKEN) {
+        return new Response(JSON.stringify({ error: "Twilio credentials not configured" }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const selectedVoice = selectVoice(voice || tone || "professional");
       const gatherUrl = `${SUPABASE_URL}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
 
-      // Generate initial greeting — KEEP IT SHORT AND RELAXED
       const analystReport = { tone: "neutral", intent: "call_start", engagement: "unknown", cooperation: "unknown", emotional_state: "unknown", risks: [], opportunities: ["rapport_building", "first_impression"], key_info_extracted: "", recommended_approach: "warm, brief greeting only" };
       
       const greetingInstruction = `Say a SHORT, relaxed greeting. ONLY introduce yourself by first name and company. Then ask if it's a good time. That's it. DO NOT state the purpose of the call yet. DO NOT mention the objective. Just: "Hi, this is [name] with [company]. Hope I'm not catching you at a bad time?" Keep it to ONE sentence plus the question. Be warm and casual.`;
@@ -422,11 +521,8 @@ serve(async (req) => {
         callConfig, greetingInstruction, "warm, casual, unhurried", []
       );
 
-      // Build TwiML
       const twiml = buildGatherTwiml(greeting, gatherUrl, selectedVoice);
 
-      // Build status callback URL with mission context
-      // Allows external mission orchestrators (e.g. mission-executive) to receive completion callbacks.
       let statusUrl: string;
       if (body.status_callback_url) {
         const callbackUrl = new URL(String(body.status_callback_url));
@@ -436,7 +532,6 @@ serve(async (req) => {
         statusUrl = `${SUPABASE_URL}/functions/v1/voice-agent?action=status&task_id=${taskId}${missionId ? `&mission_id=${missionId}` : ""}${storeIndex !== "" ? `&store_index=${storeIndex}` : ""}`;
       }
 
-      // Initiate Twilio call
       const callParams = new URLSearchParams();
       callParams.append("To", phone_number);
       callParams.append("From", TWILIO_NUMBER);
@@ -466,7 +561,6 @@ serve(async (req) => {
 
       const callData = await twilioRes.json();
 
-      // Save initial state
       await supabase.from("agent_tasks").update({
         result: {
           callSid: callData.sid,
@@ -476,10 +570,11 @@ serve(async (req) => {
           operatorInjections: [],
           turnCount: 0,
           config: callConfig,
+          engine: "legacy-twiml",
         },
       }).eq("id", taskId);
 
-      console.log(`[voice-agent] Multi-agent call initiated: ${callData.sid} → ${phone_number}`);
+      console.log(`[voice-agent] Legacy call initiated: ${callData.sid} → ${phone_number}`);
 
       return new Response(JSON.stringify({
         success: true,
@@ -488,8 +583,9 @@ serve(async (req) => {
         status: callData.status,
         to: phone_number,
         greeting,
-        architecture: "multi-agent (analyst → director → caller)",
-        message: `Multi-agent call initiated to ${phone_number}.`,
+        engine: "legacy-twiml",
+        architecture: "legacy TwiML (analyst → director → caller → Polly)",
+        message: `Legacy TwiML call initiated to ${phone_number}.`,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
