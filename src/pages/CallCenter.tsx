@@ -71,6 +71,7 @@ export default function CallCenter() {
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [retryQueue, setRetryQueue] = useState<Array<{ name: string; phone: string }>>([]);
   const retryQueueRef = useRef<Array<{ name: string; phone: string }>>([]);
+  const hasAutoResumedRef = useRef(false);
 
   // Polling
   const pollRef = useRef<number | null>(null);
