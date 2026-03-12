@@ -83,6 +83,38 @@ function parseCallSid(body: Record<string, any>, systemMessage: string): string 
   return match?.[1] || null;
 }
 
+function extractRelevantSystemContext(systemMessage: string): string {
+  if (!systemMessage || typeof systemMessage !== "string") return "";
+
+  const keywords = [
+    "objective",
+    "call_objective",
+    "company",
+    "script",
+    "constraint",
+    "success",
+    "allowed",
+    "call_type",
+    "agent_name",
+    "agent_role",
+    "disclosure",
+    "current_date",
+    "task_id",
+  ];
+
+  const relevantLines = systemMessage
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith("/*") && !line.startsWith("//") && !line.startsWith("*"))
+    .filter((line) => {
+      const lower = line.toLowerCase();
+      return keywords.some((keyword) => lower.includes(keyword));
+    });
+
+  return relevantLines.slice(0, 30).join("\n");
+}
+
 function extractDtmfDigits(directive: string): string | null {
   const explicitMatch = directive.match(/(?:^|\n|\b)(?:DTMF|DIGITS?)\s*[:=-]?\s*([0-9#*wWpP]+)/i);
   if (explicitMatch?.[1]) return explicitMatch[1].replace(/\s+/g, "");
