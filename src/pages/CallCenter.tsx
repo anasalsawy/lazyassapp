@@ -999,8 +999,8 @@ export default function CallCenter() {
                 </Card>
               )}
 
-              {/* Director Feed */}
-              {(latestDirectorDirective || directorHistory.length > 0) && (
+              {/* Director Feed — always visible during active calls */}
+              {isCallActive && (
                 <Card className="bg-card/50 border-border/40">
                   <CardHeader className="pb-2 pt-3 px-3">
                     <CardTitle className="text-xs font-semibold flex items-center justify-between gap-2">
