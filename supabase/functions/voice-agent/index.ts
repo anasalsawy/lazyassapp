@@ -301,6 +301,59 @@ serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // ACTION: END-CALL — Kill/terminate a running call
+    // ═══════════════════════════════════════════════════════════════════════
+    if (action === "end-call") {
+      const body = await req.json();
+      const { task_id } = body;
+      if (!task_id) {
+        return new Response(JSON.stringify({ error: "task_id required" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const supabase = getSupabase();
+      const { data: task } = await supabase
+        .from("agent_tasks")
+        .select("result, status")
+        .eq("id", task_id)
+        .single();
+
+      const callSid = (task?.result as any)?.callSid;
+      if (callSid) {
+        try {
+          const accountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
+          const authToken = Deno.env.get("TWILIO_AUTH_TOKEN");
+          if (accountSid && authToken) {
+            await fetch(
+              `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${callSid}.json`,
+              {
+                method: "POST",
+                headers: {
+                  "Authorization": `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+                  "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: "Status=completed",
+              }
+            );
+          }
+        } catch (e) {
+          console.warn("[voice-agent] Twilio hangup error:", e);
+        }
+      }
+
+      await supabase.from("agent_tasks").update({
+        status: "failed",
+        error_message: "Killed by operator",
+        completed_at: new Date().toISOString(),
+      }).eq("id", task_id);
+
+      return new Response(JSON.stringify({ success: true, message: "Call terminated" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // ACTION: INITIATE-MISSION — Multi-store retry loop
     // ═══════════════════════════════════════════════════════════════════════
     if (action === "initiate-mission") {
