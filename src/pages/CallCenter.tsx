@@ -178,7 +178,7 @@ export default function CallCenter() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
-  // Load recent calls
+  // Load recent calls and auto-resume any running call
   useEffect(() => {
     if (!session?.access_token) return;
     (async () => {
@@ -194,11 +194,22 @@ export default function CallCenter() {
         );
         if (resp.ok) {
           const data = await resp.json();
-          setRecentCalls(data.calls || []);
+          const calls = Array.isArray(data?.calls) ? data.calls : [];
+          setRecentCalls(calls);
+
+          if (!hasAutoResumedRef.current) {
+            const runningCall = calls.find((call: any) => call?.status === "running" && call?.taskId);
+            if (runningCall?.taskId) {
+              hasAutoResumedRef.current = true;
+              startPolling(runningCall.taskId);
+            }
+          }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     })();
-  }, [session]);
+  }, [session, startPolling]);
 
   // Smart mode: search for stores, then auto-call first one with rest as retries
   const initiateSmartCall = async () => {
