@@ -755,6 +755,15 @@ async function runTwoAgentLoop(
       // ── SEND TO BRIDGE ──────────────────────────────────────────
       const bridgeStartedAt = Date.now();
       try {
+        // Derive profile name from URL domain for persistent sessions
+        let profileName: string | null = null;
+        try {
+          const domain = new URL(browserTask.url).hostname.replace("www.", "").split(".")[0];
+          if (["linkedin", "indeed", "glassdoor", "amazon", "walmart", "target", "bestbuy", "ebay", "google"].includes(domain)) {
+            profileName = domain;
+          }
+        } catch {}
+
         const bridgeResult = await callBridge(
           bridgeUrl,
           bridgeKey,
@@ -762,6 +771,8 @@ async function runTwoAgentLoop(
           browserTask.actions,
           browserTask.extract_text !== false,
           browserTask.selector,
+          userId,
+          profileName,
         );
 
         // Build full result for DB, compact for LLM
