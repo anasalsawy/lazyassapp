@@ -960,7 +960,7 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
       const query = supabase
         .from("agent_tasks")
         .select("id, status, created_at, completed_at, payload, result")
-        .in("task_type", ["voice_call", "voice_call_multi_agent"])
+        .in("task_type", ["voice_call", "voice_call_multi_agent", "voice_call_elevenlabs"])
         .order("created_at", { ascending: false })
         .limit(20);
 
