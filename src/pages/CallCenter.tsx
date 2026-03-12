@@ -455,6 +455,23 @@ export default function CallCenter() {
     }
   };
 
+  const killCall = async (taskId: string) => {
+    try {
+      const { error } = await supabase.functions.invoke("voice-agent", {
+        body: { action: "end-call", taskId },
+      });
+      if (error) throw error;
+      toast.success("Call terminated");
+      if (activeCall?.taskId === taskId) {
+        setActiveCall(null);
+        if (pollRef.current) clearInterval(pollRef.current);
+      }
+      setRecentCalls(prev => prev.map(c => c.taskId === taskId ? { ...c, status: "failed" } : c));
+    } catch (err: any) {
+      toast.error("Failed to kill call: " + (err.message || "Unknown error"));
+    }
+  };
+
   const isCallActive = activeCall?.status === "running";
   const runningCalls = recentCalls.filter((call) => call.status === "running");
 
@@ -809,6 +826,16 @@ export default function CallCenter() {
                     <Badge variant={isCallActive ? "default" : "secondary"} className="text-xs">
                       {activeCall?.status}
                     </Badge>
+                    {isCallActive && activeCall?.taskId && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="h-6 px-2 text-xs gap-1"
+                        onClick={() => killCall(activeCall.taskId)}
+                      >
+                        <PhoneOff className="w-3 h-3" /> Kill
+                      </Button>
+                    )}
                   </div>
                 </div>
 
