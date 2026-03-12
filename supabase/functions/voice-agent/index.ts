@@ -248,15 +248,72 @@ serve(async (req) => {
       }
 
       const result = task.result as any;
+      const conversationId = result?.conversationId;
+      let conversationHistory: Array<{ role: string; content: string }> = [];
+      let elStatus: string | null = null;
+
+      // Fetch live transcript from ElevenLabs if we have a conversation ID
+      if (conversationId) {
+        try {
+          const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
+          if (ELEVENLABS_API_KEY) {
+            const elResp = await fetch(
+              `https://api.elevenlabs.io/v1/convai/conversations/${conversationId}`,
+              { headers: { "xi-api-key": ELEVENLABS_API_KEY } }
+            );
+            if (elResp.ok) {
+              const elData = await elResp.json();
+              elStatus = elData.status; // "in-progress", "processing", "done", "failed"
+              conversationHistory = (elData.transcript || []).map((t: any) => ({
+                role: t.role === "user" ? "user" : "assistant",
+                content: t.message || "",
+              }));
+
+              // Auto-resolve stuck "running" tasks when ElevenLabs says done/failed
+              if (task.status === "running" && (elStatus === "done" || elStatus === "failed")) {
+                const newStatus = elStatus === "done" ? "completed" : "failed";
+                await supabase.from("agent_tasks").update({
+                  status: newStatus,
+                  completed_at: new Date().toISOString(),
+                  result: {
+                    ...result,
+                    conversationHistory,
+                    elStatus,
+                    callDuration: elData.metadata?.call_duration_secs || null,
+                  },
+                }).eq("id", taskId);
+                
+                return new Response(JSON.stringify({
+                  taskId: task.id,
+                  status: newStatus,
+                  callSid: result?.callSid,
+                  conversationId,
+                  pendingInjections: result?.operatorInjections?.length || 0,
+                  config: task.payload,
+                  engine: result?.engine,
+                  turnCount: conversationHistory.length,
+                  conversationHistory,
+                  elStatus,
+                }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[voice-agent] ElevenLabs transcript fetch failed:", e);
+        }
+      }
 
       return new Response(JSON.stringify({
         taskId: task.id,
         status: task.status,
         callSid: result?.callSid,
-        conversationId: result?.conversationId,
+        conversationId,
         pendingInjections: result?.operatorInjections?.length || 0,
         config: task.payload,
         engine: result?.engine,
+        turnCount: conversationHistory.length,
+        conversationHistory,
+        elStatus,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
