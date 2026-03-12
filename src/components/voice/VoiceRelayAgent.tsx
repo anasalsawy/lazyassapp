@@ -173,7 +173,7 @@ export function VoiceRelayAgent({ agentId, onTranscript, onStatusChange }: Voice
             <span className="flex items-center gap-1">
               <Volume2 className="w-3 h-3" />
               <span
-                className="inline-block h-2 rounded-full bg-blue-500 transition-all"
+                className="inline-block h-2 rounded-full bg-accent transition-all"
                 style={{ width: `${Math.max(4, outputLevel * 40)}px` }}
               />
             </span>
