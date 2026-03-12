@@ -826,6 +826,16 @@ export default function CallCenter() {
                     <Badge variant={isCallActive ? "default" : "secondary"} className="text-xs">
                       {activeCall?.status}
                     </Badge>
+                    {isCallActive && activeCall?.taskId && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="h-6 px-2 text-xs gap-1"
+                        onClick={() => killCall(activeCall.taskId)}
+                      >
+                        <PhoneOff className="w-3 h-3" /> Kill
+                      </Button>
+                    )}
                   </div>
                 </div>
 
