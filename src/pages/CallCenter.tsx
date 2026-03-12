@@ -1019,10 +1019,46 @@ export default function CallCenter() {
                 </div>
               )}
 
-              {/* Architecture Diagram */}
-              {!activeCall?.lastAnalysis && (
+              {/* Call Info / Architecture */}
+              {activeCall ? (
+                <div className="text-xs space-y-3 p-3 bg-muted/10 rounded-lg">
+                  <p className="font-semibold text-foreground">Call Details</p>
+                  <div className="space-y-2">
+                    {activeCall.config?.objective && (
+                      <div>
+                        <span className="text-muted-foreground">Objective</span>
+                        <p className="mt-0.5">{activeCall.config.objective}</p>
+                      </div>
+                    )}
+                    {activeCall.config?.company_name && (
+                      <div>
+                        <span className="text-muted-foreground">Company</span>
+                        <p className="mt-0.5 font-medium">{activeCall.config.company_name}</p>
+                      </div>
+                    )}
+                    {(activeCall as any)?.engine && (
+                      <div>
+                        <span className="text-muted-foreground">Engine</span>
+                        <p className="mt-0.5 font-mono">{(activeCall as any).engine}</p>
+                      </div>
+                    )}
+                    {(activeCall as any)?.conversationId && (
+                      <div>
+                        <span className="text-muted-foreground">Conversation</span>
+                        <p className="mt-0.5 font-mono text-[10px] break-all">{(activeCall as any).conversationId}</p>
+                      </div>
+                    )}
+                    {(activeCall as any)?.elStatus && (
+                      <div>
+                        <span className="text-muted-foreground">ElevenLabs Status</span>
+                        <Badge variant="outline" className="ml-2 text-[10px]">{(activeCall as any).elStatus}</Badge>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
                 <div className="text-xs text-muted-foreground space-y-3 p-3 bg-muted/10 rounded-lg">
-                  <p className="font-semibold text-foreground">Multi-Agent Pipeline</p>
+                  <p className="font-semibold text-foreground">Voice Pipeline</p>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <div className="w-5 h-5 rounded bg-amber-500/20 flex items-center justify-center">
@@ -1032,24 +1068,17 @@ export default function CallCenter() {
                     </div>
                     <div className="w-px h-3 bg-border/50 ml-2.5" />
                     <div className="flex items-center gap-2">
-                      <div className="w-5 h-5 rounded bg-cyan-500/20 flex items-center justify-center">
-                        <Eye className="w-3 h-3 text-cyan-400" />
-                      </div>
-                      <span>Analyst → evaluates tone & intent</span>
-                    </div>
-                    <div className="w-px h-3 bg-border/50 ml-2.5" />
-                    <div className="flex items-center gap-2">
                       <div className="w-5 h-5 rounded bg-purple-500/20 flex items-center justify-center">
                         <Brain className="w-3 h-3 text-purple-400" />
                       </div>
-                      <span>Director → decides strategy</span>
+                      <span>ElevenLabs → handles voice natively</span>
                     </div>
                     <div className="w-px h-3 bg-border/50 ml-2.5" />
                     <div className="flex items-center gap-2">
                       <div className="w-5 h-5 rounded bg-emerald-500/20 flex items-center justify-center">
                         <Phone className="w-3 h-3 text-emerald-400" />
                       </div>
-                      <span>Caller → speaks naturally</span>
+                      <span>Maya → speaks naturally</span>
                     </div>
                   </div>
                 </div>
