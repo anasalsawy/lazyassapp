@@ -113,39 +113,65 @@ async function resolveRelayContext(
   const conversationId = parseConversationId(body, systemMessage);
   const callSidCandidate = parseCallSid(body, systemMessage);
 
-  if (!taskIdCandidate && !conversationId && !callSidCandidate) {
-    return {
-      taskId: null,
-      conversationId: null,
-      callSid: null,
-      result: {},
-    };
-  }
-
   try {
     const supabase = getSupabase();
-    let query = supabase
-      .from("agent_tasks")
-      .select("id, result")
-      .order("created_at", { ascending: false })
-      .limit(1);
 
-    if (taskIdCandidate) {
-      query = query.eq("id", taskIdCandidate);
-    } else if (conversationId) {
-      query = query.filter("result->>conversationId", "eq", conversationId);
-    } else if (callSidCandidate) {
-      query = query.filter("result->>callSid", "eq", callSidCandidate);
+    // Strategy 1: Direct ID lookup
+    if (taskIdCandidate || conversationId || callSidCandidate) {
+      let query = supabase
+        .from("agent_tasks")
+        .select("id, result")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (taskIdCandidate) {
+        query = query.eq("id", taskIdCandidate);
+      } else if (conversationId) {
+        query = query.filter("result->>conversationId", "eq", conversationId);
+      } else if (callSidCandidate) {
+        query = query.filter("result->>callSid", "eq", callSidCandidate);
+      }
+
+      const { data: task } = await query.maybeSingle();
+      if (task) {
+        const taskResult = (task.result as Record<string, unknown> | null) || {};
+        return {
+          taskId: task.id,
+          callSid: ((taskResult as any)?.callSid as string | undefined) || callSidCandidate,
+          conversationId: ((taskResult as any)?.conversationId as string | undefined) || conversationId,
+          result: taskResult,
+        };
+      }
     }
 
-    const { data: task } = await query.maybeSingle();
-    const taskResult = (task?.result as Record<string, unknown> | null) || {};
+    // Strategy 2: Fallback — find most recent running voice task (within last 30 min)
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: recentTask } = await supabase
+      .from("agent_tasks")
+      .select("id, result")
+      .in("task_type", ["voice_call_elevenlabs", "voice_call_multi_agent", "voice_call"])
+      .eq("status", "running")
+      .gte("created_at", thirtyMinAgo)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (recentTask) {
+      const taskResult = (recentTask.result as Record<string, unknown> | null) || {};
+      console.log(`[relay] Fallback resolved to task ${recentTask.id}`);
+      return {
+        taskId: recentTask.id,
+        callSid: ((taskResult as any)?.callSid as string | undefined) || callSidCandidate,
+        conversationId: ((taskResult as any)?.conversationId as string | undefined) || conversationId,
+        result: taskResult,
+      };
+    }
 
     return {
-      taskId: task?.id || taskIdCandidate || null,
-      callSid: ((taskResult as any)?.callSid as string | undefined) || callSidCandidate,
-      conversationId: ((taskResult as any)?.conversationId as string | undefined) || conversationId,
-      result: taskResult,
+      taskId: taskIdCandidate,
+      conversationId,
+      callSid: callSidCandidate,
+      result: {},
     };
   } catch (e) {
     console.warn("[relay] resolveRelayContext failed:", e);
