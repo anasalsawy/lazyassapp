@@ -30,11 +30,11 @@ function getSupabase() {
   );
 }
 
-/** Call OpenAI API directly with gpt-oss-120b */
+/** Call OpenAI API directly */
 async function llm(
   systemPrompt: string,
   userMessage: string,
-  model = "gpt-oss-120b",
+  model = "gpt-4o",
 ): Promise<string> {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
