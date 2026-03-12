@@ -838,7 +838,7 @@ export default function CallCenter() {
                       )}
                     </div>
                   ))}
-                  {activeCall?.conversationHistory.length === 0 && (
+                  {activeCall && (!activeCall.conversationHistory || activeCall.conversationHistory.length === 0) && (
                     <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Waiting for call to connect...
                     </div>
