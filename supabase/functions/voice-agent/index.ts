@@ -61,7 +61,7 @@ serve(async (req) => {
       }
 
       const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
-      const ELEVENLABS_AGENT_ID = "agent_8401kkgdds3de8p949kwdvhhhgr1";
+      const ELEVENLABS_AGENT_ID = "agent_1801kkj49vz6fx8t8wya5j5rppxx";
       const ELEVENLABS_PHONE_NUMBER_ID = Deno.env.get("ELEVENLABS_PHONE_NUMBER_ID") || "";
 
       if (!ELEVENLABS_API_KEY) {
