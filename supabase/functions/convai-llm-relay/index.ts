@@ -581,24 +581,22 @@ serve(async (req) => {
     }
 
     // ── DTMF tone detection & sending via Twilio ──────────────────────────
-    // If Director says "DTMF: 1" or "DTMF: 0", send the tone mid-call
-    const dtmfMatch = directive.match(/DTMF[:\s]+([0-9*#]+)/i);
-    if (dtmfMatch && taskId) {
-      const digits = dtmfMatch[1];
-      console.log(`[relay] DTMF detected: "${digits}" — sending via Twilio`);
+    const dtmfDigits = extractDtmfDigits(directive);
+    if (dtmfDigits) {
+      console.log(`[relay] DTMF detected: "${dtmfDigits}"`);
       try {
-        const supabase = getSupabase();
-        const { data: task } = await supabase
-          .from("agent_tasks")
-          .select("result")
-          .eq("id", taskId)
-          .single();
-        const callSid = (task?.result as any)?.callSid;
-        if (callSid) {
+        const callSid = relayContext.callSid;
+        if (!callSid) {
+          console.warn("[relay] DTMF skipped — no callSid resolved");
+        } else if (isDuplicateDtmf(relayContext.result, dtmfDigits)) {
+          console.log(`[relay] DTMF "${dtmfDigits}" skipped (duplicate within cooldown)`);
+        } else {
           const TWILIO_ACCOUNT_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
           const TWILIO_AUTH_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
-          if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
-            // Use Twilio Play API with DTMF — send tones on the active call leg
+
+          if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+            console.warn("[relay] TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN missing — cannot send DTMF");
+          } else {
             const twilioResp = await fetch(
               `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Calls/${callSid}.json`,
               {
@@ -608,21 +606,30 @@ serve(async (req) => {
                   "Authorization": "Basic " + btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`),
                 },
                 body: new URLSearchParams({
-                  Twiml: `<Response><Play digits="${digits}"/><Pause length="2"/></Response>`,
+                  Twiml: `<Response><Play digits="${dtmfDigits}"/><Pause length="1"/></Response>`,
                 }),
               },
             );
+
             if (!twilioResp.ok) {
               const errBody = await twilioResp.text();
               console.error(`[relay] Twilio DTMF failed (${twilioResp.status}):`, errBody);
             } else {
-              console.log(`[relay] DTMF "${digits}" sent successfully on call ${callSid}`);
+              console.log(`[relay] DTMF "${dtmfDigits}" sent successfully on call ${callSid}`);
+              if (taskId) {
+                const supabase = getSupabase();
+                await supabase.from("agent_tasks").update({
+                  result: {
+                    ...relayContext.result,
+                    lastDtmfSent: {
+                      digits: dtmfDigits,
+                      sentAt: new Date().toISOString(),
+                    },
+                  },
+                }).eq("id", taskId);
+              }
             }
-          } else {
-            console.warn("[relay] TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN missing — cannot send DTMF");
           }
-        } else {
-          console.warn("[relay] No callSid found — cannot send DTMF");
         }
       } catch (e) {
         console.warn("[relay] DTMF send error:", e);
