@@ -308,15 +308,7 @@ export default function Agent() {
                 size="icon"
                 className="shrink-0 h-10 w-10 rounded-xl"
                 onClick={() => {
-                  if (!showVoice && !voiceAgentId) {
-                    const id = prompt("Enter your ElevenLabs Agent ID:");
-                    if (id) {
-                      setVoiceAgentId(id);
-                      setShowVoice(true);
-                    }
-                  } else {
-                    setShowVoice(!showVoice);
-                  }
+                  setShowVoice(!showVoice);
                 }}
                 title="Toggle Voice Relay"
               >
