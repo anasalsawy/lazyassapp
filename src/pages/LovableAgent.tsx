@@ -1388,13 +1388,13 @@ export default function LovableAgent() {
                   </div>
                 )}
 
-                {isLoading && currentCallState && (
+                {currentCallState && (isLoading || isOnCall || currentCallState.status === "completed" || currentCallState.status === "failed" || currentCallState.status === "error") && (
                   <div className="flex gap-3">
                     <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
                       <Bot className="w-4 h-4 text-white" />
                     </div>
                     <div className="max-w-[85%] min-w-0">
-                      <CallMonitorPanel callState={currentCallState} isLive={true} />
+                      <CallMonitorPanel callState={currentCallState} isLive={isOnCall} />
                     </div>
                   </div>
                 )}
@@ -1443,12 +1443,12 @@ export default function LovableAgent() {
               <p className="text-xs text-muted-foreground">
                 Lovable Agent — full backend access. Press Enter to send.
               </p>
-              {isLoading && (
+              {(isLoading || isOnCall) && (
                 <Badge variant="outline" className="text-xs animate-pulse">
-                  {phase === "on_call" ? <Phone className="w-3 h-3 mr-1" /> : <Activity className="w-3 h-3 mr-1" />}
-                  {phase === "thinking" ? "Thinking..." :
+                  {isOnCall ? <Phone className="w-3 h-3 mr-1" /> : <Activity className="w-3 h-3 mr-1" />}
+                  {isOnCall ? "On call..." :
+                   phase === "thinking" ? "Thinking..." :
                    phase === "executing" ? "Executing tools..." :
-                   phase === "on_call" ? "On call..." :
                    phase === "generating" ? "Writing response..." :
                    "Working..."}
                 </Badge>
