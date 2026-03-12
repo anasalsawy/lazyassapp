@@ -148,9 +148,14 @@ serve(async (req) => {
       .map((m) => `${m.role === "user" ? "HUMAN" : "MAYA"}: ${m.content}`)
       .join("\n");
 
-    const lastUserMessage = conversationMessages.filter((m) => m.role === "user").pop()?.content || "";
+    const userMessages = conversationMessages.filter((m) => m.role === "user");
+    const assistantMessages = conversationMessages.filter((m) => m.role === "assistant");
+    const lastUserMessage = userMessages.pop()?.content || "";
+    const turnNumber = userMessages.length + (lastUserMessage ? 1 : 0);
 
-    // First turn — generate opening line directly
+    console.log(`[relay] Turn ${turnNumber}, user msgs: ${userMessages.length + (lastUserMessage ? 1 : 0)}, assistant msgs: ${assistantMessages.length}, lastUser: "${lastUserMessage.substring(0, 60)}"`);
+
+    // No conversation yet and no user message — generate opening line
     if (!lastUserMessage && conversationMessages.length === 0) {
       const openingDirective = "Introduce yourself and state the purpose of the call. Be warm and concise.";
       const opening = await llm(
@@ -158,6 +163,12 @@ serve(async (req) => {
         `SYSTEM CONTEXT:\n${systemMessage}\n\nDIRECTIVE: ${openingDirective}`,
       );
       return buildResponse(opening || "Hi — this is Maya. How can I help you today?");
+    }
+
+    // ElevenLabs sent conversation but user hasn't spoken yet — wait silently
+    if (!lastUserMessage && assistantMessages.length > 0) {
+      console.log("[relay] No user message yet, returning brief acknowledgement");
+      return buildResponse("...");
     }
 
     // ── Fetch operator injections from DB ────────────────────────────────
