@@ -477,6 +477,16 @@ export default function CallCenter() {
 
   const isCallActive = activeCall?.status === "running";
   const runningCalls = recentCalls.filter((call) => call.status === "running");
+  const directorHistory = activeCall?.directorDirectiveHistory ?? [];
+  const injectionHistory = activeCall?.operatorInjectionHistory ?? [];
+  const latestDirectorDirective = activeCall?.lastDirectorDirective || directorHistory[directorHistory.length - 1]?.directive || null;
+
+  const formatPanelTime = (value?: string) => {
+    if (!value) return "";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "";
+    return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
 
   return (
     <AppLayout>
