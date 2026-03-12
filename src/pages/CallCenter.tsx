@@ -999,37 +999,70 @@ export default function CallCenter() {
                 </Card>
               )}
 
-              {/* Director Decision */}
-              {activeCall?.lastDirective && (
+              {/* Director Feed */}
+              {(latestDirectorDirective || directorHistory.length > 0) && (
                 <Card className="bg-card/50 border-border/40">
                   <CardHeader className="pb-2 pt-3 px-3">
-                    <CardTitle className="text-xs font-semibold flex items-center gap-1.5">
-                      <BarChart3 className="w-3.5 h-3.5 text-amber-400" /> Director
+                    <CardTitle className="text-xs font-semibold flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5">
+                        <BarChart3 className="w-3.5 h-3.5 text-amber-400" /> Director Feed
+                      </span>
+                      {activeCall?.pendingInjections > 0 && (
+                        <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-400">
+                          {activeCall.pendingInjections} queued
+                        </Badge>
+                      )}
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="px-3 pb-3 space-y-2 text-xs">
-                    <div>
-                      <span className="text-muted-foreground">Instruction: </span>
-                      <span>{activeCall.lastDirective.instruction}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Tone: </span>
-                      <span>{activeCall.lastDirective.tone}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Priority: </span>
-                      <span>{activeCall.lastDirective.priority}</span>
-                    </div>
+                  <CardContent className="px-3 pb-3 space-y-2">
+                    {latestDirectorDirective && (
+                      <div className="text-xs bg-muted/30 rounded p-2">
+                        {latestDirectorDirective}
+                      </div>
+                    )}
+                    {directorHistory.length > 0 && (
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                        {directorHistory.slice(-6).reverse().map((entry, i) => (
+                          <div key={`${entry.createdAt || i}-${i}`} className="rounded-md border border-border/40 bg-muted/20 p-2">
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                              <span>Turn {entry.turnNumber ?? "—"}</span>
+                              <span>{formatPanelTime(entry.createdAt)}</span>
+                            </div>
+                            <p className="text-[11px] leading-snug">{entry.directive}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
 
-              {/* Pending Injections */}
-              {activeCall && activeCall.pendingInjections > 0 && (
-                <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs">
-                  <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{activeCall.pendingInjections} injection(s) pending</span>
-                </div>
+              {/* Operator Injections */}
+              {(injectionHistory.length > 0 || (activeCall?.pendingInjections ?? 0) > 0) && (
+                <Card className="bg-card/50 border-border/40">
+                  <CardHeader className="pb-2 pt-3 px-3">
+                    <CardTitle className="text-xs font-semibold flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-400" /> Operator Injections
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-3 pb-3 space-y-1.5">
+                    {injectionHistory.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground">No logged injections yet.</p>
+                    ) : (
+                      injectionHistory.slice(-6).reverse().map((entry, i) => (
+                        <div key={`${entry.createdAt || i}-${entry.instruction}`} className="rounded-md border border-border/40 bg-muted/20 p-2">
+                          <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                            <span>{formatPanelTime(entry.consumedAt || entry.createdAt)}</span>
+                            <Badge variant="outline" className="text-[9px] px-1.5 py-0 capitalize">
+                              {entry.status || "queued"}
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] leading-snug">{entry.instruction}</p>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
               )}
 
               {/* Call Info / Architecture */}
