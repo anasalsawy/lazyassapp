@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { SteelSessionEmbed } from "@/components/chat/SteelSessionEmbed";
+import { VoiceRelayAgent } from "@/components/voice/VoiceRelayAgent";
 import { useAuth } from "@/hooks/useAuth";
 import {
   Bot, Send, Loader2, Sparkles, Briefcase, FileText,
-  Search, Mail, Activity, User, Zap,
+  Search, Mail, Activity, User, Zap, Mic,
 } from "lucide-react";
 
 type Msg = { role: "user" | "assistant"; content: string };
@@ -84,6 +85,8 @@ export default function Agent() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [showVoice, setShowVoice] = useState(false);
+  const [voiceAgentId, setVoiceAgentId] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -282,10 +285,43 @@ export default function Agent() {
           </div>
         </div>
 
+        {/* Voice Relay Panel */}
+        {showVoice && voiceAgentId && (
+          <div className="border-t border-border/40 bg-background/80 px-4 py-3">
+            <div className="max-w-3xl mx-auto">
+              <VoiceRelayAgent
+                agentId={voiceAgentId}
+                onTranscript={(role, text) => {
+                  console.log(`[Voice ${role}]:`, text);
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Input Area */}
         <div className="border-t border-border/40 bg-background/80 backdrop-blur-xl">
           <div className="max-w-3xl mx-auto px-4 py-4">
             <div className="relative flex items-end gap-2">
+              <Button
+                variant={showVoice ? "default" : "outline"}
+                size="icon"
+                className="shrink-0 h-10 w-10 rounded-xl"
+                onClick={() => {
+                  if (!showVoice && !voiceAgentId) {
+                    const id = prompt("Enter your ElevenLabs Agent ID:");
+                    if (id) {
+                      setVoiceAgentId(id);
+                      setShowVoice(true);
+                    }
+                  } else {
+                    setShowVoice(!showVoice);
+                  }
+                }}
+                title="Toggle Voice Relay"
+              >
+                <Mic className="w-4 h-4" />
+              </Button>
               <Textarea
                 ref={textareaRef}
                 value={input}
