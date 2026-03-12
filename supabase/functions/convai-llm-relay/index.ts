@@ -631,11 +631,20 @@ serve(async (req) => {
           createdAt: new Date().toISOString(),
         });
 
+        // Also persist live conversation transcript so UI can show it in real-time
+        // (ElevenLabs REST API doesn't expose transcript until call ends)
+        const liveTranscript = recentMessages.map((m) => ({
+          role: m.role === "user" ? "user" : "assistant",
+          content: m.content,
+        }));
+
         await supabase.from("agent_tasks").update({
           result: {
             ...result,
             lastDirectorDirective: directive,
             directorDirectiveHistory: history.slice(-60),
+            conversationHistory: liveTranscript,
+            turnCount: liveTranscript.length,
           },
         }).eq("id", taskId);
       } catch (e) {
