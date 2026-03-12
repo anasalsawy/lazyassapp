@@ -866,8 +866,15 @@ export default function CallCenter() {
                     </div>
                   ))}
                   {activeCall && (!activeCall.conversationHistory || activeCall.conversationHistory.length === 0) && (
-                    <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Waiting for call to connect...
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm gap-3">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Call in progress — waiting for transcript...</span>
+                      {activeCall.config?.company_name && (
+                        <span className="text-xs">Calling {activeCall.config.company_name}</span>
+                      )}
+                      {(activeCall as any)?.engine === "elevenlabs-native" && (
+                        <span className="text-[10px] text-muted-foreground/60">ElevenLabs handles voice natively · transcript updates every 3s</span>
+                      )}
                     </div>
                   )}
                 </div>
