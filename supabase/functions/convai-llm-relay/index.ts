@@ -83,6 +83,38 @@ function parseCallSid(body: Record<string, any>, systemMessage: string): string 
   return match?.[1] || null;
 }
 
+function extractRelevantSystemContext(systemMessage: string): string {
+  if (!systemMessage || typeof systemMessage !== "string") return "";
+
+  const keywords = [
+    "objective",
+    "call_objective",
+    "company",
+    "script",
+    "constraint",
+    "success",
+    "allowed",
+    "call_type",
+    "agent_name",
+    "agent_role",
+    "disclosure",
+    "current_date",
+    "task_id",
+  ];
+
+  const relevantLines = systemMessage
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith("/*") && !line.startsWith("//") && !line.startsWith("*"))
+    .filter((line) => {
+      const lower = line.toLowerCase();
+      return keywords.some((keyword) => lower.includes(keyword));
+    });
+
+  return relevantLines.slice(0, 30).join("\n");
+}
+
 function extractDtmfDigits(directive: string): string | null {
   const explicitMatch = directive.match(/(?:^|\n|\b)(?:DTMF|DIGITS?)\s*[:=-]?\s*([0-9#*wWpP]+)/i);
   if (explicitMatch?.[1]) return explicitMatch[1].replace(/\s+/g, "");
@@ -493,22 +525,22 @@ serve(async (req) => {
 
     // No conversation yet and no user message — generate opening line
     if (!lastUserMessage && conversationMessages.length === 0) {
-      // Try to get task payload for opening line context
-      let openingContext = systemMessage;
+      // Prefer DB payload context; never rely on noisy freeform system text.
+      let openingContext = extractRelevantSystemContext(systemMessage);
       if (taskId) {
         try {
           const supabase = getSupabase();
           const { data: task } = await supabase.from("agent_tasks").select("payload").eq("id", taskId).single();
           const payload = (task?.payload as any) || {};
           if (payload.objective) {
-            openingContext = `OBJECTIVE: ${payload.objective}\nCOMPANY: ${payload.company_name || "unknown"}\nSCRIPT: ${payload.script || "none"}\n\n${systemMessage}`;
+            openingContext = `OBJECTIVE: ${payload.objective}\nCOMPANY: ${payload.company_name || "unknown"}\nSCRIPT: ${payload.script || "none"}`;
           }
         } catch {}
       }
       const openingDirective = "Introduce yourself briefly and state the purpose of the call. Be warm and concise. You are MAKING an outbound call — YOU are the caller, not the recipient.";
       const opening = await llm(
         CALLER_SYSTEM,
-        `SYSTEM CONTEXT:\n${openingContext}\n\nDIRECTIVE: ${openingDirective}`,
+        `SYSTEM CONTEXT:\n${openingContext || "No additional context."}\n\nDIRECTIVE: ${openingDirective}`,
       );
       return buildResponse(opening || "Hi — this is Maya. How can I help you today?");
     }
@@ -571,8 +603,10 @@ serve(async (req) => {
       console.warn("[relay] Could not fetch operator injections:", e);
     }
 
-    // ── Build enriched mission context from DB payload + ElevenLabs system message ──
-    let enrichedMissionContext = systemMessage;
+    // ── Build enriched mission context from DB payload + sanitized system context ──
+    const sanitizedSystemContext = extractRelevantSystemContext(systemMessage);
+    let enrichedMissionContext = sanitizedSystemContext;
+
     if (taskPayload.objective || taskPayload.script || taskPayload.company_name) {
       const missionParts: string[] = [];
       if (taskPayload.objective) missionParts.push(`OBJECTIVE: ${taskPayload.objective}`);
@@ -585,10 +619,12 @@ serve(async (req) => {
       if (taskPayload.constraints) missionParts.push(`CONSTRAINTS: ${taskPayload.constraints}`);
       if (taskPayload.allowed_actions) missionParts.push(`ALLOWED ACTIONS: ${taskPayload.allowed_actions}`);
       if (taskPayload.script) missionParts.push(`SCRIPT/INSTRUCTIONS:\n${taskPayload.script}`);
-      
+
       const payloadBlock = `\n\n═══ MISSION FROM DATABASE ═══\n${missionParts.join("\n")}\n═══ END MISSION ═══`;
-      enrichedMissionContext = payloadBlock + (systemMessage ? `\n\nELEVENLABS SYSTEM MESSAGE:\n${systemMessage}` : "");
-      
+      enrichedMissionContext = sanitizedSystemContext
+        ? `${payloadBlock}\n\nSYSTEM CONTEXT:\n${sanitizedSystemContext}`
+        : payloadBlock;
+
       console.log(`[relay] Enriched mission context with DB payload: objective="${(taskPayload.objective || "").substring(0, 80)}"`);
     }
 
