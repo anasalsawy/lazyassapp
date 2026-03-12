@@ -23,11 +23,139 @@ const corsHeaders = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+type RelayContext = {
+  taskId: string | null;
+  callSid: string | null;
+  conversationId: string | null;
+  result: Record<string, unknown>;
+};
+
 function getSupabase() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+}
+
+function parseTaskId(systemMessage: string): string | null {
+  const patterns = [
+    /task[_\s-]?id["'\s:=]+([a-f0-9-]{36})/i,
+    /\b([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = systemMessage.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
+
+function parseConversationId(body: Record<string, any>, systemMessage: string): string | null {
+  const candidates = [
+    body?.conversation_id,
+    body?.conversationId,
+    body?.metadata?.conversation_id,
+    body?.metadata?.conversationId,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.startsWith("conv_")) return candidate;
+  }
+
+  const match = systemMessage.match(/\b(conv_[a-z0-9]+)\b/i);
+  return match?.[1] || null;
+}
+
+function parseCallSid(body: Record<string, any>, systemMessage: string): string | null {
+  const candidates = [
+    body?.call_sid,
+    body?.callSid,
+    body?.metadata?.call_sid,
+    body?.metadata?.callSid,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && /^CA[a-f0-9]{32}$/i.test(candidate)) return candidate;
+  }
+
+  const match = systemMessage.match(/\b(CA[a-f0-9]{32})\b/i);
+  return match?.[1] || null;
+}
+
+function extractDtmfDigits(directive: string): string | null {
+  const explicitMatch = directive.match(/(?:^|\n|\b)(?:DTMF|DIGITS?)\s*[:=-]?\s*([0-9#*wWpP]+)/i);
+  if (explicitMatch?.[1]) return explicitMatch[1].replace(/\s+/g, "");
+
+  const pressMatch = directive.match(/\bpress\s+([0-9#*]{1,8})\b/i);
+  if (pressMatch?.[1]) return pressMatch[1].replace(/\s+/g, "");
+
+  return null;
+}
+
+function isDuplicateDtmf(result: Record<string, unknown>, digits: string): boolean {
+  const lastDtmf = (result as any)?.lastDtmfSent;
+  if (!lastDtmf || typeof lastDtmf !== "object") return false;
+
+  const lastDigits = typeof lastDtmf.digits === "string" ? lastDtmf.digits : "";
+  const lastSentAt = typeof lastDtmf.sentAt === "string" ? lastDtmf.sentAt : "";
+  if (!lastDigits || !lastSentAt) return false;
+
+  const elapsedMs = Date.now() - new Date(lastSentAt).getTime();
+  return lastDigits === digits && elapsedMs >= 0 && elapsedMs < 8000;
+}
+
+async function resolveRelayContext(
+  systemMessage: string,
+  body: Record<string, any>,
+): Promise<RelayContext> {
+  const taskIdCandidate = parseTaskId(systemMessage);
+  const conversationId = parseConversationId(body, systemMessage);
+  const callSidCandidate = parseCallSid(body, systemMessage);
+
+  if (!taskIdCandidate && !conversationId && !callSidCandidate) {
+    return {
+      taskId: null,
+      conversationId: null,
+      callSid: null,
+      result: {},
+    };
+  }
+
+  try {
+    const supabase = getSupabase();
+    let query = supabase
+      .from("agent_tasks")
+      .select("id, result")
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (taskIdCandidate) {
+      query = query.eq("id", taskIdCandidate);
+    } else if (conversationId) {
+      query = query.filter("result->>conversationId", "eq", conversationId);
+    } else if (callSidCandidate) {
+      query = query.filter("result->>callSid", "eq", callSidCandidate);
+    }
+
+    const { data: task } = await query.maybeSingle();
+    const taskResult = (task?.result as Record<string, unknown> | null) || {};
+
+    return {
+      taskId: task?.id || taskIdCandidate || null,
+      callSid: ((taskResult as any)?.callSid as string | undefined) || callSidCandidate,
+      conversationId: ((taskResult as any)?.conversationId as string | undefined) || conversationId,
+      result: taskResult,
+    };
+  } catch (e) {
+    console.warn("[relay] resolveRelayContext failed:", e);
+    return {
+      taskId: taskIdCandidate,
+      callSid: callSidCandidate,
+      conversationId,
+      result: {},
+    };
+  }
 }
 
 /** Call OpenAI API directly */
