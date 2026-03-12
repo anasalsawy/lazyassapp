@@ -266,9 +266,11 @@ serve(async (req) => {
 
       const result = (task.result as any) || {};
       const conversationId = result?.conversationId;
+      // Use relay-persisted transcript as baseline (available in real-time)
       let conversationHistory: Array<{ role: string; content: string }> = Array.isArray(result?.conversationHistory)
         ? result.conversationHistory
         : [];
+      const relayTranscriptCount = conversationHistory.length;
       let elStatus: string | null = null;
 
       // Fetch live transcript from ElevenLabs if we have a conversation ID
@@ -282,11 +284,15 @@ serve(async (req) => {
             );
             if (elResp.ok) {
               const elData = await elResp.json();
-              elStatus = elData.status; // "in-progress", "processing", "done", "failed"
-              conversationHistory = (elData.transcript || []).map((t: any) => ({
+              elStatus = elData.status;
+              const elTranscript = (elData.transcript || []).map((t: any) => ({
                 role: t.role === "user" ? "user" : "assistant",
                 content: t.message || "",
               }));
+              // Only use ElevenLabs transcript if it has more data than relay-persisted one
+              if (elTranscript.length > relayTranscriptCount) {
+                conversationHistory = elTranscript;
+              }
 
               // Auto-resolve stuck "running" tasks when ElevenLabs says done/failed
               if (task.status === "running" && (elStatus === "done" || elStatus === "failed")) {

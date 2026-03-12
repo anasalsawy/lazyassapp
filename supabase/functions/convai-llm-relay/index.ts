@@ -493,10 +493,22 @@ serve(async (req) => {
 
     // No conversation yet and no user message — generate opening line
     if (!lastUserMessage && conversationMessages.length === 0) {
-      const openingDirective = "Introduce yourself and state the purpose of the call. Be warm and concise.";
+      // Try to get task payload for opening line context
+      let openingContext = systemMessage;
+      if (taskId) {
+        try {
+          const supabase = getSupabase();
+          const { data: task } = await supabase.from("agent_tasks").select("payload").eq("id", taskId).single();
+          const payload = (task?.payload as any) || {};
+          if (payload.objective) {
+            openingContext = `OBJECTIVE: ${payload.objective}\nCOMPANY: ${payload.company_name || "unknown"}\nSCRIPT: ${payload.script || "none"}\n\n${systemMessage}`;
+          }
+        } catch {}
+      }
+      const openingDirective = "Introduce yourself briefly and state the purpose of the call. Be warm and concise. You are MAKING an outbound call — YOU are the caller, not the recipient.";
       const opening = await llm(
         CALLER_SYSTEM,
-        `SYSTEM CONTEXT:\n${systemMessage}\n\nDIRECTIVE: ${openingDirective}`,
+        `SYSTEM CONTEXT:\n${openingContext}\n\nDIRECTIVE: ${openingDirective}`,
       );
       return buildResponse(opening || "Hi — this is Maya. How can I help you today?");
     }
@@ -507,16 +519,20 @@ serve(async (req) => {
       return buildResponse("...");
     }
 
-    // ── Fetch operator injections from DB ────────────────────────────────
+    // ── Fetch task payload + operator injections from DB ─────────────────
     let operatorInjections: string[] = [];
+    let taskPayload: Record<string, any> = {};
     try {
       if (taskId) {
         const supabase = getSupabase();
         const { data: task } = await supabase
           .from("agent_tasks")
-          .select("result")
+          .select("result, payload")
           .eq("id", taskId)
           .single();
+
+        // Extract task payload (objective, script, company_name, etc.)
+        taskPayload = (task?.payload as any) || {};
 
         const result = task?.result as any;
         const queued = Array.isArray(result?.operatorInjections)
@@ -555,13 +571,34 @@ serve(async (req) => {
       console.warn("[relay] Could not fetch operator injections:", e);
     }
 
+    // ── Build enriched mission context from DB payload + ElevenLabs system message ──
+    let enrichedMissionContext = systemMessage;
+    if (taskPayload.objective || taskPayload.script || taskPayload.company_name) {
+      const missionParts: string[] = [];
+      if (taskPayload.objective) missionParts.push(`OBJECTIVE: ${taskPayload.objective}`);
+      if (taskPayload.company_name) missionParts.push(`COMPANY: ${taskPayload.company_name}`);
+      if (taskPayload.call_type) missionParts.push(`CALL TYPE: ${taskPayload.call_type}`);
+      if (taskPayload.caller_name) missionParts.push(`CALLER NAME: ${taskPayload.caller_name}`);
+      if (taskPayload.agent_name) missionParts.push(`AGENT NAME: ${taskPayload.agent_name}`);
+      if (taskPayload.tone) missionParts.push(`TONE: ${taskPayload.tone}`);
+      if (taskPayload.success_criteria) missionParts.push(`SUCCESS CRITERIA: ${taskPayload.success_criteria}`);
+      if (taskPayload.constraints) missionParts.push(`CONSTRAINTS: ${taskPayload.constraints}`);
+      if (taskPayload.allowed_actions) missionParts.push(`ALLOWED ACTIONS: ${taskPayload.allowed_actions}`);
+      if (taskPayload.script) missionParts.push(`SCRIPT/INSTRUCTIONS:\n${taskPayload.script}`);
+      
+      const payloadBlock = `\n\n═══ MISSION FROM DATABASE ═══\n${missionParts.join("\n")}\n═══ END MISSION ═══`;
+      enrichedMissionContext = payloadBlock + (systemMessage ? `\n\nELEVENLABS SYSTEM MESSAGE:\n${systemMessage}` : "");
+      
+      console.log(`[relay] Enriched mission context with DB payload: objective="${(taskPayload.objective || "").substring(0, 80)}"`);
+    }
+
     // ── Step 1: DIRECTOR (analysis + strategy in one pass) ───────────────
     // Inject current date/time so Director can validate dates
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/Chicago" });
     const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "America/Chicago" });
 
-    const directorSystem = buildDirectorSystem(systemMessage, operatorInjections, turnNumber);
+    const directorSystem = buildDirectorSystem(enrichedMissionContext, operatorInjections, turnNumber);
     const directorInput = `CURRENT DATE/TIME: ${dateStr}, ${timeStr} (Central Time)\n\nCONVERSATION:\n${transcript}\n\nLATEST HUMAN MESSAGE: "${lastUserMessage}"`;
 
     let directive: string;
@@ -594,11 +631,20 @@ serve(async (req) => {
           createdAt: new Date().toISOString(),
         });
 
+        // Also persist live conversation transcript so UI can show it in real-time
+        // (ElevenLabs REST API doesn't expose transcript until call ends)
+        const liveTranscript = recentMessages.map((m) => ({
+          role: m.role === "user" ? "user" : "assistant",
+          content: m.content,
+        }));
+
         await supabase.from("agent_tasks").update({
           result: {
             ...result,
             lastDirectorDirective: directive,
             directorDirectiveHistory: history.slice(-60),
+            conversationHistory: liveTranscript,
+            turnCount: liveTranscript.length,
           },
         }).eq("id", taskId);
       } catch (e) {
@@ -699,7 +745,8 @@ serve(async (req) => {
     }
 
     // ── Step 2: CALLER (Maya) ────────────────────────────────────────────
-    const callerInput = `DIRECTIVE FROM DIRECTOR:\n${directive}\n\nCONVERSATION SO FAR:\n${transcript}\n\nRespond as Maya. Say ONLY what you would speak aloud.`;
+    const objectiveContext = taskPayload.objective ? `\nYOUR MISSION: ${taskPayload.objective}\nYou are MAKING an outbound call to ${taskPayload.company_name || "a business"}. You are the CALLER.\n` : "";
+    const callerInput = `${objectiveContext}DIRECTIVE FROM DIRECTOR:\n${directive}\n\nCONVERSATION SO FAR:\n${transcript}\n\nRespond as Maya. Say ONLY what you would speak aloud.`;
 
     let spokenResponse: string;
     try {
@@ -709,6 +756,20 @@ serve(async (req) => {
     }
 
     console.log("[relay] Maya says:", spokenResponse.substring(0, 100));
+
+    // Persist Maya's response into live transcript
+    if (taskId) {
+      try {
+        const supabase = getSupabase();
+        const { data: latestTask } = await supabase.from("agent_tasks").select("result").eq("id", taskId).single();
+        const latestResult = (latestTask?.result as any) || {};
+        const currentHistory = Array.isArray(latestResult?.conversationHistory) ? [...latestResult.conversationHistory] : [];
+        currentHistory.push({ role: "assistant", content: spokenResponse });
+        await supabase.from("agent_tasks").update({
+          result: { ...latestResult, conversationHistory: currentHistory, turnCount: currentHistory.length },
+        }).eq("id", taskId);
+      } catch {}
+    }
 
     return buildResponse(spokenResponse);
 
