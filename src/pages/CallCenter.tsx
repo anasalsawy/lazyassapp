@@ -778,7 +778,7 @@ export default function CallCenter() {
 
                 {/* Transcript */}
                 <div ref={transcriptRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {activeCall?.conversationHistory.map((msg, i) => (
+                  {(activeCall?.conversationHistory || []).map((msg, i) => (
                     <div key={i} className={`flex gap-2 ${msg.role === "user" ? "" : "justify-end"}`}>
                       {msg.role === "user" && (
                         <div className="w-7 h-7 rounded-lg bg-blue-500/20 flex items-center justify-center shrink-0 mt-0.5">
