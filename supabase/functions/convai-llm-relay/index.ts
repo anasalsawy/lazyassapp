@@ -328,10 +328,3 @@ function buildResponse(content: string): Response {
     },
   });
 }
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    }),
-    {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    },
-  );
-}
