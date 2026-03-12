@@ -603,8 +603,10 @@ serve(async (req) => {
       console.warn("[relay] Could not fetch operator injections:", e);
     }
 
-    // ── Build enriched mission context from DB payload + ElevenLabs system message ──
-    let enrichedMissionContext = systemMessage;
+    // ── Build enriched mission context from DB payload + sanitized system context ──
+    const sanitizedSystemContext = extractRelevantSystemContext(systemMessage);
+    let enrichedMissionContext = sanitizedSystemContext;
+
     if (taskPayload.objective || taskPayload.script || taskPayload.company_name) {
       const missionParts: string[] = [];
       if (taskPayload.objective) missionParts.push(`OBJECTIVE: ${taskPayload.objective}`);
@@ -617,10 +619,12 @@ serve(async (req) => {
       if (taskPayload.constraints) missionParts.push(`CONSTRAINTS: ${taskPayload.constraints}`);
       if (taskPayload.allowed_actions) missionParts.push(`ALLOWED ACTIONS: ${taskPayload.allowed_actions}`);
       if (taskPayload.script) missionParts.push(`SCRIPT/INSTRUCTIONS:\n${taskPayload.script}`);
-      
+
       const payloadBlock = `\n\n═══ MISSION FROM DATABASE ═══\n${missionParts.join("\n")}\n═══ END MISSION ═══`;
-      enrichedMissionContext = payloadBlock + (systemMessage ? `\n\nELEVENLABS SYSTEM MESSAGE:\n${systemMessage}` : "");
-      
+      enrichedMissionContext = sanitizedSystemContext
+        ? `${payloadBlock}\n\nSYSTEM CONTEXT:\n${sanitizedSystemContext}`
+        : payloadBlock;
+
       console.log(`[relay] Enriched mission context with DB payload: objective="${(taskPayload.objective || "").substring(0, 80)}"`);
     }
 
