@@ -210,19 +210,36 @@ serve(async (req) => {
         });
       }
 
-      const result = task.result as any;
-      const injections = result?.operatorInjections || [];
+      const result = (task.result as any) || {};
+      const injections = Array.isArray(result?.operatorInjections)
+        ? [...result.operatorInjections]
+        : [];
       injections.push(instruction);
 
+      const nowIso = new Date().toISOString();
+      const injectionHistory = Array.isArray(result?.operatorInjectionHistory)
+        ? [...result.operatorInjectionHistory]
+        : [];
+      injectionHistory.push({
+        instruction,
+        createdAt: nowIso,
+        source: "operator",
+        status: "queued",
+      });
+
       await supabase.from("agent_tasks").update({
-        result: { ...result, operatorInjections: injections },
+        result: {
+          ...result,
+          operatorInjections: injections,
+          operatorInjectionHistory: injectionHistory.slice(-50),
+        },
       }).eq("id", task_id);
 
       console.log(`[voice-agent] Operator injection: "${instruction}" → task ${task_id}`);
 
       return new Response(JSON.stringify({ 
         success: true, 
-        message: "Instruction injected. Use sendContextualUpdate() to deliver it to the agent.",
+        message: "Instruction injected and queued for the Director.",
         pendingInjections: injections.length,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -247,9 +264,11 @@ serve(async (req) => {
         });
       }
 
-      const result = task.result as any;
+      const result = (task.result as any) || {};
       const conversationId = result?.conversationId;
-      let conversationHistory: Array<{ role: string; content: string }> = [];
+      let conversationHistory: Array<{ role: string; content: string }> = Array.isArray(result?.conversationHistory)
+        ? result.conversationHistory
+        : [];
       let elStatus: string | null = null;
 
       // Fetch live transcript from ElevenLabs if we have a conversation ID
@@ -289,6 +308,9 @@ serve(async (req) => {
                   callSid: result?.callSid,
                   conversationId,
                   pendingInjections: result?.operatorInjections?.length || 0,
+                  operatorInjectionHistory: result?.operatorInjectionHistory || [],
+                  lastDirectorDirective: result?.lastDirectorDirective || null,
+                  directorDirectiveHistory: result?.directorDirectiveHistory || [],
                   config: task.payload,
                   engine: result?.engine,
                   turnCount: conversationHistory.length,
@@ -309,6 +331,9 @@ serve(async (req) => {
         callSid: result?.callSid,
         conversationId,
         pendingInjections: result?.operatorInjections?.length || 0,
+        operatorInjectionHistory: result?.operatorInjectionHistory || [],
+        lastDirectorDirective: result?.lastDirectorDirective || null,
+        directorDirectiveHistory: result?.directorDirectiveHistory || [],
         config: task.payload,
         engine: result?.engine,
         turnCount: conversationHistory.length,
