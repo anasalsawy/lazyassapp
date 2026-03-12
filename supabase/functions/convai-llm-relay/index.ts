@@ -525,22 +525,22 @@ serve(async (req) => {
 
     // No conversation yet and no user message — generate opening line
     if (!lastUserMessage && conversationMessages.length === 0) {
-      // Try to get task payload for opening line context
-      let openingContext = systemMessage;
+      // Prefer DB payload context; never rely on noisy freeform system text.
+      let openingContext = extractRelevantSystemContext(systemMessage);
       if (taskId) {
         try {
           const supabase = getSupabase();
           const { data: task } = await supabase.from("agent_tasks").select("payload").eq("id", taskId).single();
           const payload = (task?.payload as any) || {};
           if (payload.objective) {
-            openingContext = `OBJECTIVE: ${payload.objective}\nCOMPANY: ${payload.company_name || "unknown"}\nSCRIPT: ${payload.script || "none"}\n\n${systemMessage}`;
+            openingContext = `OBJECTIVE: ${payload.objective}\nCOMPANY: ${payload.company_name || "unknown"}\nSCRIPT: ${payload.script || "none"}`;
           }
         } catch {}
       }
       const openingDirective = "Introduce yourself briefly and state the purpose of the call. Be warm and concise. You are MAKING an outbound call — YOU are the caller, not the recipient.";
       const opening = await llm(
         CALLER_SYSTEM,
-        `SYSTEM CONTEXT:\n${openingContext}\n\nDIRECTIVE: ${openingDirective}`,
+        `SYSTEM CONTEXT:\n${openingContext || "No additional context."}\n\nDIRECTIVE: ${openingDirective}`,
       );
       return buildResponse(opening || "Hi — this is Maya. How can I help you today?");
     }
