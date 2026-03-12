@@ -455,6 +455,23 @@ export default function CallCenter() {
     }
   };
 
+  const killCall = async (taskId: string) => {
+    try {
+      const { error } = await supabase.functions.invoke("voice-agent", {
+        body: { action: "end-call", taskId },
+      });
+      if (error) throw error;
+      toast.success("Call terminated");
+      if (activeCall?.taskId === taskId) {
+        setActiveCall(null);
+        if (pollRef.current) clearInterval(pollRef.current);
+      }
+      loadRecentCalls();
+    } catch (err: any) {
+      toast.error("Failed to kill call: " + (err.message || "Unknown error"));
+    }
+  };
+
   const isCallActive = activeCall?.status === "running";
   const runningCalls = recentCalls.filter((call) => call.status === "running");
 
