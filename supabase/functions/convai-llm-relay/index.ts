@@ -448,6 +448,55 @@ serve(async (req) => {
       }
     }
 
+    // ── DTMF tone detection & sending via Twilio ──────────────────────────
+    // If Director says "DTMF: 1" or "DTMF: 0", send the tone mid-call
+    const dtmfMatch = directive.match(/DTMF[:\s]+([0-9*#]+)/i);
+    if (dtmfMatch && taskId) {
+      const digits = dtmfMatch[1];
+      console.log(`[relay] DTMF detected: "${digits}" — sending via Twilio`);
+      try {
+        const supabase = getSupabase();
+        const { data: task } = await supabase
+          .from("agent_tasks")
+          .select("result")
+          .eq("id", taskId)
+          .single();
+        const callSid = (task?.result as any)?.callSid;
+        if (callSid) {
+          const TWILIO_ACCOUNT_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
+          const TWILIO_AUTH_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
+          if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
+            // Use Twilio Play API with DTMF — send tones on the active call leg
+            const twilioResp = await fetch(
+              `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Calls/${callSid}.json`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  "Authorization": "Basic " + btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`),
+                },
+                body: new URLSearchParams({
+                  Twiml: `<Response><Play digits="${digits}"/><Pause length="2"/></Response>`,
+                }),
+              },
+            );
+            if (!twilioResp.ok) {
+              const errBody = await twilioResp.text();
+              console.error(`[relay] Twilio DTMF failed (${twilioResp.status}):`, errBody);
+            } else {
+              console.log(`[relay] DTMF "${digits}" sent successfully on call ${callSid}`);
+            }
+          } else {
+            console.warn("[relay] TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN missing — cannot send DTMF");
+          }
+        } else {
+          console.warn("[relay] No callSid found — cannot send DTMF");
+        }
+      } catch (e) {
+        console.warn("[relay] DTMF send error:", e);
+      }
+    }
+
     // Check for END_CALL
     if (directive.includes("END_CALL")) {
       const isSuccess = directive.toLowerCase().includes("objective met");
