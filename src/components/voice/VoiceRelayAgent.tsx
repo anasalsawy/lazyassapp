@@ -35,23 +35,23 @@ export function VoiceRelayAgent({ agentId, onTranscript, onStatusChange }: Voice
       onStatusChange?.("disconnected");
       if (levelInterval.current) clearInterval(levelInterval.current);
     },
-    onMessage: (message) => {
-      if (message.type === "user_transcript") {
-        const text = (message as any).user_transcription_event?.user_transcript;
+    onMessage: (message: any) => {
+      const msgType = message?.type;
+      if (msgType === "user_transcript") {
+        const text = message.user_transcription_event?.user_transcript;
         if (text) {
           setTranscripts((prev) => [...prev, { role: "user", text, time: new Date() }]);
           onTranscript?.("user", text);
         }
-      } else if (message.type === "agent_response") {
-        const text = (message as any).agent_response_event?.agent_response;
+      } else if (msgType === "agent_response") {
+        const text = message.agent_response_event?.agent_response;
         if (text) {
           setTranscripts((prev) => [...prev, { role: "agent", text, time: new Date() }]);
           onTranscript?.("agent", text);
         }
-      } else if (message.type === "agent_response_correction") {
-        const text = (message as any).agent_response_correction_event?.corrected_agent_response;
+      } else if (msgType === "agent_response_correction") {
+        const text = message.agent_response_correction_event?.corrected_agent_response;
         if (text) {
-          // Update last agent message with correction
           setTranscripts((prev) => {
             const updated = [...prev];
             for (let i = updated.length - 1; i >= 0; i--) {
