@@ -354,7 +354,7 @@ serve(async (req) => {
         phone_number, objective, tone, script, caller_name, voice,
         company_name, agent_name, agent_role, success_criteria,
         allowed_actions, constraints, disclosure_policy, call_type,
-        use_legacy_twiml, // Force old Polly/TwiML path if true
+        
       } = body;
 
       if (!phone_number || !objective) {
