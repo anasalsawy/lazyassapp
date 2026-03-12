@@ -2,16 +2,17 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 /**
- * Voice Agent — ElevenLabs Native Architecture (No Custom LLM Relay)
+ * Voice Agent — ElevenLabs + Custom LLM Relay Architecture
  * 
- * ElevenLabs handles EVERYTHING:
- *   - STT, TTS, turn-taking, conversation logic
- *   - Maya persona (configured as system prompt in ElevenLabs dashboard)
- *   - IVR/automated system detection (native)
+ * ElevenLabs handles voice I/O (STT, TTS, turn-taking).
+ * The BRAIN lives in convai-llm-relay (Custom LLM endpoint):
+ *   - Analyst: detects tone, intent, IVR, emotional state
+ *   - Director: strategic decisions based on mission context + operator injections
+ *   - Caller (Maya): produces natural spoken responses
  * 
  * This function handles:
  *   - initiate: Start outbound call via ElevenLabs + Twilio
- *   - inject: Operator injects mid-call context (stored in DB, consumed via sendContextualUpdate)
+ *   - inject: Operator injects mid-call context (stored in DB, consumed by Director in relay)
  *   - get-state: Get current call state for UI
  *   - list-calls: List active/recent calls
  *   - initiate-mission: Multi-store retry loop
@@ -19,7 +20,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
  *   - recording: Recording callback
  * 
  * Context is injected at call start via conversation_initiation_client_data (dynamic_variables).
- * Mid-call steering via sendContextualUpdate() from the web Voice Relay UI.
+ * The relay reads these from the system message on every turn.
+ * Operator injections are consumed by the relay from the agent_tasks table.
  */
 
 const corsHeaders = {
