@@ -23,11 +23,139 @@ const corsHeaders = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+type RelayContext = {
+  taskId: string | null;
+  callSid: string | null;
+  conversationId: string | null;
+  result: Record<string, unknown>;
+};
+
 function getSupabase() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+}
+
+function parseTaskId(systemMessage: string): string | null {
+  const patterns = [
+    /task[_\s-]?id["'\s:=]+([a-f0-9-]{36})/i,
+    /\b([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = systemMessage.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
+
+function parseConversationId(body: Record<string, any>, systemMessage: string): string | null {
+  const candidates = [
+    body?.conversation_id,
+    body?.conversationId,
+    body?.metadata?.conversation_id,
+    body?.metadata?.conversationId,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.startsWith("conv_")) return candidate;
+  }
+
+  const match = systemMessage.match(/\b(conv_[a-z0-9]+)\b/i);
+  return match?.[1] || null;
+}
+
+function parseCallSid(body: Record<string, any>, systemMessage: string): string | null {
+  const candidates = [
+    body?.call_sid,
+    body?.callSid,
+    body?.metadata?.call_sid,
+    body?.metadata?.callSid,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && /^CA[a-f0-9]{32}$/i.test(candidate)) return candidate;
+  }
+
+  const match = systemMessage.match(/\b(CA[a-f0-9]{32})\b/i);
+  return match?.[1] || null;
+}
+
+function extractDtmfDigits(directive: string): string | null {
+  const explicitMatch = directive.match(/(?:^|\n|\b)(?:DTMF|DIGITS?)\s*[:=-]?\s*([0-9#*wWpP]+)/i);
+  if (explicitMatch?.[1]) return explicitMatch[1].replace(/\s+/g, "");
+
+  const pressMatch = directive.match(/\bpress\s+([0-9#*]{1,8})\b/i);
+  if (pressMatch?.[1]) return pressMatch[1].replace(/\s+/g, "");
+
+  return null;
+}
+
+function isDuplicateDtmf(result: Record<string, unknown>, digits: string): boolean {
+  const lastDtmf = (result as any)?.lastDtmfSent;
+  if (!lastDtmf || typeof lastDtmf !== "object") return false;
+
+  const lastDigits = typeof lastDtmf.digits === "string" ? lastDtmf.digits : "";
+  const lastSentAt = typeof lastDtmf.sentAt === "string" ? lastDtmf.sentAt : "";
+  if (!lastDigits || !lastSentAt) return false;
+
+  const elapsedMs = Date.now() - new Date(lastSentAt).getTime();
+  return lastDigits === digits && elapsedMs >= 0 && elapsedMs < 8000;
+}
+
+async function resolveRelayContext(
+  systemMessage: string,
+  body: Record<string, any>,
+): Promise<RelayContext> {
+  const taskIdCandidate = parseTaskId(systemMessage);
+  const conversationId = parseConversationId(body, systemMessage);
+  const callSidCandidate = parseCallSid(body, systemMessage);
+
+  if (!taskIdCandidate && !conversationId && !callSidCandidate) {
+    return {
+      taskId: null,
+      conversationId: null,
+      callSid: null,
+      result: {},
+    };
+  }
+
+  try {
+    const supabase = getSupabase();
+    let query = supabase
+      .from("agent_tasks")
+      .select("id, result")
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (taskIdCandidate) {
+      query = query.eq("id", taskIdCandidate);
+    } else if (conversationId) {
+      query = query.filter("result->>conversationId", "eq", conversationId);
+    } else if (callSidCandidate) {
+      query = query.filter("result->>callSid", "eq", callSidCandidate);
+    }
+
+    const { data: task } = await query.maybeSingle();
+    const taskResult = (task?.result as Record<string, unknown> | null) || {};
+
+    return {
+      taskId: task?.id || taskIdCandidate || null,
+      callSid: ((taskResult as any)?.callSid as string | undefined) || callSidCandidate,
+      conversationId: ((taskResult as any)?.conversationId as string | undefined) || conversationId,
+      result: taskResult,
+    };
+  } catch (e) {
+    console.warn("[relay] resolveRelayContext failed:", e);
+    return {
+      taskId: taskIdCandidate,
+      callSid: callSidCandidate,
+      conversationId,
+      result: {},
+    };
+  }
 }
 
 /** Call OpenAI API directly */
@@ -329,9 +457,13 @@ serve(async (req) => {
     const assistantMessages = conversationMessages.filter((m) => m.role === "assistant");
     const lastUserMessage = userMessages.pop()?.content || "";
     const turnNumber = userMessages.length + (lastUserMessage ? 1 : 0);
-    const taskId = systemMessage.match(/task_id[:\s="']+([a-f0-9-]+)/i)?.[1] || null;
 
-    console.log(`[relay] Turn ${turnNumber}, user msgs: ${userMessages.length + (lastUserMessage ? 1 : 0)}, assistant msgs: ${assistantMessages.length}, lastUser: "${lastUserMessage.substring(0, 60)}"`);
+    const relayContext = await resolveRelayContext(systemMessage, body);
+    const taskId = relayContext.taskId;
+
+    console.log(
+      `[relay] Turn ${turnNumber}, user msgs: ${userMessages.length + (lastUserMessage ? 1 : 0)}, assistant msgs: ${assistantMessages.length}, taskId: ${taskId || "none"}, callSid: ${relayContext.callSid || "none"}, conv: ${relayContext.conversationId || "none"}, lastUser: "${lastUserMessage.substring(0, 60)}"`,
+    );
 
     // No conversation yet and no user message — generate opening line
     if (!lastUserMessage && conversationMessages.length === 0) {
@@ -449,24 +581,22 @@ serve(async (req) => {
     }
 
     // ── DTMF tone detection & sending via Twilio ──────────────────────────
-    // If Director says "DTMF: 1" or "DTMF: 0", send the tone mid-call
-    const dtmfMatch = directive.match(/DTMF[:\s]+([0-9*#]+)/i);
-    if (dtmfMatch && taskId) {
-      const digits = dtmfMatch[1];
-      console.log(`[relay] DTMF detected: "${digits}" — sending via Twilio`);
+    const dtmfDigits = extractDtmfDigits(directive);
+    if (dtmfDigits) {
+      console.log(`[relay] DTMF detected: "${dtmfDigits}"`);
       try {
-        const supabase = getSupabase();
-        const { data: task } = await supabase
-          .from("agent_tasks")
-          .select("result")
-          .eq("id", taskId)
-          .single();
-        const callSid = (task?.result as any)?.callSid;
-        if (callSid) {
+        const callSid = relayContext.callSid;
+        if (!callSid) {
+          console.warn("[relay] DTMF skipped — no callSid resolved");
+        } else if (isDuplicateDtmf(relayContext.result, dtmfDigits)) {
+          console.log(`[relay] DTMF "${dtmfDigits}" skipped (duplicate within cooldown)`);
+        } else {
           const TWILIO_ACCOUNT_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
           const TWILIO_AUTH_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
-          if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
-            // Use Twilio Play API with DTMF — send tones on the active call leg
+
+          if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+            console.warn("[relay] TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN missing — cannot send DTMF");
+          } else {
             const twilioResp = await fetch(
               `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Calls/${callSid}.json`,
               {
@@ -476,21 +606,30 @@ serve(async (req) => {
                   "Authorization": "Basic " + btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`),
                 },
                 body: new URLSearchParams({
-                  Twiml: `<Response><Play digits="${digits}"/><Pause length="2"/></Response>`,
+                  Twiml: `<Response><Play digits="${dtmfDigits}"/><Pause length="1"/></Response>`,
                 }),
               },
             );
+
             if (!twilioResp.ok) {
               const errBody = await twilioResp.text();
               console.error(`[relay] Twilio DTMF failed (${twilioResp.status}):`, errBody);
             } else {
-              console.log(`[relay] DTMF "${digits}" sent successfully on call ${callSid}`);
+              console.log(`[relay] DTMF "${dtmfDigits}" sent successfully on call ${callSid}`);
+              if (taskId) {
+                const supabase = getSupabase();
+                await supabase.from("agent_tasks").update({
+                  result: {
+                    ...relayContext.result,
+                    lastDtmfSent: {
+                      digits: dtmfDigits,
+                      sentAt: new Date().toISOString(),
+                    },
+                  },
+                }).eq("id", taskId);
+              }
             }
-          } else {
-            console.warn("[relay] TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN missing — cannot send DTMF");
           }
-        } else {
-          console.warn("[relay] No callSid found — cannot send DTMF");
         }
       } catch (e) {
         console.warn("[relay] DTMF send error:", e);

@@ -460,10 +460,23 @@ export default function CallCenter() {
 
   const killCall = async (taskId: string) => {
     try {
-      const { error } = await supabase.functions.invoke("voice-agent", {
-        body: { action: "end-call", taskId },
-      });
-      if (error) throw error;
+      if (!session?.access_token) throw new Error("Not authenticated");
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=end-call`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ task_id: taskId }),
+        },
+      );
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.error || "Unknown error");
+
       toast.success("Call terminated");
       if (activeCall?.taskId === taskId) {
         setActiveCall(null);
@@ -932,6 +945,37 @@ export default function CallCenter() {
               </h3>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Director Input */}
+              {isCallActive && (
+                <Card className="bg-card/50 border-border/40">
+                  <CardHeader className="pb-2 pt-3 px-3">
+                    <CardTitle className="text-xs font-semibold flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-400" /> Director Input
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-3 pb-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={injection}
+                        onChange={(e) => setInjection(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && injectInstruction()}
+                        placeholder="Steer strategy... (e.g., Push for manager)"
+                        className="h-8 text-xs bg-muted/30 border-border/40"
+                      />
+                      <Button
+                        onClick={injectInstruction}
+                        disabled={!injection.trim() || isInjecting}
+                        size="sm"
+                        className="h-8 px-2"
+                      >
+                        {isInjecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">Sent instantly and applied on the next turn.</p>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Analyst Report */}
               {activeCall?.lastAnalysis && (
                 <Card className="bg-card/50 border-border/40">
