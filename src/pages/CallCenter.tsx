@@ -71,6 +71,7 @@ export default function CallCenter() {
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [retryQueue, setRetryQueue] = useState<Array<{ name: string; phone: string }>>([]);
   const retryQueueRef = useRef<Array<{ name: string; phone: string }>>([]);
+  const hasAutoResumedRef = useRef(false);
 
   // Polling
   const pollRef = useRef<number | null>(null);
@@ -177,7 +178,7 @@ export default function CallCenter() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
-  // Load recent calls
+  // Load recent calls and auto-resume any running call
   useEffect(() => {
     if (!session?.access_token) return;
     (async () => {
@@ -193,11 +194,22 @@ export default function CallCenter() {
         );
         if (resp.ok) {
           const data = await resp.json();
-          setRecentCalls(data.calls || []);
+          const calls = Array.isArray(data?.calls) ? data.calls : [];
+          setRecentCalls(calls);
+
+          if (!hasAutoResumedRef.current) {
+            const runningCall = calls.find((call: any) => call?.status === "running" && call?.taskId);
+            if (runningCall?.taskId) {
+              hasAutoResumedRef.current = true;
+              startPolling(runningCall.taskId);
+            }
+          }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     })();
-  }, [session]);
+  }, [session, startPolling]);
 
   // Smart mode: search for stores, then auto-call first one with rest as retries
   const initiateSmartCall = async () => {
@@ -429,6 +441,7 @@ export default function CallCenter() {
 
   // Resume monitoring a recent call
   const resumeMonitoring = (taskId: string) => {
+    hasAutoResumedRef.current = true;
     startPolling(taskId);
   };
 
@@ -443,6 +456,7 @@ export default function CallCenter() {
   };
 
   const isCallActive = activeCall?.status === "running";
+  const runningCalls = recentCalls.filter((call) => call.status === "running");
 
   return (
     <AppLayout>
@@ -472,6 +486,28 @@ export default function CallCenter() {
               /* ── CALL INITIATION FORM ── */
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="max-w-lg mx-auto space-y-6">
+                  {runningCalls.length > 0 && (
+                    <div className="rounded-xl border border-border/40 bg-card/30 p-3 space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        {runningCalls.length} call{runningCalls.length > 1 ? "s" : ""} currently running
+                      </p>
+                      <div className="space-y-2">
+                        {runningCalls.slice(0, 3).map((call) => (
+                          <Button
+                            key={call.taskId}
+                            variant="outline"
+                            size="sm"
+                            className="w-full justify-start"
+                            onClick={() => resumeMonitoring(call.taskId)}
+                          >
+                            <Radio className="w-3.5 h-3.5 mr-2" />
+                            <span className="truncate">{call.objective || call.taskId}</span>
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="text-center space-y-2 mb-8">
                     <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-red-500/20 to-amber-500/20 border border-red-500/30 flex items-center justify-center">
                       <Users className="w-8 h-8 text-red-400" />
