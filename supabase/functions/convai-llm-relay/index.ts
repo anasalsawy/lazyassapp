@@ -267,26 +267,64 @@ serve(async (req) => {
   }
 });
 
-// ─── Response Builder ─────────────────────────────────────────────────────────
+// ─── Streaming SSE Response Builder ───────────────────────────────────────────
+// ElevenLabs Custom LLM requires streaming SSE format for voice to work.
+// We simulate streaming by sending the complete text as chunked SSE events.
 
 function buildResponse(content: string): Response {
-  return new Response(
-    JSON.stringify({
-      id: `chatcmpl-${crypto.randomUUID()}`,
-      object: "chat.completion",
-      created: Math.floor(Date.now() / 1000),
-      model: "maya-director-caller-v2",
-      choices: [
-        {
+  const id = `chatcmpl-${crypto.randomUUID()}`;
+  const created = Math.floor(Date.now() / 1000);
+
+  // Split content into small chunks for streaming feel
+  const words = content.split(" ");
+  const chunks: string[] = [];
+  for (let i = 0; i < words.length; i += 3) {
+    chunks.push(words.slice(i, i + 3).join(" ") + (i + 3 < words.length ? " " : ""));
+  }
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      // Send each chunk as an SSE event
+      for (const chunk of chunks) {
+        const event = {
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model: "maya-director-caller-v2",
+          choices: [{
+            index: 0,
+            delta: { content: chunk },
+            finish_reason: null,
+          }],
+        };
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+
+      // Send final chunk with finish_reason
+      const finalEvent = {
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model: "maya-director-caller-v2",
+        choices: [{
           index: 0,
-          message: { role: "assistant", content },
+          delta: {},
           finish_reason: "stop",
-        },
-      ],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    }),
-    {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }],
+      };
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalEvent)}\n\n`));
+      controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+      controller.close();
     },
-  );
+  });
+
+  return new Response(stream, {
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
+  });
 }
