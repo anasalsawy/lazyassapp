@@ -155,10 +155,10 @@ serve(async (req) => {
       );
 
       if (!elevenLabsRes.ok) {
-        const errData = await elevenLabsRes.json().catch(() => ({}));
-        console.error("[voice-agent] ElevenLabs error:", elevenLabsRes.status, errData);
-        await supabase.from("agent_tasks").update({ status: "failed", error_message: `ElevenLabs error: ${JSON.stringify(errData)}` }).eq("id", taskId);
-        return new Response(JSON.stringify({ error: `ElevenLabs call failed: ${errData.detail || errData.message || elevenLabsRes.status}` }), {
+        const errText = await elevenLabsRes.text().catch(() => "unknown");
+        console.error("[voice-agent] ElevenLabs error:", elevenLabsRes.status, errText);
+        await supabase.from("agent_tasks").update({ status: "failed", error_message: `ElevenLabs error ${elevenLabsRes.status}: ${errText}` }).eq("id", taskId);
+        return new Response(JSON.stringify({ error: `ElevenLabs call failed (${elevenLabsRes.status}): ${errText}` }), {
           status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
