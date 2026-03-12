@@ -34,7 +34,7 @@ function getSupabase() {
 async function llm(
   systemPrompt: string,
   userMessage: string,
-  model = "gpt-4o",
+  model = "gpt-4.1-mini",
 ): Promise<string> {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
