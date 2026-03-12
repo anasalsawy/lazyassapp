@@ -266,9 +266,11 @@ serve(async (req) => {
 
       const result = (task.result as any) || {};
       const conversationId = result?.conversationId;
+      // Use relay-persisted transcript as baseline (available in real-time)
       let conversationHistory: Array<{ role: string; content: string }> = Array.isArray(result?.conversationHistory)
         ? result.conversationHistory
         : [];
+      const relayTranscriptCount = conversationHistory.length;
       let elStatus: string | null = null;
 
       // Fetch live transcript from ElevenLabs if we have a conversation ID
