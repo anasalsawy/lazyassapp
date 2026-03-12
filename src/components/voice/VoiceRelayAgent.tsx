@@ -166,7 +166,7 @@ export function VoiceRelayAgent({ agentId, onTranscript, onStatusChange }: Voice
             <span className="flex items-center gap-1">
               <Mic className="w-3 h-3" />
               <span
-                className="inline-block h-2 rounded-full bg-green-500 transition-all"
+                className="inline-block h-2 rounded-full bg-primary transition-all"
                 style={{ width: `${Math.max(4, inputLevel * 40)}px` }}
               />
             </span>
