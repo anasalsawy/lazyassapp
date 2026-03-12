@@ -441,6 +441,7 @@ export default function CallCenter() {
 
   // Resume monitoring a recent call
   const resumeMonitoring = (taskId: string) => {
+    hasAutoResumedRef.current = true;
     startPolling(taskId);
   };
 
@@ -455,6 +456,7 @@ export default function CallCenter() {
   };
 
   const isCallActive = activeCall?.status === "running";
+  const runningCalls = recentCalls.filter((call) => call.status === "running");
 
   return (
     <AppLayout>
