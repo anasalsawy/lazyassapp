@@ -251,14 +251,23 @@ async function callBridge(
   actions?: any[] | null,
   extractText: boolean = true,
   selector?: string | null,
-): Promise<{ status: string; url: string; title: string; content: string; extracted: any; action_results: any }> {
+  userId?: string | null,
+  profileName?: string | null,
+): Promise<{ status: string; url: string; title: string; content: string; extracted: any; action_results: any; profile_saved?: boolean }> {
   const baseUrl = bridgeUrl.replace(/\/$/, "");
   const body: any = { url, extract_text: extractText };
   if (actions && actions.length > 0) body.actions = actions;
   if (selector) body.selector = selector;
+  // Persistent profile support — VPS bridge saves/loads cookies per user+site
+  if (userId) body.user_id = userId;
+  if (profileName) body.profile_name = profileName;
+  if (userId && profileName) body.save_profile = true;
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (bridgeKey) headers["Authorization"] = `Bearer ${bridgeKey}`;
+  if (bridgeKey) {
+    headers["Authorization"] = `Bearer ${bridgeKey}`;
+    headers["X-API-Key"] = bridgeKey;
+  }
 
   const res = await fetch(`${baseUrl}/run-task`, {
     method: "POST",
