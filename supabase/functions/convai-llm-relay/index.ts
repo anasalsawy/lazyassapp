@@ -757,6 +757,20 @@ serve(async (req) => {
 
     console.log("[relay] Maya says:", spokenResponse.substring(0, 100));
 
+    // Persist Maya's response into live transcript
+    if (taskId) {
+      try {
+        const supabase = getSupabase();
+        const { data: latestTask } = await supabase.from("agent_tasks").select("result").eq("id", taskId).single();
+        const latestResult = (latestTask?.result as any) || {};
+        const currentHistory = Array.isArray(latestResult?.conversationHistory) ? [...latestResult.conversationHistory] : [];
+        currentHistory.push({ role: "assistant", content: spokenResponse });
+        await supabase.from("agent_tasks").update({
+          result: { ...latestResult, conversationHistory: currentHistory, turnCount: currentHistory.length },
+        }).eq("id", taskId);
+      } catch {}
+    }
+
     return buildResponse(spokenResponse);
 
   } catch (e) {
