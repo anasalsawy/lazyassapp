@@ -946,10 +946,21 @@ export default function LovableAgent() {
       }
 
       case "call_update":
+        if (data.status === "ringing" || data.status === "running") {
+          setPhase("on_call");
+        }
+
         setCurrentCallState(prev => {
           const updated = prev ? {
             ...prev,
-            status: (data.status === "completed" || data.status === "failed" ? data.status : "running") as CallState["status"],
+            status: (
+              data.status === "ringing" ||
+              data.status === "completed" ||
+              data.status === "failed" ||
+              data.status === "error"
+                ? data.status
+                : "running"
+            ) as CallState["status"],
             turnCount: data.turnCount || prev.turnCount,
             transcript: data.transcript || prev.transcript,
             lastAnalysis: data.lastAnalysis ? (typeof data.lastAnalysis === 'string' ? data.lastAnalysis : JSON.stringify(data.lastAnalysis)) : prev.lastAnalysis,
@@ -1253,7 +1264,10 @@ export default function LovableAgent() {
     }
   }, [input, session]);
 
-  const isOnCall = phase === "on_call";
+  const isOnCall =
+    currentCallState?.status === "ringing" ||
+    currentCallState?.status === "running" ||
+    phase === "on_call";
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1374,13 +1388,13 @@ export default function LovableAgent() {
                   </div>
                 )}
 
-                {isLoading && currentCallState && (
+                {currentCallState && (isLoading || isOnCall || currentCallState.status === "completed" || currentCallState.status === "failed" || currentCallState.status === "error") && (
                   <div className="flex gap-3">
                     <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
                       <Bot className="w-4 h-4 text-white" />
                     </div>
                     <div className="max-w-[85%] min-w-0">
-                      <CallMonitorPanel callState={currentCallState} isLive={true} />
+                      <CallMonitorPanel callState={currentCallState} isLive={isOnCall} />
                     </div>
                   </div>
                 )}
@@ -1429,12 +1443,12 @@ export default function LovableAgent() {
               <p className="text-xs text-muted-foreground">
                 Lovable Agent — full backend access. Press Enter to send.
               </p>
-              {isLoading && (
+              {(isLoading || isOnCall) && (
                 <Badge variant="outline" className="text-xs animate-pulse">
-                  {phase === "on_call" ? <Phone className="w-3 h-3 mr-1" /> : <Activity className="w-3 h-3 mr-1" />}
-                  {phase === "thinking" ? "Thinking..." :
+                  {isOnCall ? <Phone className="w-3 h-3 mr-1" /> : <Activity className="w-3 h-3 mr-1" />}
+                  {isOnCall ? "On call..." :
+                   phase === "thinking" ? "Thinking..." :
                    phase === "executing" ? "Executing tools..." :
-                   phase === "on_call" ? "On call..." :
                    phase === "generating" ? "Writing response..." :
                    "Working..."}
                 </Badge>

@@ -488,7 +488,8 @@ export default function CallCenter() {
     }
   };
 
-  const isCallActive = activeCall?.status === "running";
+  const isCallLive = activeCall?.status === "running";
+  const isCallActive = activeCall?.status === "running" || activeCall?.status === "ringing";
   const runningCalls = recentCalls.filter((call) => call.status === "running");
   const directorHistory = activeCall?.directorDirectiveHistory ?? [];
   const injectionHistory = activeCall?.operatorInjectionHistory ?? [];
@@ -514,7 +515,7 @@ export default function CallCenter() {
               <h1 className="text-xl font-display font-bold">Call Center</h1>
               <p className="text-xs text-muted-foreground">Multi-Agent Voice System — Director • Analyst • Caller</p>
             </div>
-            {isCallActive && (
+            {isCallLive && (
               <Badge className="ml-auto bg-emerald-500/20 text-emerald-400 border-emerald-500/30 animate-pulse">
                 <Radio className="w-3 h-3 mr-1" /> LIVE
               </Badge>
