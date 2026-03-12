@@ -60,12 +60,12 @@ serve(async (req) => {
         });
       }
 
-      const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY");
+      const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
       const ELEVENLABS_AGENT_ID = "agent_8401kkgdds3de8p949kwdvhhhgr1";
       const ELEVENLABS_PHONE_NUMBER_ID = Deno.env.get("ELEVENLABS_PHONE_NUMBER_ID") || "";
 
       if (!ELEVENLABS_API_KEY) {
-        return new Response(JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" }), {
+        return new Response(JSON.stringify({ error: "ELEVENLABS_CONVAI_KEY not configured" }), {
           status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
