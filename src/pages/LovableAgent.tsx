@@ -1264,7 +1264,10 @@ export default function LovableAgent() {
     }
   }, [input, session]);
 
-  const isOnCall = phase === "on_call";
+  const isOnCall =
+    currentCallState?.status === "ringing" ||
+    currentCallState?.status === "running" ||
+    phase === "on_call";
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
