@@ -214,30 +214,21 @@ function applyDirectorUpdates(state: MissionState, guidance: DirectorGuidance): 
   const s = { ...state };
   s.turn_number += 1;
 
-  if (guidance.state_updates.set_phase && s.call_phase !== guidance.state_updates.set_phase) {
+  if (guidance.phase && s.call_phase !== guidance.phase) {
     s.phase_history.push(s.call_phase);
-    s.call_phase = guidance.state_updates.set_phase;
+    s.call_phase = guidance.phase;
   }
-  for (const t of guidance.state_updates.add_topics || []) {
-    if (!s.topics_discussed.includes(t)) s.topics_discussed.push(t);
-  }
-  if (guidance.state_updates.add_info) Object.assign(s.info_collected, guidance.state_updates.add_info);
-  if (guidance.state_updates.increment_failure) {
-    const k = guidance.state_updates.increment_failure;
-    s.failure_budget[k] = (s.failure_budget[k] || 0) + 1;
-  }
+  if (guidance.info) Object.assign(s.info_collected, guidance.info);
 
   // Truncate histories
   if (s.phase_history.length > 20) s.phase_history = s.phase_history.slice(-20);
-  if (s.topics_discussed.length > 30) s.topics_discussed = s.topics_discussed.slice(-30);
   if (s.director_guidance_history.length > 20) s.director_guidance_history = s.director_guidance_history.slice(-20);
 
-  // Track signatures for loop detection
-  const sig = `${guidance.phase}::${guidance.strategic_suggestion.substring(0, 50)}`.toLowerCase();
+  // Loop detection via direction signature
+  const sig = `${guidance.phase}::${guidance.direction.substring(0, 40)}`.toLowerCase();
   s.visited_signatures.push(sig);
   if (s.visited_signatures.length > 30) s.visited_signatures = s.visited_signatures.slice(-30);
 
-  // Loop detection
   const sigCount = s.visited_signatures.filter(x => x === sig).length;
   if (sigCount >= 3) {
     s.recovery_attempts += 1;
@@ -246,9 +237,7 @@ function applyDirectorUpdates(state: MissionState, guidance: DirectorGuidance): 
     s.recovery_attempts = 0;
   }
 
-  // Store guidance summary
-  s.director_guidance_history.push(guidance.strategic_suggestion.substring(0, 100));
-
+  s.director_guidance_history.push(guidance.direction.substring(0, 80));
   return s;
 }
 
