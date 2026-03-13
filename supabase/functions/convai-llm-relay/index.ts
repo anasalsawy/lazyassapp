@@ -597,42 +597,29 @@ serve(async (req) => {
       return buildResponse(closingLine || "Thank you for your time. Take care!");
     }
 
-    // ── BRAIN 1: Maya responds autonomously with Director context ────────
+    // ── BRAIN 1: Maya responds with Director's direction ────────────────
     const missionBlock = taskPayload.objective
-      ? `\nYOUR MISSION: ${taskPayload.objective}\nYou are calling ${taskPayload.company_name || "a business"}. You are the CALLER.\n`
+      ? `\nMISSION: ${taskPayload.objective}\nCalling: ${taskPayload.company_name || "a business"}.\n`
       : "";
 
-    // Build Director guidance as context (suggestions, not commands)
-    const guidanceBlock = [
-      `📋 DIRECTOR ASSESSMENT: ${guidance.situation_assessment}`,
-      `📊 MISSION PROGRESS: ${guidance.mission_progress}`,
-      `💡 STRATEGIC SUGGESTION: ${guidance.strategic_suggestion}`,
-      guidance.negotiation_hint ? `🤝 NEGOTIATION HINT: ${guidance.negotiation_hint}` : null,
-      guidance.data_from_executor ? `🌐 BROWSER DATA: ${guidance.data_from_executor}` : null,
-      guidance.validation_warning ? `⚠️ VALIDATION WARNING: ${guidance.validation_warning}` : null,
-    ].filter(Boolean).join("\n");
+    const directionLine = `DIRECTOR: ${guidance.direction}`;
+    const warnLine = guidance.warn ? `⚠️ ${guidance.warn}` : "";
 
-    // Include any browser results
     const browserBlock = missionState.browser_results.length > 0
-      ? `\n🌐 EXECUTOR RESULTS:\n${JSON.stringify(missionState.browser_results.slice(-3))}`
+      ? `\nDATA: ${JSON.stringify(missionState.browser_results.slice(-3))}`
       : "";
 
     const turnHint = turnNumber <= 1
-      ? "\n⚠️ You have ALREADY introduced yourself. Do NOT re-introduce. Address the mission."
-      : `\nThis is turn ${turnNumber}. Progress the conversation.`;
+      ? "\nYou already introduced yourself. Don't re-introduce."
+      : "";
 
     const mayaInput = `${missionBlock}${turnHint}
 
-═══ DIRECTOR GUIDANCE (consider but decide independently) ═══
-${guidanceBlock}${browserBlock}
-═══ END GUIDANCE ═══
+${directionLine}
+${warnLine}${browserBlock}
 
-CONVERSATION SO FAR:
+CONVERSATION:
 ${transcript}
-
-LATEST FROM HUMAN: "${lastUserMessage}"
-
-Respond as Maya. ONLY what you would say aloud.`;
 
     let spokenResponse: string;
     try {
