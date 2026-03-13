@@ -257,7 +257,7 @@ export function VoiceRelayAgent({ agentId, onTranscript, onStatusChange }: Voice
           <Textarea
             value={contextInput}
             onChange={(e) => setContextInput(e.target.value)}
-            placeholder="Inject Director context (silent instruction)..."
+            placeholder="Inject operator instruction (routes through Planner → Maya)..."
             className="min-h-[36px] max-h-[80px] resize-none text-xs rounded-lg bg-muted/20"
             rows={1}
             onKeyDown={(e) => {
