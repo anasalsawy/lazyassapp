@@ -487,19 +487,15 @@ serve(async (req) => {
     } catch {
       guidanceRaw = "{}";
       guidance = {
-        situation_assessment: "Unable to analyze — proceeding with Maya's autonomous judgment.",
-        mission_progress: "unknown",
-        strategic_suggestion: "Respond naturally to what the human said.",
-        negotiation_hint: null,
-        data_from_executor: null,
-        validation_warning: null,
-        phase: "unknown",
-        urgency: "low",
-        state_updates: { add_topics: [], add_info: {}, set_phase: missionState.call_phase, increment_failure: null },
+        direction: "Respond naturally.",
+        phase: missionState.call_phase,
+        info: {},
+        warn: null,
+        end: false,
       };
     }
 
-    console.log(`[relay] Director: phase=${guidance.phase}, progress="${guidance.mission_progress}", suggestion="${guidance.strategic_suggestion.substring(0, 100)}"`);
+    console.log(`[relay] Director: phase=${guidance.phase}, direction="${guidance.direction}"`);
 
     // ── Apply state updates ──────────────────────────────────────────────
     const updatedState = applyDirectorUpdates(missionState, guidance);
