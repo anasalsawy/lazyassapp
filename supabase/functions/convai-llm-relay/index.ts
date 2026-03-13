@@ -53,20 +53,11 @@ interface MissionState {
 }
 
 interface DirectorGuidance {
-  situation_assessment: string;
-  mission_progress: string;
-  strategic_suggestion: string;
-  negotiation_hint: string | null;
-  data_from_executor: string | null;
-  validation_warning: string | null;
-  phase: string;
-  urgency: "low" | "medium" | "high";
-  state_updates: {
-    add_topics: string[];
-    add_info: Record<string, string>;
-    set_phase: string;
-    increment_failure: string | null;
-  };
+  direction: string;        // Short directive: what to do NOW (max ~15 words)
+  phase: string;            // Current call phase
+  info: Record<string, string>; // Key facts collected this turn
+  warn: string | null;      // Critical warning if any
+  end: boolean;             // true = wrap up the call
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
