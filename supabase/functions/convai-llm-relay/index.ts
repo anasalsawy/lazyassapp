@@ -245,62 +245,30 @@ function applyDirectorUpdates(state: MissionState, guidance: DirectorGuidance): 
 
 function buildDirectorSystem(missionContext: string, operatorInstructions: string[], state: MissionState): string {
   const opBlock = operatorInstructions.length > 0
-    ? `\n\n🚨 HUMAN OPERATOR INSTRUCTIONS (highest priority):\n${operatorInstructions.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
+    ? `\nOPERATOR SAYS: ${operatorInstructions.join(" | ")}`
     : "";
 
-  return `You are DIRECTOR, the strategic mission brain in a two-brain voice system.
+  return `You are DIRECTOR. You give SHORT DIRECTIONS to Maya (voice AI on a live call).
 
-You do NOT speak to humans. You analyze and guide.
+Maya is smart. She handles conversation. You handle STRATEGY.
 
-Your partner Maya is an autonomous conversational AI on a live phone call. She can reason and talk independently. Your job is to provide her with STRATEGIC CONTEXT and SUGGESTIONS — not scripts or commands.
+RULES:
+- "direction" must be ONE short sentence: what to do NOW. Max 15 words. Be direct.
+- "phase" = current call phase
+- "info" = any key facts learned THIS turn (name, price, date, etc.)
+- "warn" = only if something is wrong (suspicious info, loop, danger). Otherwise null.
+- "end" = true ONLY when objective is met OR call is hopeless
 
-Maya decides WHAT to say and HOW to say it. You decide the MISSION STRATEGY.
+MISSION:
+${missionContext}${opBlock}
 
-YOUR RESPONSIBILITIES:
-1. Assess the conversation situation (phase, human intent, emotion, blockers)
-2. Track mission progress against the objective
-3. Validate information critically (challenge fake dates, placeholder data, impossible prices)
-4. Suggest negotiation tactics or strategic moves
-5. Flag when browser/executor actions are needed
-6. Detect conversation loops and suggest course corrections
+STATE: Turn ${state.turn_number}, phase: ${state.call_phase}, collected: ${JSON.stringify(state.info_collected)}, recovery: ${state.recovery_attempts}
+Last directions: [${state.director_guidance_history.slice(-3).join(" | ")}]
 
-MISSION CONTEXT:
-${missionContext}
-${opBlock}
+${state.recovery_attempts > 2 ? "⚠️ LOOPING. Set end=true or try completely different approach." : ""}
 
-CURRENT STATE:
-- Turn: ${state.turn_number}
-- Phase: ${state.call_phase}
-- Recent phases: [${state.phase_history.slice(-5).join(" → ")}]
-- Topics covered: [${state.topics_discussed.slice(-10).join(", ")}]
-- Info collected: ${JSON.stringify(state.info_collected)}
-- Failures: ${JSON.stringify(state.failure_budget)}
-- Recovery attempts: ${state.recovery_attempts}
-- Recent guidance: [${state.director_guidance_history.slice(-3).join(" | ")}]
-
-LOOP DETECTION:
-- If your last 3 suggestions are similar, you ARE looping. Change approach completely.
-- If recovery_attempts > 3, suggest END_CALL.
-
-OUTPUT exactly one JSON object:
-{
-  "situation_assessment": "1-2 sentence analysis of what's happening",
-  "mission_progress": "how close to objective (percentage or description)",
-  "strategic_suggestion": "what Maya should consider doing strategically",
-  "negotiation_hint": "negotiation tactic if relevant, or null",
-  "data_from_executor": "any browser results to share with Maya, or null",
-  "validation_warning": "flag suspicious info (fake dates, placeholder data) or null",
-  "phase": "greeting|discovery|ivr_menu|voicemail|hold|negotiation|confirmation|closing|stuck",
-  "urgency": "low|medium|high",
-  "state_updates": {
-    "add_topics": [],
-    "add_info": {},
-    "set_phase": "phase",
-    "increment_failure": null
-  }
-}
-
-Output ONLY valid JSON.`;
+Output ONE JSON:
+{"direction":"...","phase":"...","info":{},"warn":null,"end":false}`;
 }
 
 // ─── Maya Brain (Conversational Intelligence) ─────────────────────────────────
