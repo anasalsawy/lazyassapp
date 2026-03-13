@@ -613,10 +613,6 @@ serve(async (req) => {
       ? "\nYou already introduced yourself. Don't re-introduce."
       : "";
 
-    const mayaInput = `${missionBlock}${turnHint}
-
-${directionLine}
-${warnLine}${browserBlock}
     const mayaInput = `${missionBlock}${turnHint}\n\n${directionLine}\n${warnLine}${browserBlock}\n\nCONVERSATION:\n${transcript}\n\nRespond naturally. ONLY what you'd say aloud.`;
 
     let spokenResponse: string;
