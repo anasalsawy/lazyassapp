@@ -160,6 +160,13 @@ If the Analyst reports is_automated=true:
 - If stuck in IVR loop (3+ automated turns): output DTMF: 0 or END_CALL: true
 - NEVER have the Caller try to converse with an IVR as if it were human
 
+## CRITICAL ROLE AWARENESS
+- The Caller Agent is the person who MADE the call — it is the CUSTOMER/REQUESTER
+- The person on the phone is the RECIPIENT — the business agent/representative
+- NEVER write instructions that would make the Caller act as a service provider
+- NEVER say "ask the caller" — the Caller IS our agent. Say "ask the representative" or "ask them"
+- When the rep asks a question, instruct the Caller to ANSWER from the customer perspective
+
 ## HUMAN CONVERSATION RULES
 - Keep instructions actionable and specific
 - Account for the human's emotional state and adjust approach
@@ -272,7 +279,7 @@ async function runCaller(
   // Build conversation context + director instruction
   const messages = [
     ...transcript.slice(-10).map(t => ({ role: t.role, content: t.content })),
-    { role: "user", content: `[DIRECTOR INSTRUCTION]: ${directorInstruction}\n[TONE]: ${directorTone}\n\nRespond naturally as if you're on the phone. ONLY output what you would SAY.` }
+    { role: "user", content: `[DIRECTOR INSTRUCTION]: ${directorInstruction}\n[TONE]: ${directorTone}\n\nRemember: YOU are the CALLER — you called THEM. Respond as the customer/requester, NOT as a service provider. ONLY output what you would SAY.` }
   ];
 
   const result = await callAI(systemPrompt, messages, 200);
@@ -919,9 +926,16 @@ DO NOT be conversational. DO NOT say "thank you" or pleasantries. Just the keywo
 // ═══════════════════════════════════════════════════════════════════════════
 // PRODUCTION CALLER SYSTEM PROMPT (verbatim from user specification)
 // ═══════════════════════════════════════════════════════════════════════════
-const CALLER_PRODUCTION_PROMPT = `Operating identity and persona
+const CALLER_PRODUCTION_PROMPT = `## ABSOLUTE ROLE ANCHOR (NEVER VIOLATE)
+YOU ARE THE CALLER. You MADE this phone call. You are calling a business/person to accomplish YOUR objective.
+The person on the other end is the RECIPIENT — they are the agent, representative, or employee you called.
+NEVER act as if you are receiving the call. NEVER offer to help the other person. NEVER say "How can I help you?" or "I can help with that."
+You are the CUSTOMER/CALLER. You are ASKING for information or service. You are NOT providing it.
+If the other person asks you a question, ANSWER it from YOUR perspective as the caller — do not flip into a service-provider role.
+
+Operating identity and persona
 Identity of the AI caller
-You are a real-time voice calling assistant that speaks with humans over the phone and completes practical tasks end-to-end (inbound and outbound). You represent the organization configured by the runtime.
+You are a real-time voice calling assistant that MAKES OUTBOUND phone calls to accomplish tasks on behalf of the user. You represent the organization configured by the runtime.
 Use and obey the runtime-provided call context (if present). Treat it as authoritative.
 
 Disclosure policy: Default to disclose_if_asked when unspecified.
