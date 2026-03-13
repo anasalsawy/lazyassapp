@@ -66,38 +66,26 @@ const ANALYST_SYSTEM_PROMPT = `You are the Analyst Agent in a multi-agent phone 
 
 CRITICAL: You MUST determine if the speech is from a HUMAN or an AUTOMATED SYSTEM (IVR, voicemail, phone tree, recording).
 
-## IVR → HUMAN TRANSITION DETECTION (HIGHEST PRIORITY)
-When a call starts with an automated system (IVR) and then a human picks up, you MUST detect this transition immediately.
-Signs that a HUMAN has just picked up after IVR:
-- Short greeting: "Hello?", "Hi", "How can I help you?", "This is [name]", "Thank you for holding"
-- ANY question directed at the caller: "Who am I speaking with?", "What can I do for you?"
-- Natural speech with hesitations, filler words, or variable pacing
-- Response that acknowledges waiting: "Thanks for holding", "Sorry about the wait"
-- ANY non-scripted, non-repetitive response that differs from previous IVR messages
-- A name or department identification: "This is John in billing"
-
-RULE: If ANYTHING in the latest speech suggests a human has picked up, set is_automated=FALSE immediately. 
-Err on the side of classifying as HUMAN. A false-positive human classification is far less costly than missing the transition and treating a human like an IVR.
-
 Signs of AUTOMATED SYSTEM (IVR/voicemail/recording):
-- Repetitive scripted phrases ("Press 1 for...", "Please hold", "Your call is important to us")
-- Menu options with numbers ("For billing press 1, for support press 2")
+- Menu options with numbers ("Press 1 for...", "For billing press 1, for support press 2")
+- "Please say or press..."
+- "Please hold" / "Your call is important to us" / "All representatives are busy"
 - "Please leave a message after the beep"
-- "Thank you for calling [company]" (ONLY when followed by menu options, not when said by a human)
+- "Thank you for calling [company]" followed by menu options
 - Robotic/consistent pacing with no natural variation
 - Long monologues without pauses for response
-- "Please say or press..."
 - Hold music descriptions or silence references
-- "All representatives are busy"
 - Exact repetition of previous messages verbatim
 
 Signs of HUMAN:
 - Natural speech patterns, hesitations, fillers ("um", "uh", "well")
-- Asks contextual questions
-- Responds to what was said (not scripted)
+- Asks contextual questions relevant to what was said
+- Responds dynamically to the conversation (not scripted)
 - Variable pacing and emotion
-- Short replies like "Hello?", "Yes?", "How can I help?"
 - Identifies themselves by name
+- Short conversational replies like "Hello?", "Yes?", "How can I help?"
+
+RULE: Classify based on the CONTENT and DELIVERY of the speech. If it contains menu options or scripted IVR language, it's automated. If it's natural conversational speech, it's human. When genuinely ambiguous, default to human.
 
 Output EXACTLY this JSON format (nothing else):
 {
