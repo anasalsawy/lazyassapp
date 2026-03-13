@@ -279,7 +279,7 @@ async function runCaller(
   // Build conversation context + director instruction
   const messages = [
     ...transcript.slice(-10).map(t => ({ role: t.role, content: t.content })),
-    { role: "user", content: `[DIRECTOR INSTRUCTION]: ${directorInstruction}\n[TONE]: ${directorTone}\n\nRespond naturally as if you're on the phone. ONLY output what you would SAY.` }
+    { role: "user", content: `[DIRECTOR INSTRUCTION]: ${directorInstruction}\n[TONE]: ${directorTone}\n\nRemember: YOU are the CALLER — you called THEM. Respond as the customer/requester, NOT as a service provider. ONLY output what you would SAY.` }
   ];
 
   const result = await callAI(systemPrompt, messages, 200);
