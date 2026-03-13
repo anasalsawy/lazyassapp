@@ -133,16 +133,49 @@ export function VoiceRelayAgent({ agentId, onTranscript, onStatusChange }: Voice
     setIsMuted(!isMuted);
   }, [conversation, isMuted]);
 
-  // Director injects context mid-conversation without triggering a response
-  const sendContext = useCallback(() => {
+  // Operator injects into Planner via DB — Planner then directs Maya
+  const sendContext = useCallback(async () => {
     if (!contextInput.trim()) return;
-    conversation.sendContextualUpdate(`[DIRECTOR_CONTEXT] ${contextInput.trim()}`);
+    const instruction = contextInput.trim();
+    setContextInput("");
     setTranscripts((prev) => [
       ...prev,
-      { role: "director", text: contextInput.trim(), time: new Date() },
+      { role: "director", text: instruction, time: new Date() },
     ]);
-    setContextInput("");
-  }, [conversation, contextInput]);
+
+    try {
+      // Find the active voice task to inject into
+      const { data: tasks } = await supabase
+        .from("agent_tasks")
+        .select("id, result")
+        .in("task_type", ["voice_call_elevenlabs", "voice_call_multi_agent", "voice_call"])
+        .eq("status", "running")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      const task = tasks?.[0];
+      if (!task) {
+        console.warn("[VoiceRelay] No active voice task found for injection");
+        return;
+      }
+
+      const result = (task.result as Record<string, unknown>) || {};
+      const existing = Array.isArray((result as any).operatorInjections)
+        ? (result as any).operatorInjections
+        : [];
+
+      await supabase.from("agent_tasks").update({
+        result: {
+          ...result,
+          operatorInjections: [...existing, instruction],
+        },
+      }).eq("id", task.id);
+
+      console.log(`[VoiceRelay] Injected into Planner via task ${task.id}`);
+    } catch (e) {
+      console.error("[VoiceRelay] Injection failed:", e);
+    }
+  }, [contextInput]);
 
   const isConnected = conversation.status === "connected";
 
@@ -224,7 +257,7 @@ export function VoiceRelayAgent({ agentId, onTranscript, onStatusChange }: Voice
           <Textarea
             value={contextInput}
             onChange={(e) => setContextInput(e.target.value)}
-            placeholder="Inject Director context (silent instruction)..."
+            placeholder="Inject operator instruction (routes through Planner → Maya)..."
             className="min-h-[36px] max-h-[80px] resize-none text-xs rounded-lg bg-muted/20"
             rows={1}
             onKeyDown={(e) => {
