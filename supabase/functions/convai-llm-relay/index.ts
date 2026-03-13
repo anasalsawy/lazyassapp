@@ -574,17 +574,12 @@ serve(async (req) => {
     }
 
     // ── Check for END_CALL ───────────────────────────────────────────────
-    if (guidance.strategic_suggestion.includes("END_CALL") || forceEnd) {
-      const isSuccess = guidance.strategic_suggestion.toLowerCase().includes("objective met");
-
-      // Build Director context for Maya's closing
-      const closingGuidance = isSuccess
-        ? "Director guidance: Mission objective achieved. Wrap up positively, thank them, confirm any final details."
-        : "Director guidance: Mission cannot be completed here. Thank them for their time and end gracefully.";
+    if (guidance.end || forceEnd) {
+      const closingGuidance = `Director: ${guidance.direction}`;
 
       const closingLine = await llm(
         MAYA_SYSTEM,
-        `${closingGuidance}\n\nCONVERSATION:\n${transcript}\n\nSay your closing line.`,
+        `${closingGuidance}\n\nCONVERSATION:\n${transcript}\n\nSay your closing line. Be brief.`,
       );
 
       if (taskId) {
@@ -592,14 +587,14 @@ serve(async (req) => {
           const supabase = getSupabase();
           const { data: t } = await supabase.from("agent_tasks").select("result").eq("id", taskId).single();
           await supabase.from("agent_tasks").update({
-            status: isSuccess ? "completed" : "failed",
+            status: "completed",
             completed_at: new Date().toISOString(),
-            result: { ...(t?.result as any || {}), objective_met: isSuccess, final_guidance: guidance, final_state: updatedState },
+            result: { ...(t?.result as any || {}), final_guidance: guidance, final_state: updatedState },
           }).eq("id", taskId);
         } catch {}
       }
 
-      return buildResponse(closingLine || "Thank you so much for your time. Take care!");
+      return buildResponse(closingLine || "Thank you for your time. Take care!");
     }
 
     // ── BRAIN 1: Maya responds autonomously with Director context ────────
