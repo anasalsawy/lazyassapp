@@ -1,11 +1,10 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import ReactMarkdown from "react-markdown";
-import { SteelSessionEmbed } from "@/components/chat/SteelSessionEmbed";
 import {
   Bot, Send, Loader2, Heart, Code2, FileText, Search, Paintbrush,
   Activity, User, Sparkles, CheckCircle2, Circle, Zap, ChevronDown, ChevronRight,
@@ -49,19 +48,6 @@ type SecretRequest = {
   description: string;
   placeholder: string;
   status: "pending" | "submitted" | "error";
-};
-
-type BrowserLiveState = {
-  runId: string;
-  provider: string;
-  task: string;
-  status: "starting" | "running" | "completed" | "error";
-  step: number;
-  currentUrl: string | null;
-  screenshotUrl: string | null;
-  actionHistory: Array<{ step: number; action: string }>;
-  error: string | null;
-  result: string | null;
 };
 
 type Msg = {
@@ -406,210 +392,14 @@ function CallMonitorPanel({ callState, isLive }: { callState: CallState; isLive:
   );
 }
 
-// ── Browser Live Panel Component ────────────────────────────────────────────
-function BrowserLivePanel({ state, isLive }: { state: BrowserLiveState; isLive: boolean }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [imgKey, setImgKey] = useState(0);
-
-  // Auto-refresh screenshot key when URL changes
-  useEffect(() => {
-    if (state.screenshotUrl) setImgKey(k => k + 1);
-  }, [state.screenshotUrl]);
-
-  const statusColor = state.status === "completed" ? "text-emerald-500" :
-    state.status === "error" ? "text-destructive" :
-    "text-primary";
-
-  const statusLabel = state.status === "starting" ? "Starting browser..." :
-    state.status === "running" ? `Step ${state.step}` :
-    state.status === "completed" ? "Complete" : "Error";
-
-  return (
-    <div className="my-2 rounded-xl border border-border/60 bg-card/80 overflow-hidden">
-      {/* Header */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-muted-foreground hover:bg-muted/30 transition-colors"
-      >
-        {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-        <Globe className="w-3.5 h-3.5 text-primary" />
-        <span className="text-foreground/80 font-semibold">
-          Live Browser — {state.task.length > 50 ? state.task.slice(0, 50) + "…" : state.task}
-        </span>
-        <span className={`ml-auto flex items-center gap-1 ${statusColor}`}>
-          {isLive && (state.status === "running" || state.status === "starting") && <Loader2 className="w-3 h-3 animate-spin" />}
-          {state.status === "completed" && <CheckCircle2 className="w-3 h-3" />}
-          {statusLabel}
-        </span>
-      </button>
-
-      {!collapsed && (
-        <div className="space-y-0">
-          {/* Live Screenshot */}
-          {state.screenshotUrl && (
-            <div className="relative border-t border-border/30">
-              <img
-                key={imgKey}
-                src={state.screenshotUrl}
-                alt="Live browser view"
-                className="w-full max-h-[400px] object-contain bg-black/5"
-                loading="eager"
-              />
-              {isLive && (state.status === "running" || state.status === "starting") && (
-                <div className="absolute top-2 right-2 flex items-center gap-1 bg-background/80 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] text-primary border border-border/40">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                  LIVE
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Current URL bar */}
-          {state.currentUrl && (
-            <div className="flex items-center gap-2 px-3 py-1.5 border-t border-border/30 bg-muted/40">
-              <Globe className="w-3 h-3 text-muted-foreground shrink-0" />
-              <span className="text-[11px] text-muted-foreground truncate font-mono">{state.currentUrl}</span>
-            </div>
-          )}
-
-          {/* Action history */}
-          {state.actionHistory.length > 0 && (
-            <div className="px-3 py-2 border-t border-border/30 space-y-1">
-              {state.actionHistory.map((a, i) => (
-                <div key={i} className="flex items-start gap-2 text-[11px] text-muted-foreground">
-                  <span className="shrink-0 font-mono text-muted-foreground/50">#{a.step}</span>
-                  <span className="truncate">{String(a.action).slice(0, 120)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* No screenshot yet */}
-          {!state.screenshotUrl && (state.status === "starting" || state.status === "running") && (
-            <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground border-t border-border/30">
-              <Loader2 className="w-4 h-4 animate-spin text-primary" />
-              <span>Waiting for browser to start...</span>
-            </div>
-          )}
-
-          {/* Error */}
-          {state.error && (
-            <div className="px-3 py-2 text-xs text-destructive bg-destructive/10 border-t border-border/30">
-              {state.error}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Steel Embed + Screenshot Parser ──────────────────────────────────────────
-interface SteelEmbedData {
-  debugUrl: string;
-  sessionId?: string;
-  interactive?: boolean;
-}
-
-interface ScreenshotData {
-  url: string;
-  alt?: string;
-}
-
-function parseSteelEmbeds(content: string): { text: string; embeds: SteelEmbedData[]; screenshots: ScreenshotData[] } {
-  const embeds: SteelEmbedData[] = [];
-  const screenshots: ScreenshotData[] = [];
-  const embedRegex = /\[STEEL_EMBED\]([\s\S]*?)\[\/STEEL_EMBED\]/g;
-  let text = content;
-  let match;
-
-  while ((match = embedRegex.exec(content)) !== null) {
-    try {
-      const data = JSON.parse(match[1]);
-      if (data.debugUrl) embeds.push(data);
-    } catch { /* ignore */ }
-    text = text.replace(match[0], "");
-  }
-
-  const urlRegex = /https:\/\/[^\s"]+\.steel\.dev[^\s"]*/g;
-  const urls = content.match(urlRegex) || [];
-  for (const url of urls) {
-    if (!embeds.some((e) => e.debugUrl === url)) {
-      embeds.push({ debugUrl: url, interactive: false });
-    }
-  }
-
-  // Extract bridge screenshot URLs
-  const screenshotRegex = /📸\s*Screenshot:\s*(https?:\/\/[^\s"]+\/runs\/[^\s"]+\/screenshot)/g;
-  let ssMatch;
-  while ((ssMatch = screenshotRegex.exec(content)) !== null) {
-    screenshots.push({ url: ssMatch[1], alt: "Browser screenshot" });
-    text = text.replace(ssMatch[0], "");
-  }
-
-  // Also catch raw screenshot URLs in markdown image syntax
-  const mdImgRegex = /!\[([^\]]*)\]\((https?:\/\/[^\s"]+\/runs\/[^\s"]+\/screenshot)\)/g;
-  while ((ssMatch = mdImgRegex.exec(content)) !== null) {
-    screenshots.push({ url: ssMatch[2], alt: ssMatch[1] || "Browser screenshot" });
-  }
-
-  return { text: text.trim(), embeds, screenshots };
-}
-
-// ── Lovable Message Content (with Steel embeds) ─────────────────────────────
-function LovableMessageContent({ content, role }: { content: string; role: "user" | "assistant" }) {
-  const { text, embeds, screenshots } = useMemo(() =>
-    role === "assistant" ? parseSteelEmbeds(content) : { text: content, embeds: [] as SteelEmbedData[], screenshots: [] as ScreenshotData[] },
-    [content, role]
-  );
-
-  return (
-    <>
-      <div
-        className={`rounded-2xl px-4 py-3 ${
-          role === "user"
-            ? "bg-primary text-primary-foreground rounded-br-md"
-            : "bg-muted/60 text-foreground rounded-bl-md"
-        }`}
-      >
-        {role === "assistant" ? (
-          <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-headings:my-2 prose-code:text-primary prose-pre:bg-muted prose-pre:border prose-pre:border-border/40">
-            <ReactMarkdown>{text}</ReactMarkdown>
-          </div>
-        ) : (
-          <div className="text-sm whitespace-pre-wrap leading-relaxed">{text}</div>
-        )}
-      </div>
-      {embeds.map((embed, i) => (
-        <SteelSessionEmbed
-          key={`${embed.debugUrl}-${i}`}
-          debugUrl={embed.debugUrl}
-          sessionId={embed.sessionId}
-          interactive={embed.interactive}
-        />
-      ))}
-      {screenshots.map((ss, i) => (
-        <div key={`ss-${i}`} className="mt-2 rounded-lg overflow-hidden border border-border/40 bg-muted/30">
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/60 border-b border-border/30">
-            <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground font-medium">Browser Screenshot</span>
-            <a href={ss.url} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-primary hover:underline">Open</a>
-          </div>
-          <img src={ss.url} alt={ss.alt || "Screenshot"} className="w-full max-h-96 object-contain" loading="lazy" />
-        </div>
-      ))}
-    </>
-  );
-}
-
 // ── Suggestions ─────────────────────────────────────────────────────────────
 const SUGGESTIONS = [
-  { icon: Sparkles, text: "Run the full mission and complete each section", color: "text-emerald-400" },
+  { icon: Sparkles, text: "Run the full pipeline — optimize, search, apply", color: "text-emerald-400" },
   { icon: Code2, text: "Optimize my resume for more interviews", color: "text-rose-400" },
   { icon: Search, text: "Find jobs matching my preferences", color: "text-sky-400" },
   { icon: FileText, text: "Check my application status", color: "text-amber-400" },
   { icon: Paintbrush, text: "Help me improve the app design", color: "text-violet-400" },
-  { icon: Heart, text: "Act like phone + browser copilot and keep me on course", color: "text-pink-400" },
+  { icon: Heart, text: "What can you do?", color: "text-pink-400" },
 ];
 
 // ── Main Page ───────────────────────────────────────────────────────────────
@@ -621,110 +411,14 @@ export default function LovableAgent() {
   const [currentPlans, setCurrentPlans] = useState<ExecutionPlan[]>([]);
   const [currentCallState, setCurrentCallState] = useState<CallState | null>(null);
   const callStateRef = useRef<CallState | null>(null);
-  const [browserLiveState, setBrowserLiveState] = useState<BrowserLiveState | null>(null);
-  const browserLiveRef = useRef<BrowserLiveState | null>(null);
-  const browserPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const browserUrlsRef = useRef<{ statusUrl: string; screenshotUrl: string } | null>(null);
-  const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call" | "browsing">("idle");
+  const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, currentPlans, phase, browserLiveState]);
-
-  // ── Persistent client-side polling for browser tasks ──────────────────────
-  // Kicks in when SSE stream ends but browser task is still running
-  const clientStuckCountRef = useRef(0);
-  const CLIENT_STUCK_LIMIT = 60; // 60 polls × 5s = 5min — be patient, no cloud fallback
-
-  useEffect(() => {
-    // Only start persistent polling when NOT loading (SSE ended) and browser is still active
-    if (isLoading || !browserLiveState) return;
-    if (browserLiveState.status === "completed" || browserLiveState.status === "error") return;
-    if (!browserUrlsRef.current) return;
-
-    const { statusUrl, screenshotUrl } = browserUrlsRef.current;
-    console.log("[BrowserPoll] Starting persistent client-side polling:", statusUrl);
-    clientStuckCountRef.current = 0;
-
-    const stopPolling = () => {
-      if (browserPollRef.current) {
-        clearInterval(browserPollRef.current);
-        browserPollRef.current = null;
-      }
-    };
-
-    const poll = async () => {
-      try {
-        const res = await fetch(statusUrl);
-        if (!res.ok) {
-          clientStuckCountRef.current++;
-          if (clientStuckCountRef.current >= CLIENT_STUCK_LIMIT) {
-            console.warn("[BrowserPoll] Bridge unreachable for too long. Stopping.");
-            setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: "Lost connection to browser server." } : prev);
-            stopPolling();
-          }
-          return;
-        }
-        const data = await res.json();
-        const step = data.steps_taken || data.current_step || 0;
-
-        if (data.status === "completed") {
-          setBrowserLiveState(prev => prev ? {
-            ...prev, status: "completed", step: data.steps_taken || prev.step,
-            currentUrl: data.current_url || prev.currentUrl,
-            screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
-            result: data.result || null,
-          } : prev);
-          browserLiveRef.current = null;
-          stopPolling();
-        } else if (data.status === "error") {
-          setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: data.error || "Task failed" } : prev);
-          stopPolling();
-        } else {
-          // Check if stuck at step 0
-          if (step === 0 && (data.status === "starting" || data.status === "queued")) {
-            clientStuckCountRef.current++;
-            if (clientStuckCountRef.current >= CLIENT_STUCK_LIMIT) {
-              console.warn("[BrowserPoll] Browser stuck at step 0 for too long. Giving up.");
-              setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: "Browser task stuck — server may be cold-starting. Try again in a minute." } : prev);
-              stopPolling();
-              return;
-            }
-          } else {
-            clientStuckCountRef.current = 0;
-          }
-          // Still running — update progress
-          setBrowserLiveState(prev => prev ? {
-            ...prev,
-            status: step > 0 ? "running" : prev.status,
-            step,
-            currentUrl: data.current_url || prev.currentUrl,
-            screenshotUrl: data.has_screenshot ? `${screenshotUrl}?t=${Date.now()}` : prev.screenshotUrl,
-            actionHistory: data.action_history?.slice(-5)?.map((a: any, i: number) => ({
-              step: a.step || step - (data.action_history.length - 1 - i),
-              action: typeof a === "string" ? a : a.action || JSON.stringify(a),
-            })) || prev.actionHistory,
-          } : prev);
-        }
-      } catch (err) {
-        console.warn("[BrowserPoll] Poll error:", err);
-        clientStuckCountRef.current++;
-        if (clientStuckCountRef.current >= CLIENT_STUCK_LIMIT) {
-          setBrowserLiveState(prev => prev ? { ...prev, status: "error", error: "Lost connection to browser server." } : prev);
-          stopPolling();
-        }
-      }
-    };
-
-    // Poll immediately, then every 5 seconds
-    poll();
-    browserPollRef.current = setInterval(poll, 5000);
-
-    return () => { stopPolling(); };
-  }, [isLoading, browserLiveState?.status]);
+  }, [messages, currentPlans, phase]);
 
   const sendMessage = useCallback(async (text?: string) => {
     const msg = text || input.trim();
@@ -738,14 +432,6 @@ export default function LovableAgent() {
     setCurrentPlans([]);
     setCurrentCallState(null);
     callStateRef.current = null;
-    // Clear previous browser state and stop any persistent polling
-    setBrowserLiveState(null);
-    browserLiveRef.current = null;
-    browserUrlsRef.current = null;
-    if (browserPollRef.current) {
-      clearInterval(browserPollRef.current);
-      browserPollRef.current = null;
-    }
     let assistantSoFar = "";
 
     const upsertAssistant = (chunk: string) => {
@@ -946,21 +632,10 @@ export default function LovableAgent() {
       }
 
       case "call_update":
-        if (data.status === "ringing" || data.status === "running") {
-          setPhase("on_call");
-        }
-
         setCurrentCallState(prev => {
           const updated = prev ? {
             ...prev,
-            status: (
-              data.status === "ringing" ||
-              data.status === "completed" ||
-              data.status === "failed" ||
-              data.status === "error"
-                ? data.status
-                : "running"
-            ) as CallState["status"],
+            status: (data.status === "completed" || data.status === "failed" ? data.status : "running") as CallState["status"],
             turnCount: data.turnCount || prev.turnCount,
             transcript: data.transcript || prev.transcript,
             lastAnalysis: data.lastAnalysis ? (typeof data.lastAnalysis === 'string' ? data.lastAnalysis : JSON.stringify(data.lastAnalysis)) : prev.lastAnalysis,
@@ -1003,44 +678,6 @@ export default function LovableAgent() {
         break;
       }
 
-      case "call_retry": {
-        // A retry is starting — notify user and reset call state for new attempt
-        setMessages(prev => [
-          ...prev,
-          { role: "assistant", content: `🔄 **Auto-retry**: ${data.message}\n\n_${data.remainingStores} more store(s) in queue_` },
-        ]);
-        const retryInitial: CallState = {
-          taskId: "",
-          status: "ringing",
-          turnCount: 0,
-          transcript: [],
-          lastAnalysis: null,
-          lastDirective: null,
-          agentName: "Maya",
-          errorMessage: null,
-          recordingUrl: null,
-        };
-        setCurrentCallState(retryInitial);
-        callStateRef.current = retryInitial;
-        setPhase("on_call");
-        break;
-      }
-
-      case "call_retry_failed":
-        setMessages(prev => [
-          ...prev,
-          { role: "assistant", content: `⚠️ Retry to **${data.storeName}** failed: ${data.error}` },
-        ]);
-        break;
-
-      case "call_all_retries_exhausted":
-        setMessages(prev => [
-          ...prev,
-          { role: "assistant", content: `❌ **All stores exhausted** — tried ${data.storesTried?.length || 0} stores, none succeeded. ${data.message}` },
-        ]);
-        setPhase("generating");
-        break;
-
       case "phase":
         if (data.status === "generating") setPhase("generating");
         break;
@@ -1062,106 +699,6 @@ export default function LovableAgent() {
           },
         ]);
         break;
-
-      case "browser_started": {
-        setPhase("browsing");
-        // Capture polling URLs for persistent client-side polling after SSE ends
-        if (data.statusUrl && data.screenshotUrl) {
-          browserUrlsRef.current = { statusUrl: data.statusUrl, screenshotUrl: data.screenshotUrl };
-        }
-        const initial: BrowserLiveState = {
-          runId: data.runId,
-          provider: data.provider || "self_hosted_bridge",
-          task: data.task || "",
-          status: "starting",
-          step: 0,
-          currentUrl: null,
-          screenshotUrl: null,
-          actionHistory: [],
-          error: null,
-          result: null,
-        };
-        setBrowserLiveState(initial);
-        browserLiveRef.current = initial;
-        break;
-      }
-
-      case "browser_progress": {
-        setBrowserLiveState(prev => {
-          const updated: BrowserLiveState = prev ? {
-            ...prev,
-            status: "running",
-            step: data.step || prev.step,
-            currentUrl: data.currentUrl || prev.currentUrl,
-            screenshotUrl: data.screenshotUrl || data.stepScreenshotUrl || prev.screenshotUrl,
-            actionHistory: data.actionHistory?.length ? data.actionHistory : prev.actionHistory,
-          } : {
-            runId: data.runId,
-            provider: "self_hosted_bridge",
-            task: "",
-            status: "running",
-            step: data.step || 0,
-            currentUrl: data.currentUrl || null,
-            screenshotUrl: data.screenshotUrl || null,
-            actionHistory: data.actionHistory || [],
-            error: null,
-            result: null,
-          };
-          browserLiveRef.current = updated;
-          return updated;
-        });
-        break;
-      }
-
-      case "browser_completed": {
-        setBrowserLiveState(prev => {
-          const updated: BrowserLiveState = prev ? {
-            ...prev,
-            status: "completed",
-            step: data.stepsTaken || prev.step,
-            currentUrl: data.currentUrl || prev.currentUrl,
-            screenshotUrl: data.screenshotUrl || prev.screenshotUrl,
-            result: data.result || null,
-          } : null as any;
-          browserLiveRef.current = updated;
-          return updated;
-        });
-        setPhase("executing");
-        break;
-      }
-
-      case "browser_error": {
-        const rawError = String(data.error || "Unknown error");
-        const isCloudFallbackSignal = /switching to cloud provider|falling back to browser use cloud/i.test(rawError);
-
-        if (isCloudFallbackSignal) {
-          // Defensive guard: never surface cloud failover; keep bridge session alive and continue polling.
-          setBrowserLiveState(prev => {
-            if (!prev) return prev;
-            const updated: BrowserLiveState = {
-              ...prev,
-              status: prev.status === "running" ? "running" : "starting",
-              error: null,
-            };
-            browserLiveRef.current = updated;
-            return updated;
-          });
-          setPhase("browsing");
-          break;
-        }
-
-        setBrowserLiveState(prev => {
-          const updated: BrowserLiveState = prev ? {
-            ...prev,
-            status: "error",
-            error: rawError,
-          } : null as any;
-          browserLiveRef.current = updated;
-          return updated;
-        });
-        setPhase("executing");
-        break;
-      }
 
       case "error":
         console.error("[agent event] Error:", data.message);
@@ -1264,10 +801,7 @@ export default function LovableAgent() {
     }
   }, [input, session]);
 
-  const isOnCall =
-    currentCallState?.status === "ringing" ||
-    currentCallState?.status === "running" ||
-    phase === "on_call";
+  const isOnCall = phase === "on_call";
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1342,7 +876,21 @@ export default function LovableAgent() {
                         <SecretInputPanel secretRequest={msg.secretRequest} onSubmit={submitSecret} />
                       ) : null}
 
-                      <LovableMessageContent content={msg.content} role={msg.role} />
+                      <div
+                        className={`rounded-2xl px-4 py-3 ${
+                          msg.role === "user"
+                            ? "bg-primary text-primary-foreground rounded-br-md"
+                            : "bg-muted/60 text-foreground rounded-bl-md"
+                        }`}
+                      >
+                        {msg.role === "assistant" ? (
+                          <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-headings:my-2 prose-code:text-primary prose-pre:bg-muted prose-pre:border prose-pre:border-border/40">
+                            <ReactMarkdown>{msg.content}</ReactMarkdown>
+                          </div>
+                        ) : (
+                          <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                        )}
+                      </div>
                     </div>
                     {msg.role === "user" && (
                       <div className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center shrink-0 mt-1">
@@ -1364,37 +912,14 @@ export default function LovableAgent() {
                   </div>
                 )}
 
-                {/* Live browser panel — persists after SSE ends for ongoing tasks */}
-                {browserLiveState && (
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
-                      <Bot className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="max-w-[85%] min-w-0 w-full">
-                      <BrowserLivePanel state={browserLiveState} isLive={browserLiveState.status === "running" || browserLiveState.status === "starting"} />
-                      {!isLoading && (browserLiveState.status === "running" || browserLiveState.status === "starting") && (
-                        <div className="flex items-center gap-2 mt-1.5 px-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                          <span className="text-[11px] text-muted-foreground">Persistent monitoring active — polling every 5s</span>
-                          <button
-                            onClick={() => { setBrowserLiveState(null); browserUrlsRef.current = null; }}
-                            className="ml-auto text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            Dismiss
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {currentCallState && (isLoading || isOnCall || currentCallState.status === "completed" || currentCallState.status === "failed" || currentCallState.status === "error") && (
+                {/* Live call monitor panel */}
+                {isLoading && currentCallState && (
                   <div className="flex gap-3">
                     <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-violet-500 flex items-center justify-center shrink-0 mt-1">
                       <Bot className="w-4 h-4 text-white" />
                     </div>
                     <div className="max-w-[85%] min-w-0">
-                      <CallMonitorPanel callState={currentCallState} isLive={isOnCall} />
+                      <CallMonitorPanel callState={currentCallState} isLive={true} />
                     </div>
                   </div>
                 )}
@@ -1443,12 +968,12 @@ export default function LovableAgent() {
               <p className="text-xs text-muted-foreground">
                 Lovable Agent — full backend access. Press Enter to send.
               </p>
-              {(isLoading || isOnCall) && (
+              {isLoading && (
                 <Badge variant="outline" className="text-xs animate-pulse">
-                  {isOnCall ? <Phone className="w-3 h-3 mr-1" /> : <Activity className="w-3 h-3 mr-1" />}
-                  {isOnCall ? "On call..." :
-                   phase === "thinking" ? "Thinking..." :
+                  {phase === "on_call" ? <Phone className="w-3 h-3 mr-1" /> : <Activity className="w-3 h-3 mr-1" />}
+                  {phase === "thinking" ? "Thinking..." :
                    phase === "executing" ? "Executing tools..." :
+                   phase === "on_call" ? "On call..." :
                    phase === "generating" ? "Writing response..." :
                    "Working..."}
                 </Badge>

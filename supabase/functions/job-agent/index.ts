@@ -6,11 +6,48 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const BRIDGE_URL = Deno.env.get("BROWSER_USE_BRIDGE_URL") || Deno.env.get("BRIDGE_URL") || "https://browser-use-bridge.onrender.com";
-const BRIDGE_API_KEY = Deno.env.get("BROWSER_USE_BRIDGE_API_KEY") || Deno.env.get("BRIDGE_API_KEY") || "";
+// Browser Use Cloud v2 API base URL (used for profile/login management only)
+const BROWSER_USE_BASE_URL = "https://api.browser-use.com";
+
+// Lever job research is handled by the lever-job-research edge function
+// Unified profile naming - shared between job-agent and auto-shop
+// This ensures authentication cookies (Gmail, etc.) are shared across features
+const getProfileName = (userId: string) => `user-${userId.substring(0, 8)}`;
+
+// Browser Use API v2 status values (per official API spec)
+// Task status: started, paused, finished, stopped
+// Session status: active, stopped
 
 /**
- * JOB AGENT - Job automation using Playwright bridge
+ * Helper to call Browser Use Cloud v2 API
+ * Uses X-Browser-Use-API-Key header for authentication
+ */
+async function browserUseApi(
+  apiKey: string,
+  path: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const url = `${BROWSER_USE_BASE_URL}${path}`;
+  const headers = {
+    "X-Browser-Use-API-Key": apiKey,
+    "Content-Type": "application/json",
+    ...init.headers,
+  };
+  
+  console.log(`[BrowserUse] ${init.method || "GET"} ${path}`);
+  
+  return fetch(url, { ...init, headers });
+}
+
+/**
+ * JOB AGENT - Simplified job automation using Browser Use persistent profiles
+ * 
+ * Actions:
+ * - create_profile: Creates a Browser Use profile for the user
+ * - start_login: Opens live browser for user to log into accounts
+ * - confirm_login: Mark site as logged in
+ * - run_agent: Background task to scrape jobs, apply, monitor emails
+ * - get_status: Check agent status and profile health
  */
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -19,6 +56,14 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const BROWSER_USE_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+
+  if (!BROWSER_USE_API_KEY) {
+    return new Response(
+      JSON.stringify({ error: "BROWSER_USE_API_KEY not configured" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -37,42 +82,113 @@ serve(async (req) => {
     const log = async (message: string, metadata: any = {}) => {
       console.log(`[JobAgent] ${message}`, metadata);
       await supabase.from("agent_logs").insert({
-        user_id: user.id, agent_name: "job_agent", log_level: "info", message, metadata,
+        user_id: user.id,
+        agent_name: "job_agent",
+        log_level: "info",
+        message,
+        metadata,
       });
     };
 
     switch (action) {
+      // ============================================
+      // CREATE PROFILE - One-time setup
+      // ============================================
       case "create_profile": {
-        await log("Creating browser profile...");
-        const { data: existingProfile } = await supabase.from("browser_profiles").select("*").eq("user_id", user.id).single();
+        await log("Creating Browser Use profile...");
+
+        // Check if user already has a profile
+        const { data: existingProfile } = await supabase
+          .from("browser_profiles")
+          .select("*")
+          .eq("user_id", user.id)
+          .single();
 
         if (existingProfile?.browser_use_profile_id) {
           return new Response(
-            JSON.stringify({ success: true, profileId: existingProfile.browser_use_profile_id, message: "Profile already exists" }),
+            JSON.stringify({ 
+              success: true, 
+              profileId: existingProfile.browser_use_profile_id,
+              message: "Profile already exists" 
+            }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
 
-        const profileId = `pw-${user.id.substring(0, 8)}-${Date.now()}`;
+        // Create profile in Browser Use Cloud v2 API
+        const profileResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/profiles", {
+          method: "POST",
+          body: JSON.stringify({
+            name: getProfileName(user.id),
+          }),
+        });
+
+        if (!profileResponse.ok) {
+          const error = await profileResponse.text();
+          console.error("Profile creation failed:", profileResponse.status, error);
+          throw new Error(`Failed to create profile (${profileResponse.status}): ${error}`);
+        }
+
+        const profileData = await profileResponse.json();
+        const profileId = profileData.id;
+
+        // Store profile reference
         await supabase.from("browser_profiles").upsert({
-          user_id: user.id, browser_use_profile_id: profileId, status: "created", sites_logged_in: [],
+          user_id: user.id,
+          browser_use_profile_id: profileId,
+          status: "created",
+          sites_logged_in: [],
         });
 
         await log("Profile created", { profileId });
-        return new Response(JSON.stringify({ success: true, profileId }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+        return new Response(
+          JSON.stringify({ success: true, profileId }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
+      // ============================================
+      // START LOGIN SESSION - User logs in to accounts
+      // ============================================
       case "start_login": {
-        const { site } = body;
-        await log("Starting login session via bridge...", { site });
+        const { site } = body; // 'gmail', 'linkedin', 'indeed', etc.
+        
+        await log("Starting login session...", { site });
 
-        let { data: browserProfile } = await supabase.from("browser_profiles").select("*").eq("user_id", user.id).single();
+        // Get or create browser profile
+        let { data: browserProfile } = await supabase
+          .from("browser_profiles")
+          .select("*")
+          .eq("user_id", user.id)
+          .single();
+
+        // Auto-create profile if it doesn't exist
         if (!browserProfile?.browser_use_profile_id) {
-          const profileId = `pw-${user.id.substring(0, 8)}-${Date.now()}`;
-          await supabase.from("browser_profiles").upsert({
-            user_id: user.id, browser_use_profile_id: profileId, status: "pending_login", sites_logged_in: [],
+          await log("No profile found, creating one...");
+          
+          const profileResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/profiles", {
+            method: "POST",
+            body: JSON.stringify({
+              name: getProfileName(user.id),
+            }),
           });
-          browserProfile = { browser_use_profile_id: profileId };
+
+          if (!profileResponse.ok) {
+            const error = await profileResponse.text();
+            throw new Error(`Failed to create profile: ${error}`);
+          }
+
+          const profileData = await profileResponse.json();
+          
+          await supabase.from("browser_profiles").upsert({
+            user_id: user.id,
+            browser_use_profile_id: profileData.id,
+            status: "pending_login",
+            sites_logged_in: [],
+          });
+
+          browserProfile = { browser_use_profile_id: profileData.id };
         }
 
         const siteUrls: Record<string, string> = {
@@ -84,128 +200,302 @@ serve(async (req) => {
 
         const startUrl = siteUrls[site] || `https://${site}.com`;
 
-        // Navigate to login page via Playwright bridge with persistent profile
-        let taskId = crypto.randomUUID();
-        try {
-          const headers: Record<string, string> = { "Content-Type": "application/json" };
-          if (BRIDGE_API_KEY) {
-            headers["Authorization"] = `Bearer ${BRIDGE_API_KEY}`;
-            headers["X-API-Key"] = BRIDGE_API_KEY;
-          }
-          const res = await fetch(`${BRIDGE_URL.replace(/\/$/, "")}/run-task`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              url: startUrl,
-              extract_text: true,
-              user_id: user.id,
-              profile_name: site,
-              save_profile: true,
-            }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            taskId = data.task_id || data.id || taskId;
-            console.log(`[JobAgent] Bridge login page loaded: ${taskId}`);
-          } else {
-            console.warn(`[JobAgent] Bridge login navigation failed (${res.status})`);
-          }
-        } catch (e) {
-          console.warn(`[JobAgent] Bridge unreachable for login:`, e);
+        // Create a session with the profile for persistent login state
+        // Using keepAlive=true so the session stays open for manual login
+        console.log("Creating Browser Use session with profile:", browserProfile.browser_use_profile_id);
+        
+        const sessionResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions", {
+          method: "POST",
+          body: JSON.stringify({
+            profileId: browserProfile.browser_use_profile_id,
+            startUrl: startUrl,
+            keepAlive: true,
+            browserScreenWidth: 1280,
+            browserScreenHeight: 800,
+          }),
+        });
+
+        console.log("Session response status:", sessionResponse.status);
+
+        if (!sessionResponse.ok) {
+          const error = await sessionResponse.text();
+          console.error("Session creation failed:", error);
+          throw new Error(`Failed to create session (${sessionResponse.status}): ${error}`);
         }
 
+        const sessionData = await sessionResponse.json();
+        console.log("Session created:", JSON.stringify(sessionData));
+        
+        const sessionId = sessionData.id;
+        const liveViewUrl = sessionData.liveUrl;
+
+        // Store pending login
         await supabase.from("browser_profiles").update({
-          pending_login_site: site, pending_session_id: taskId, status: "pending_login",
+          pending_login_site: site,
+          pending_session_id: sessionId,
+          status: "pending_login",
         }).eq("user_id", user.id);
 
-        await log("Login session started via bridge", { site, taskId });
-
-        return new Response(
-          JSON.stringify({ success: true, sessionId: taskId, liveViewUrl: null, site, message: `Login page accessed via Playwright bridge for ${site}. Please confirm login when ready.` }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      case "confirm_login": {
-        const { site } = body;
-        const { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", user.id).single();
-        if (!profile) throw new Error("No profile found");
-
-        const sitesLoggedIn = [...new Set([...(profile.sites_logged_in || []), site])];
-        await supabase.from("browser_profiles").update({
-          sites_logged_in: sitesLoggedIn, pending_login_site: null, pending_session_id: null,
-          pending_task_id: null, last_login_at: new Date().toISOString(), status: "active",
-        }).eq("user_id", user.id);
-
-        await log("Login confirmed", { site, allSites: sitesLoggedIn });
-        return new Response(JSON.stringify({ success: true, sitesLoggedIn }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      case "run_agent": {
-        await log("🚀 Starting job agent pipeline: Lever Research → Apply");
-
-        const { data: resume } = await supabase.from("resumes").select("*").eq("user_id", user.id).eq("is_primary", true).single();
-        if (!resume) throw new Error("No primary resume found. Please upload and optimize your resume first.");
-
-        const { data: agentRun } = await supabase.from("agent_runs").insert({
-          user_id: user.id, run_type: "job_agent", status: "running", started_at: new Date().toISOString(),
-        }).select().single();
-
-        const runId = agentRun?.id;
-        await log("Delegating to lever-job-research pipeline (background)", { resumeId: resume.id, runId });
-
-        const backgroundWork = async () => {
-          try {
-            const leverResponse = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/lever-job-research`, {
-              method: "POST",
-              headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ resumeId: resume.id, userId: user.id }),
-            });
-            const leverResult = leverResponse.ok ? await leverResponse.json() : null;
-            const stats = leverResult?.stats || {};
-            await supabase.from("agent_runs").update({
-              status: "completed", ended_at: new Date().toISOString(),
-              summary_json: { jobsFound: stats.found || 0, jobsQualified: stats.qualified || 0, submittedToSkyvern: stats.submittedToSkyvern || 0 },
-            }).eq("id", runId);
-          } catch (err) {
-            console.error("[JobAgent] Background pipeline failed:", err);
-            await supabase.from("agent_runs").update({
-              status: "failed", ended_at: new Date().toISOString(), error_message: err instanceof Error ? err.message : String(err),
-            }).eq("id", runId);
-          }
-        };
-
-        if (typeof (globalThis as any).EdgeRuntime !== "undefined" && (globalThis as any).EdgeRuntime.waitUntil) {
-          (globalThis as any).EdgeRuntime.waitUntil(backgroundWork());
-        } else { backgroundWork().catch(console.error); }
-
-        return new Response(
-          JSON.stringify({ success: true, runId, status: "running", message: "Job agent started! Pipeline running in background." }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      case "get_status": {
-        const { data: profile } = await supabase.from("browser_profiles").select("*").eq("user_id", user.id).single();
-        const { data: recentRuns } = await supabase.from("agent_runs").select("*").eq("user_id", user.id).eq("run_type", "job_agent").order("created_at", { ascending: false }).limit(5);
-        const { data: recentJobs } = await supabase.from("jobs").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10);
-        const { data: recentApps } = await supabase.from("applications").select("*, jobs(*)").eq("user_id", user.id).order("created_at", { ascending: false }).limit(10);
+        await log("Login session started", { site, sessionId, liveViewUrl });
 
         return new Response(
           JSON.stringify({
             success: true,
-            profile: { hasProfile: !!profile?.browser_use_profile_id, sitesLoggedIn: profile?.sites_logged_in || [], lastLoginAt: profile?.last_login_at, status: profile?.status || "not_setup" },
-            recentRuns, recentJobs, recentApplications: recentApps,
+            sessionId,
+            liveViewUrl,
+            site,
+            message: `Browser opened for ${site}. Log in to save your session.`,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
+      // ============================================
+      // CONFIRM LOGIN - Mark site as logged in
+      // ============================================
+      case "confirm_login": {
+        const { site } = body;
+
+        const { data: profile } = await supabase
+          .from("browser_profiles")
+          .select("*")
+          .eq("user_id", user.id)
+          .single();
+
+        if (!profile) throw new Error("No profile found");
+
+        // Stop the session to save the profile state
+        // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
+        if (profile.pending_session_id) {
+          try {
+            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${profile.pending_session_id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ action: "stop" }),
+            });
+            await log("Session stopped, profile state saved", { sessionId: profile.pending_session_id });
+          } catch (e) {
+            console.error("Failed to stop session:", e);
+          }
+        }
+
+        const sitesLoggedIn = [...new Set([...(profile.sites_logged_in || []), site])];
+
+        await supabase.from("browser_profiles").update({
+          sites_logged_in: sitesLoggedIn,
+          pending_login_site: null,
+          pending_session_id: null,
+          pending_task_id: null,
+          last_login_at: new Date().toISOString(),
+          status: "active",
+        }).eq("user_id", user.id);
+
+        await log("Login confirmed", { site, allSites: sitesLoggedIn });
+
+        return new Response(
+          JSON.stringify({ success: true, sitesLoggedIn }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // ============================================
+      // RUN AGENT - Background job scraping & applying
+      // ============================================
+      case "run_agent": {
+        await log("🚀 Starting job agent pipeline: Lever Research → Skyvern Apply");
+
+        // Get user's primary resume
+        const { data: resume } = await supabase
+          .from("resumes")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("is_primary", true)
+          .single();
+
+        if (!resume) {
+          throw new Error("No primary resume found. Please upload and optimize your resume first.");
+        }
+
+        // Create an agent run record immediately so the frontend can poll it
+        const { data: agentRun } = await supabase
+          .from("agent_runs")
+          .insert({
+            user_id: user.id,
+            run_type: "job_agent",
+            status: "running",
+            started_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        const runId = agentRun?.id;
+        await log("Delegating to lever-job-research pipeline (background)", { resumeId: resume.id, runId });
+
+        // Run lever-job-research in the background so we don't timeout
+        const backgroundWork = async () => {
+          try {
+            const leverResponse = await fetch(
+              `${Deno.env.get("SUPABASE_URL")}/functions/v1/lever-job-research`,
+              {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  resumeId: resume.id,
+                  userId: user.id,
+                }),
+              }
+            );
+
+            const leverResult = leverResponse.ok ? await leverResponse.json() : null;
+            const stats = leverResult?.stats || {};
+
+            await supabase.from("agent_runs").update({
+              status: "completed",
+              ended_at: new Date().toISOString(),
+              summary_json: {
+                jobsFound: stats.found || 0,
+                jobsQualified: stats.qualified || 0,
+                submittedToSkyvern: stats.submittedToSkyvern || 0,
+              },
+            }).eq("id", runId);
+
+            console.log("[JobAgent] Background pipeline complete", stats);
+          } catch (err) {
+            console.error("[JobAgent] Background pipeline failed:", err);
+            await supabase.from("agent_runs").update({
+              status: "failed",
+              ended_at: new Date().toISOString(),
+              error_message: err instanceof Error ? err.message : String(err),
+            }).eq("id", runId);
+          }
+        };
+
+        // Fire-and-forget: return immediately, process in background
+        if (typeof EdgeRuntime !== "undefined" && (EdgeRuntime as any).waitUntil) {
+          (EdgeRuntime as any).waitUntil(backgroundWork());
+        } else {
+          // Fallback: still run but won't await
+          backgroundWork().catch(console.error);
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            runId,
+            status: "running",
+            message: "Job agent started! The pipeline is running in the background. Check the Agent Runs tab for progress.",
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // ============================================
+      // GET STATUS - Check profile and recent runs
+      // ============================================
+      case "get_status": {
+        const { data: profile } = await supabase
+          .from("browser_profiles")
+          .select("*")
+          .eq("user_id", user.id)
+          .single();
+
+        const { data: recentRuns } = await supabase
+          .from("agent_runs")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("run_type", "job_agent")
+          .order("created_at", { ascending: false })
+          .limit(5);
+
+        const { data: recentJobs } = await supabase
+          .from("jobs")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(10);
+
+        const { data: recentApps } = await supabase
+          .from("applications")
+          .select("*, jobs(*)")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(10);
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            profile: {
+              hasProfile: !!profile?.browser_use_profile_id,
+              sitesLoggedIn: profile?.sites_logged_in || [],
+              lastLoginAt: profile?.last_login_at,
+              status: profile?.status || "not_setup",
+            },
+            recentRuns,
+            recentJobs,
+            recentApplications: recentApps,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // ============================================
+      // CLEANUP SESSIONS - Close active sessions to free up quota
+      // ============================================
       case "cleanup_sessions": {
-        await log("Cleaning up...");
-        await supabase.from("browser_profiles").update({ pending_session_id: null, pending_task_id: null }).eq("user_id", user.id);
-        await log("Sessions cleaned up");
-        return new Response(JSON.stringify({ success: true, closedCount: 0, message: "Session references cleared." }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        await log("Cleaning up active Browser Use sessions...");
+
+        // List all active sessions - Browser Use v2 API uses filterBy=active
+        const listResponse = await browserUseApi(BROWSER_USE_API_KEY, "/api/v2/sessions?filterBy=active", {
+          method: "GET",
+        });
+
+        if (!listResponse.ok) {
+          const error = await listResponse.text();
+          throw new Error(`Failed to list sessions: ${error}`);
+        }
+
+        const sessionsData = await listResponse.json();
+        console.log("Sessions response:", JSON.stringify(sessionsData));
+        
+        // Response format per v2 API: { items: [...], totalItems, pageNumber, pageSize }
+        const sessionsList = sessionsData.items || [];
+        
+        // Sessions returned by filterBy=active are already active
+        const activeSessions = sessionsList;
+
+        let closedCount = 0;
+        for (const session of activeSessions) {
+          try {
+            // Use PATCH with action: "stop" per Browser Use Cloud v2 API spec
+            await browserUseApi(BROWSER_USE_API_KEY, `/api/v2/sessions/${session.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ action: "stop" }),
+            });
+            closedCount++;
+            console.log(`Closed session: ${session.id}`);
+          } catch (e) {
+            console.error(`Failed to close session ${session.id}:`, e);
+          }
+        }
+
+        // Clear pending session from profile
+        await supabase.from("browser_profiles").update({
+          pending_session_id: null,
+          pending_task_id: null,
+        }).eq("user_id", user.id);
+
+        await log("Sessions cleaned up", { closedCount, totalActive: activeSessions.length });
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            closedCount,
+            message: `Closed ${closedCount} active session(s). You can now start a new login session.`,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
       default:
@@ -214,6 +504,9 @@ serve(async (req) => {
   } catch (error: unknown) {
     console.error("[JobAgent] Error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
-    return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({ error: message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 });

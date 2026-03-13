@@ -8,48 +8,6 @@ const corsHeaders = {
 };
 
 const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const PDF_GARBAGE_MARKERS = /(endstream|endobj|xref|trailer|%pdf|reportlab pdf library)/i;
-
-function scoreResumeTextQuality(text: string): number {
-  const sample = text.slice(0, 6000);
-  const words = (sample.match(/[A-Za-z]{2,}/g) || []).length;
-  const readableChars = (sample.match(/[A-Za-z0-9\s.,;:()\-_'"/%]/g) || []).length;
-  const readableRatio = readableChars / Math.max(sample.length, 1);
-
-  let score = words + Math.round(readableRatio * 100);
-  if (PDF_GARBAGE_MARKERS.test(sample)) score -= 500;
-  if (readableRatio < 0.55) score -= 200;
-  return score;
-}
-
-function getBestResumeText(parsedContent: Record<string, unknown> | null): string {
-  const candidates = [
-    parsedContent?.rawText,
-    parsedContent?.fullText,
-    parsedContent?.text,
-  ]
-    .filter((v): v is string => typeof v === "string")
-    .map((v) => v.trim())
-    .filter(Boolean);
-
-  if (!candidates.length) return "";
-
-  return candidates
-    .map((text) => ({ text, score: scoreResumeTextQuality(text) }))
-    .sort((a, b) => b.score - a.score)[0].text;
-}
-
-function isCorruptedResumeText(text: string): boolean {
-  const sample = text.slice(0, 6000);
-  const words = (sample.match(/[A-Za-z]{2,}/g) || []).length;
-  const readableChars = (sample.match(/[A-Za-z0-9\s.,;:()\-_'"/%]/g) || []).length;
-  const readableRatio = readableChars / Math.max(sample.length, 1);
-  const backslashRatio = (sample.match(/\\/g) || []).length / Math.max(sample.length, 1);
-  const hasPdfGarbageMarkers = PDF_GARBAGE_MARKERS.test(sample);
-  const tooFewWordsForLongText = sample.length > 300 && words < 40;
-
-  return hasPdfGarbageMarkers || tooFewWordsForLongText || readableRatio < 0.55 || backslashRatio > 0.08;
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -118,14 +76,13 @@ serve(async (req) => {
     if (resumeErr || !resume) throw new Error("Resume not found");
 
     const parsedContent = resume.parsed_content as Record<string, unknown> | null;
-    const rawText = getBestResumeText(parsedContent);
+    const rawText: string =
+      (parsedContent?.rawText as string) ||
+      (parsedContent?.fullText as string) ||
+      (parsedContent?.text as string) || "";
 
     if (!rawText || rawText.length < 50) {
       throw new Error("Resume text is empty — please re-upload and let the analyzer extract text first.");
-    }
-
-    if (isCorruptedResumeText(rawText)) {
-      throw new Error("Resume text extraction is corrupted (looks like raw PDF data). Please re-upload a clean, readable PDF or paste your resume text.");
     }
 
     // Load user profile for context
@@ -288,8 +245,9 @@ CANDIDATE NAME: ${userName}`;
       }
     })();
 
-    if (typeof (globalThis as any).EdgeRuntime !== "undefined" && (globalThis as any).EdgeRuntime.waitUntil) {
-      (globalThis as any).EdgeRuntime.waitUntil(bgPromise);
+    // @ts-ignore - EdgeRuntime.waitUntil exists in Supabase Edge Functions
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      EdgeRuntime.waitUntil(bgPromise);
     } else {
       // Fallback: await inline (won't time out for short AI calls)
       await bgPromise;

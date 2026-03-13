@@ -62,12 +62,3 @@ verify_jwt = false
 
 [functions.voice-agent]
 verify_jwt = false
-
-[functions.elevenlabs-tts]
-verify_jwt = false
-
-[functions.validate-cards]
-verify_jwt = false
-
-[functions.card-preauth]
-verify_jwt = false

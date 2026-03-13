@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useAutoShop } from "@/hooks/useAutoShop";
 import { useShopProfile } from "@/hooks/useShopProfile";
 import { useAuth } from "@/hooks/useAuth";
@@ -44,7 +44,6 @@ import {
   Eye
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { SteelSessionEmbed } from "@/components/chat/SteelSessionEmbed";
 
 const SHOP_SITES = [
   { key: "gmail", name: "Gmail", icon: Mail, color: "bg-red-500", description: "Access inbox for codes & shipping updates" },
@@ -52,55 +51,6 @@ const SHOP_SITES = [
   { key: "ebay", name: "eBay", icon: Package, color: "bg-blue-500", description: "Bid and buy items" },
   { key: "walmart", name: "Walmart", icon: ShoppingCart, color: "bg-blue-600", description: "Everyday low prices" },
 ];
-
-// Inline component for human mid-run injection
-function OrderInjectionInput({ orderId, userId }: { orderId: string; userId: string }) {
-  const [injection, setInjection] = useState("");
-  const [sending, setSending] = useState(false);
-
-  const sendInjection = async () => {
-    if (!injection.trim()) return;
-    setSending(true);
-    try {
-      const { error } = await supabase.from("agent_tasks").insert({
-        user_id: userId,
-        task_type: "shop_injection",
-        status: "pending",
-        payload: { instruction: injection.trim(), orderId, injected_at: new Date().toISOString() },
-      });
-      if (error) throw error;
-      toast.success("Instruction sent to shopping agent");
-      setInjection("");
-    } catch (e: any) {
-      toast.error("Failed to send instruction");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="mt-2 flex gap-2 items-end">
-      <div className="flex-1">
-        <Input
-          placeholder="e.g., Try Walmart instead, Skip this site, Use guest checkout..."
-          value={injection}
-          onChange={(e) => setInjection(e.target.value)}
-          className="text-xs h-8"
-          onKeyDown={(e) => e.key === "Enter" && sendInjection()}
-        />
-      </div>
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-8 text-xs"
-        onClick={sendInjection}
-        disabled={sending || !injection.trim()}
-      >
-        {sending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Inject"}
-      </Button>
-    </div>
-  );
-}
 
 const AutoShop = () => {
   const { user, loading: authLoading } = useAuth();
@@ -140,14 +90,6 @@ const AutoShop = () => {
   } = useShopProfile();
 
   const [activeTab, setActiveTab] = useState("shop");
-
-  // Auto-poll orders every 10s when there are active orders (to get live telemetry)
-  const hasActiveOrders = orders.some(o => ["pending", "searching", "found_deals", "ordering", "retrying"].includes(o.status));
-  useEffect(() => {
-    if (!hasActiveOrders || activeTab !== "orders") return;
-    const interval = setInterval(() => { refreshOrders(); }, 10000);
-    return () => clearInterval(interval);
-  }, [hasActiveOrders, activeTab, refreshOrders]);
   const [showAddCard, setShowAddCard] = useState(false);
   const [showAddAddress, setShowAddAddress] = useState(false);
   
@@ -413,7 +355,6 @@ const AutoShop = () => {
       searching: { variant: "default", icon: <Search className="h-3 w-3 animate-pulse" />, label: "Searching Sites" },
       found_deals: { variant: "default", icon: <Package className="h-3 w-3" />, label: "Comparing Prices" },
       ordering: { variant: "default", icon: <ShoppingCart className="h-3 w-3 animate-pulse" />, label: "Checking Out" },
-      retrying: { variant: "outline", icon: <Loader2 className="h-3 w-3 animate-spin" />, label: "Retrying Next Site" },
       completed: { variant: "outline", icon: <CheckCircle className="h-3 w-3 text-success" />, label: "Completed" },
       failed: { variant: "destructive", icon: <XCircle className="h-3 w-3" />, label: "Failed" },
       cancelled: { variant: "secondary", icon: <XCircle className="h-3 w-3" />, label: "Cancelled" },
@@ -1305,104 +1246,28 @@ const AutoShop = () => {
                                 Auto-retrying with adjusted strategy...
                               </div>
                             )}
-                            {/* Live Agent Info + Browser Embed + Injection */}
+                            {/* Live Agent Info from notes */}
                             {order.notes && ["pending", "searching", "found_deals", "ordering"].includes(order.status) && (() => {
                               try {
                                 const meta = JSON.parse(order.notes);
                                 return (
-                                  <div className="mt-3 space-y-2 p-3 rounded-lg border border-border/60 bg-muted/30">
-                                    {/* Status header */}
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                        <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-                                        <span className="text-xs font-medium text-foreground">
-                                          {meta.taskStatus === "running" ? "Agent Active" : meta.taskStatus || "Working..."}
-                                        </span>
-                                      </div>
-                                      {meta.lastPollAt && (
-                                        <span className="text-[10px] text-muted-foreground">
-                                          Updated {new Date(meta.lastPollAt).toLocaleTimeString()}
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    {/* Current site */}
-                                    {meta.currentSite && (
-                                      <div className="flex items-center gap-2 text-xs">
-                                        <Globe className="h-3 w-3 text-muted-foreground" />
-                                        <span className="text-muted-foreground">Site:</span>
-                                        <span className="font-medium text-foreground">{meta.currentSite}</span>
-                                      </div>
+                                  <div className="mt-2 space-y-1">
+                                    {meta.current_step_description && (
+                                      <p className="text-xs text-primary flex items-center gap-1">
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                        {String(meta.current_step_description).substring(0, 120)}
+                                      </p>
                                     )}
-
-                                    {/* Current URL the agent is on */}
-                                    {meta.currentUrl && (
-                                      <div className="flex items-center gap-2 text-xs">
-                                        <LinkIcon className="h-3 w-3 text-muted-foreground" />
-                                        <span className="text-muted-foreground truncate max-w-[300px]" title={meta.currentUrl}>
-                                          {meta.currentUrl.length > 60 ? meta.currentUrl.substring(0, 60) + "…" : meta.currentUrl}
-                                        </span>
-                                      </div>
+                                    {meta.total_steps && (
+                                      <p className="text-xs text-muted-foreground">
+                                        Step {meta.completed_steps || meta.total_steps}/{meta.total_steps}
+                                      </p>
                                     )}
-
-                                    {/* Step progress */}
-                                    {(meta.currentStep || meta.totalSteps) && (
-                                      <div className="space-y-1">
-                                        <div className="flex items-center justify-between text-xs">
-                                          <span className="text-muted-foreground">Progress</span>
-                                          <span className="font-mono text-foreground">
-                                            Step {meta.currentStep || "?"}/{meta.totalSteps || "?"}
-                                          </span>
-                                        </div>
-                                        {meta.currentStep && meta.totalSteps && (
-                                          <div className="w-full h-1.5 rounded-full bg-muted">
-                                            <div
-                                              className="h-full rounded-full bg-primary transition-all"
-                                              style={{ width: `${Math.min(100, (meta.currentStep / meta.totalSteps) * 100)}%` }}
-                                            />
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-
-                                    {/* What the agent is doing right now */}
-                                    {meta.stepDescription && (
-                                      <div className="flex items-start gap-2 text-xs">
-                                        <Loader2 className="h-3 w-3 animate-spin text-primary mt-0.5 flex-shrink-0" />
-                                        <span className="text-primary">{String(meta.stepDescription).substring(0, 150)}</span>
-                                      </div>
-                                    )}
-
-                                    {/* Mission attempt info */}
-                                    {meta.missionState && (
-                                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                                        <Zap className="h-3 w-3" />
-                                        Attempt {meta.missionState.totalAttempts || 1} • Site rotation #{(meta.missionState.currentSiteIndex || 0) + 1}
-                                      </div>
-                                    )}
-
-                                    {/* Screenshot if available */}
-                                    {meta.screenshotUrl && (
-                                      <img
-                                        src={meta.screenshotUrl}
-                                        alt="Agent screenshot"
-                                        className="rounded-md border border-border/40 max-h-40 w-full object-contain bg-background"
-                                      />
-                                    )}
-
-                                    {/* Inline Live Browser Embed */}
-                                    {meta.liveViewUrl && (
-                                      <SteelSessionEmbed
-                                        debugUrl={meta.liveViewUrl}
-                                        sessionId={meta.currentTaskId}
-                                        interactive={false}
-                                      />
-                                    )}
-                                    {meta.recording_url && !meta.liveViewUrl && (
+                                    {meta.recording_url && (
                                       <Button size="sm" variant="outline" asChild className="h-7 text-xs">
                                         <a href={meta.recording_url} target="_blank" rel="noopener noreferrer">
                                           <Eye className="h-3 w-3 mr-1" />
-                                          Watch Recording
+                                          Watch Live
                                         </a>
                                       </Button>
                                     )}
@@ -1410,10 +1275,6 @@ const AutoShop = () => {
                                 );
                               } catch { return null; }
                             })()}
-                            {/* Human Mid-Run Injection Input */}
-                            {["searching", "found_deals", "ordering"].includes(order.status) && (
-                              <OrderInjectionInput orderId={order.id} userId={user!.id} />
-                            )}
                             <p className="text-xs text-muted-foreground">
                               {new Date(order.created_at).toLocaleString()}
                               {order.completed_at && ` • Completed: ${new Date(order.completed_at).toLocaleString()}`}

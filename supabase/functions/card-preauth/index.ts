@@ -53,56 +53,36 @@ serve(async (req) => {
     await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId });
     console.log("[CardPreauth] PaymentMethod attached to customer");
 
-    // Use a REAL $1.00 pre-authorization (capture_method: manual) to truly test card
-    // This places a temporary hold that we immediately cancel
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: 100, // $1.00 in cents
-      currency: "usd",
+    // Use SetupIntent for card validation (no hold, just verification)
+    const setupIntent = await stripe.setupIntents.create({
       customer: customerId,
       payment_method: paymentMethodId,
       confirm: true,
-      capture_method: "manual", // Auth only — won't capture/charge
       automatic_payment_methods: { enabled: true, allow_redirects: "never" },
-      metadata: {
-        type: "card_preauth_validation",
+      usage: "off_session", // Can charge later without customer present
+      metadata: { 
+        type: "card_verification", 
         cardholder_name: cardholderName || "",
         verified_at: new Date().toISOString(),
       },
     });
 
-    console.log("[CardPreauth] PaymentIntent:", { id: paymentIntent.id, status: paymentIntent.status });
+    console.log("[CardPreauth] SetupIntent:", { id: setupIntent.id, status: setupIntent.status });
 
-    if (paymentIntent.status === "requires_capture") {
-      // Card is LIVE and valid — immediately cancel/release the hold
-      await stripe.paymentIntents.cancel(paymentIntent.id);
-      console.log("[CardPreauth] Hold released (cancelled) — card is valid");
-
+    if (setupIntent.status === "succeeded") {
       return new Response(
         JSON.stringify({
           success: true,
-          message: "Card verified — $1 hold placed and immediately released",
-          paymentIntentId: paymentIntent.id,
-          status: "verified",
+          message: "Card verified successfully (no charge)",
+          setupIntentId: setupIntent.id,
+          status: setupIntent.status,
           last4: paymentMethod.card?.last4,
           brand: paymentMethod.card?.brand,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
       );
     } else {
-      // Unexpected status — card may have issues
-      // Try to cancel if possible
-      try { await stripe.paymentIntents.cancel(paymentIntent.id); } catch (_) {}
-      
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: `Card validation returned unexpected status: ${paymentIntent.status}`,
-          status: paymentIntent.status,
-          last4: paymentMethod.card?.last4,
-          brand: paymentMethod.card?.brand,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
-      );
+      throw new Error(`Unexpected status: ${setupIntent.status}`);
     }
   } catch (error: any) {
     console.error("[CardPreauth] Error:", error);

@@ -1,13 +1,11 @@
 services:
   - type: web
     name: browser-use-bridge
-    env: docker
+    env: python
     branch: main
-    dockerfilePath: ./Dockerfile
+    buildCommand: "pip install -r requirements.txt && playwright install chromium && playwright install-deps"
+    startCommand: "python main.py"
     healthCheckPath: "/health"
-    plan: starter
     envVars:
       - key: BRIDGE_API_KEY
-        sync: false
-      - key: OPENAI_API_KEY
         sync: false

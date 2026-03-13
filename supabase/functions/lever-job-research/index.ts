@@ -14,10 +14,10 @@ const corsHeaders = {
 // 2. AI infers optimal search queries from the CV
 // 3. Scrapes Lever job boards via Firecrawl
 // 4. Scores each job for compatibility (80+ threshold)
-// 5. Creates Steel sessions for qualified job applications
+// 5. Submits each qualified URL to Skyvern for application
 // =============================================
 
-const BU_API_BASE = "https://api.browser-use.com/api/v2";
+const SKYVERN_API_BASE = "https://api.skyvern.com/v1";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -27,26 +27,24 @@ serve(async (req) => {
   try {
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-    const STEEL_API_KEY = Deno.env.get("STEEL_API_KEY");
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const SKYVERN_API_KEY = Deno.env.get("SKYVERN_API_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
     if (!FIRECRAWL_API_KEY) throw new Error("FIRECRAWL_API_KEY not configured");
-    if (!STEEL_API_KEY) console.warn("STEEL_API_KEY not configured — using BROWSER_USE_API_KEY");
-    const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
-    if (!BU_API_KEY) throw new Error("BROWSER_USE_API_KEY not configured");
+    if (!SKYVERN_API_KEY) throw new Error("SKYVERN_API_KEY not configured");
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Auth
+    // Auth - support both bearer token and service-role internal calls
     const authHeader = req.headers.get("Authorization");
     let userId: string;
 
     const { resumeId, userId: internalUserId } = await req.json();
 
     if (internalUserId) {
+      // Internal call from redesign-resume (service-role context)
       userId = internalUserId;
     } else {
       if (!authHeader) throw new Error("No authorization header");
@@ -183,6 +181,7 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
 
           for (const result of results) {
             const url = result.url || "";
+            // Match Lever job URLs: https://jobs.lever.co/company/uuid
             if (url.match(/^https:\/\/jobs\.lever\.co\/[^/]+\/[a-f0-9-]+/) && !seenUrls.has(url)) {
               seenUrls.add(url);
               const urlParts = url.match(/jobs\.lever\.co\/([^/]+)\//);
@@ -197,6 +196,10 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
               });
             }
           }
+
+          console.log(
+            `[LeverResearch] Query "${query}" found ${results.filter((r: any) => r.url?.match(/jobs\.lever\.co\/[^/]+\/[a-f0-9-]+/)).length} job links`
+          );
         } catch (e) {
           console.error(`[LeverResearch] Error searching query "${query}":`, e);
         }
@@ -221,8 +224,8 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
         );
       }
 
-      // ---- STEP 4: Enrich jobs with details ----
-      const jobsToEnrich = allJobs.slice(0, 40);
+      // ---- STEP 4: Enrich jobs with details (batch scrape top jobs) ----
+      const jobsToEnrich = allJobs.slice(0, 40); // Cap at 40 for broader coverage
       const enrichedJobs: LeverJob[] = [];
 
       for (const job of jobsToEnrich) {
@@ -248,15 +251,18 @@ Years of Experience: ${resume.experience_years || "unknown"}`,
             const detailData = await detailResult.json();
             const md = detailData.data?.markdown || detailData.markdown || "";
 
+            // Extract title from markdown
             const titleMatch = md.match(/^#\s+(.+)/m);
             if (titleMatch) job.title = titleMatch[1].trim();
 
+            // Extract location
             const locMatch = md.match(/(?:Location|📍|🌍)[:\s]*([^\n]+)/i);
             if (locMatch) job.location = locMatch[1].trim();
 
             job.description = md.substring(0, 2000);
             enrichedJobs.push(job);
           } else {
+            // Use what we have
             enrichedJobs.push(job);
           }
         } catch (e) {
@@ -297,7 +303,7 @@ Return a JSON array of objects:
   "recommendation": "apply" | "review" | "skip"
 }]
 
-Score HONESTLY. 60+ means reasonable match.`;
+Score HONESTLY. 60+ means reasonable match. Consider: skill overlap, seniority fit, role alignment, industry relevance. Be generous - if the candidate could realistically do the job, score 65+.`;
 
       const scoringResponse = await callOpenAI(OPENAI_API_KEY, {
         model: "gpt-4o",
@@ -315,7 +321,7 @@ Score HONESTLY. 60+ means reasonable match.`;
         total_scored: scores.length,
       });
 
-      // ---- STEP 6: Filter 60+ and build result ----
+      // ---- STEP 6: Filter 80+ and build result ----
       const qualifiedJobs: ScoredJob[] = [];
 
       for (const score of scores) {
@@ -337,10 +343,11 @@ Score HONESTLY. 60+ means reasonable match.`;
         }
       }
 
+      // Sort by score descending
       qualifiedJobs.sort((a, b) => b.score - a.score);
 
       console.log(
-        `[LeverResearch] Qualified jobs (60+): ${qualifiedJobs.length} out of ${enrichedJobs.length}`
+        `[LeverResearch] Qualified jobs (80+): ${qualifiedJobs.length} out of ${enrichedJobs.length}`
       );
 
       // ---- STEP 7: Save qualified jobs to DB ----
@@ -364,7 +371,42 @@ Score HONESTLY. 60+ means reasonable match.`;
         }
       }
 
-      // ---- STEP 8: Submit qualified jobs via Browser Use tasks ----
+      // ---- STEP 8: Upload resume to Skyvern & submit workflow ----
+      let skyvernResumeS3Uri = "";
+
+      // Upload resume PDF to Skyvern's file storage
+      if (resume.file_path) {
+        try {
+          const { data: fileData, error: dlError } = await supabase.storage
+            .from("resumes")
+            .download(resume.file_path);
+
+          if (dlError || !fileData) {
+            console.error(`[LeverResearch] Failed to download resume:`, dlError);
+          } else {
+            const filename = resume.original_filename || "resume.pdf";
+            const formData = new FormData();
+            formData.append("file", new File([fileData], filename, { type: "application/pdf" }));
+
+            const uploadResp = await fetch(`${SKYVERN_API_BASE}/files`, {
+              method: "POST",
+              headers: { "x-api-key": SKYVERN_API_KEY },
+              body: formData,
+            });
+
+            if (uploadResp.ok) {
+              const uploadData = await uploadResp.json();
+              skyvernResumeS3Uri = uploadData.s3_uri || "";
+              console.log(`[LeverResearch] Resume uploaded to Skyvern: ${skyvernResumeS3Uri}`);
+            } else {
+              console.error(`[LeverResearch] Skyvern upload error: ${uploadResp.status} ${await uploadResp.text()}`);
+            }
+          }
+        } catch (e) {
+          console.error(`[LeverResearch] Resume upload error:`, e);
+        }
+      }
+
       const header = redesigned?.header || {};
       const education = redesigned?.education || [];
       const candidateInfo = [
@@ -379,38 +421,49 @@ Score HONESTLY. 60+ means reasonable match.`;
         experienceSummary && `Work Experience:\n${experienceSummary}`,
       ].filter(Boolean).join("\n");
 
+      // Build apply URLs (append /apply if not already present)
       const applyUrls = qualifiedJobs
         .filter((j) => j.recommendation === "apply")
         .map((j) => j.url.endsWith("/apply") ? j.url : `${j.url}/apply`);
 
-      const buResults: { url: string; taskId?: string; error?: string }[] = [];
+      const SKYVERN_WORKFLOW_ID = "wpid_351487857063054716";
+
+      const skyvernResults: { url: string; runId?: string; error?: string }[] = [];
 
       for (const jobUrl of applyUrls) {
         try {
-          const taskRes = await fetch(`${BU_API_BASE}/tasks`, {
+          const workflowParams: Record<string, any> = {
+            additional_information: candidateInfo,
+            job_urls: [jobUrl],
+          };
+          if (skyvernResumeS3Uri) {
+            workflowParams.resume = skyvernResumeS3Uri;
+          }
+
+          const skyvernResponse = await fetch(`${SKYVERN_API_BASE}/run/workflows`, {
             method: "POST",
             headers: {
-              "X-Browser-Use-API-Key": BU_API_KEY,
+              "x-api-key": SKYVERN_API_KEY,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              task: `Apply to this job at ${jobUrl}. Fill out the application form with the following candidate info:\n${candidateInfo}\n\nComplete and submit the application.`,
-              startUrl: jobUrl,
-              maxSteps: 50,
+              workflow_id: SKYVERN_WORKFLOW_ID,
+              parameters: workflowParams,
+              proxy_location: "RESIDENTIAL",
             }),
           });
 
-          if (!taskRes.ok) {
-            const errText = await taskRes.text();
-            console.error(`[LeverResearch] Browser Use task error for ${jobUrl}: ${taskRes.status} ${errText}`);
-            buResults.push({ url: jobUrl, error: `${taskRes.status}` });
+          if (!skyvernResponse.ok) {
+            const errText = await skyvernResponse.text();
+            console.error(`[LeverResearch] Skyvern workflow error for ${jobUrl}: ${skyvernResponse.status} ${errText}`);
+            skyvernResults.push({ url: jobUrl, error: `${skyvernResponse.status}` });
             continue;
           }
 
-          const buTask = await taskRes.json();
-          const taskId = buTask.id;
-          console.log(`[LeverResearch] Browser Use task created for ${jobUrl}: ${taskId}`);
-          buResults.push({ url: jobUrl, taskId });
+          const skyvernData = await skyvernResponse.json();
+          const runId = skyvernData.workflow_run_id || skyvernData.run_id || skyvernData.id;
+          console.log(`[LeverResearch] Skyvern workflow submitted for ${jobUrl}: ${runId}`);
+          skyvernResults.push({ url: jobUrl, runId });
 
           // Create application record
           const matchingJob = qualifiedJobs.find((j) => j.url === jobUrl);
@@ -425,19 +478,19 @@ Score HONESTLY. 60+ means reasonable match.`;
               platform: "lever",
               status: "applying",
               status_source: "system",
-              status_message: `Browser Use task: ${taskId}`,
-              extra_metadata: { browser_use_task_id: taskId, match_score: matchingJob?.score },
+              status_message: `Skyvern task: ${runId}`,
+              extra_metadata: { skyvern_run_id: runId, match_score: matchingJob?.score },
             });
           }
         } catch (e) {
-          console.error(`[LeverResearch] Error creating Browser Use task:`, e);
-          buResults.push({ url: jobUrl, error: String(e) });
+          console.error(`[LeverResearch] Error submitting to Skyvern:`, e);
+          skyvernResults.push({ url: jobUrl, error: String(e) });
         }
       }
 
-      await logAgent(supabase, userId, runId, "browser_use_submission", {
-        total_submitted: buResults.filter((r) => r.taskId).length,
-        total_errors: buResults.filter((r) => r.error).length,
+      await logAgent(supabase, userId, runId, "skyvern_submission", {
+        total_submitted: skyvernResults.filter((r) => r.runId).length,
+        total_errors: skyvernResults.filter((r) => r.error).length,
       });
 
       // Update agent run
@@ -445,7 +498,7 @@ Score HONESTLY. 60+ means reasonable match.`;
         jobs_found: allJobs.length,
         jobs_enriched: enrichedJobs.length,
         jobs_qualified: qualifiedJobs.length,
-        jobs_submitted_to_browser_use: buResults.filter((r) => r.taskId).length,
+        jobs_submitted_to_skyvern: skyvernResults.filter((r) => r.runId).length,
         queries_used: queryData.queries,
         target_roles: queryData.targetRoles,
         seniority: queryData.seniorityLevel,
@@ -458,16 +511,16 @@ Score HONESTLY. 60+ means reasonable match.`;
           found: allJobs.length,
           enriched: enrichedJobs.length,
           qualified: qualifiedJobs.length,
-          submittedToBrowserUse: buResults.filter((r) => r.taskId).length,
+          submittedToSkyvern: skyvernResults.filter((r) => r.runId).length,
           queries: queryData.queries,
           targetRoles: queryData.targetRoles,
           seniorityLevel: queryData.seniorityLevel,
         },
-        browserUseTasks: buResults,
+        skyvernTasks: skyvernResults,
       };
 
       console.log(
-        `[LeverResearch] Complete. ${buResults.filter((r) => r.taskId).length} jobs submitted via Browser Use`
+        `[LeverResearch] Complete. ${skyvernResults.filter((r) => r.runId).length} jobs submitted to Skyvern`
       );
 
       return new Response(JSON.stringify(result), {
@@ -543,8 +596,10 @@ async function callOpenAI(
 
 function parseJSON(text: string): any {
   try {
+    // Try direct parse
     return JSON.parse(text);
   } catch {
+    // Extract JSON from markdown code blocks or mixed text
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/(\[[\s\S]*\])/) || text.match(/(\{[\s\S]*\})/);
     if (jsonMatch) {
       return JSON.parse(jsonMatch[1]);

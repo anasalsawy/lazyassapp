@@ -186,7 +186,6 @@ serve(async (req) => {
 
     // Check for stale runs (running > 30 mins with no update)
     const staleThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-    let staleRunCount = 0;
     for (const run of runningRuns || []) {
       if (run.started_at && run.started_at < staleThreshold) {
         await supabase
@@ -197,44 +196,14 @@ serve(async (req) => {
             ended_at: new Date().toISOString(),
           })
           .eq("id", run.id);
-        staleRunCount++;
         console.log(`[SyncAgentStatus] Marked stale run: ${run.id}`);
       }
     }
 
-    // ---- Cleanup orphaned agent_tasks stuck in running/pending ----
-    const taskStaleThreshold = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-    let tasksQuery = supabase
-      .from("agent_tasks")
-      .select("id, task_type, status, started_at, created_at")
-      .in("status", ["running", "pending"])
-      .lt("created_at", taskStaleThreshold);
-
-    if (userId) {
-      tasksQuery = tasksQuery.eq("user_id", userId);
-    }
-
-    const { data: staleTasks } = await tasksQuery;
-    let staleTaskCount = 0;
-
-    for (const task of staleTasks || []) {
-      await supabase
-        .from("agent_tasks")
-        .update({
-          status: "failed",
-          error_message: "Orphaned: no status update for 20+ minutes",
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", task.id);
-      staleTaskCount++;
-      console.log(`[SyncAgentStatus] Killed orphan task: ${task.id} (${task.task_type})`);
-    }
-
-    const finalResults = { ...results, staleRuns: staleRunCount, staleTasks: staleTaskCount };
-    console.log(`[SyncAgentStatus] Sync complete:`, finalResults);
+    console.log(`[SyncAgentStatus] Sync complete:`, results);
 
     return new Response(
-      JSON.stringify({ success: true, results: finalResults }),
+      JSON.stringify({ success: true, results }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {

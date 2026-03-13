@@ -73,7 +73,7 @@ export function StripeCardInput({ userEmail, onSuccess, onError }: StripeCardInp
 
       if (data?.success) {
         toast.success(`✅ Card verified! ${data.brand?.toUpperCase()} ****${data.last4}`, {
-          description: "$1 hold placed & immediately released — card is live",
+          description: "No charge - card saved for future purchases",
         });
         onSuccess?.({
           last4: data.last4,
@@ -132,7 +132,7 @@ export function StripeCardInput({ userEmail, onSuccess, onError }: StripeCardInp
 
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <Shield className="h-3 w-3" />
-        <span>$1 pre-auth hold is placed and immediately released to verify your card</span>
+        <span>Your card details are encrypted and sent directly to Stripe</span>
       </div>
 
       <Button type="submit" disabled={!stripe || isProcessing} className="w-full">
@@ -144,7 +144,7 @@ export function StripeCardInput({ userEmail, onSuccess, onError }: StripeCardInp
         ) : (
           <>
             <CreditCard className="mr-2 h-4 w-4" />
-            Verify Card ($1 pre-auth)
+            Verify Card (no charge)
           </>
         )}
       </Button>

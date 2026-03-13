@@ -555,19 +555,11 @@ Current date: ${new Date().toISOString().split("T")[0]}
 
 ### Web Browsing (works via Firecrawl API)
 - **browser_navigate** — fetches and reads any webpage, returning its content as markdown. This is NOT a live browser — it scrapes the page content. Requires FIRECRAWL_API_KEY.
-- **browser_view** — checks if Browser Use automation is available and ready.
-- **browser_restart** — navigates to a URL using Firecrawl.
+- **browser_view** — checks if there's an active Browser Use Cloud session running and returns its status/live URL. Requires BROWSER_USE_API_KEY.
+- **browser_restart** — stops all active browser sessions and then navigates to a URL.
 
-### Autonomous Browser Automation (Multi-Agent: Analyst→Director→Navigator via Browser Use)
-- **browser_task** — YOUR MOST POWERFUL TOOL. Triggers a state-of-the-art 3-agent browser automation pipeline:
-  - **ANALYST**: Grounded page-state critic that identifies elements, blockers, and risks with evidence-based confidence scores.
-  - **DIRECTOR**: Strategy planner with loop prevention (URL stack, visited signatures, failure budget), milestone tracking, and recovery patterns (modal cleanup, branch-and-backtrack, CAPTCHA solving).
-  - **NAVIGATOR**: Deterministic executor that performs exactly one atomic action per directive — never improvises or invents selectors.
-  The pipeline runs fully autonomously — handles CAPTCHAs, payments, logins, form fills, downloads, everything. Human intervention = failure.
-  It also scrapes page content via Firecrawl for immediate results. Returns REAL page content (pageContent field) that you MUST use to answer the user.
-- **CRITICAL RULE**: If browser_task returns pageContent, you MUST present that content to the user. NEVER say "unable to access" or "restrictions on plan" — you DO have access.
-- **INLINE BROWSER VIEW**: When browser_task returns a liveUrl, you MUST output a [BROWSER_EMBED] block so the user can see the live browser session inline. Format: [BROWSER_EMBED]{"debugUrl":"THE_LIVE_URL","sessionId":"SESSION_ID","interactive":true}[/BROWSER_EMBED]
-- When the response includes a runId, mention it so the user knows a background multi-agent task is executing.
+### Autonomous Browser Automation (works via Browser Use Cloud API)
+- **browser_task** — YOUR MOST POWERFUL TOOL. Spins up a real remote browser with an AI agent that autonomously navigates websites, clicks buttons, fills forms, and completes multi-step workflows. You give it natural language instructions and it executes them. Returns a task ID and a live URL where the user can watch. Requires BROWSER_USE_API_KEY. If the user has a saved browser profile, it uses their logged-in sessions.
 
 ### Granular Browser Controls (auto-routed through browser_task)
 - **browser_click, browser_input, browser_press_key, browser_select_option, browser_console_exec** — these do NOT control a browser directly. They get converted into natural language instructions and sent to browser_task. So they work, but they spin up a full browser session each time.
@@ -589,7 +581,7 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **optimize_resume** — triggers resume optimization using the user's primary resume. Calls the optimize-resume backend function.
 - **get_job_matches** — queries the jobs table for the user's matches, sorted by match_score.
 - **get_applications** — queries the applications table for the user's applications, optionally filtered by status.
-- **submit_application** — submits a job application using the backend submit-application function, which uses Browser Use for browser automation.
+- **submit_application** — submits a job application using Skyvern (form automation) or browser_task as fallback. Requires SKYVERN_API_KEY or BROWSER_USE_API_KEY.
 - **check_agent_status** — checks for active/pending agent tasks and recent agent runs.
 
 ### Shopping (works via database + auto-shop backend)
@@ -630,7 +622,7 @@ Current date: ${new Date().toISOString().split("T")[0]}
 async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
-  supabase: any,
+  supabase: ReturnType<typeof createClient>,
   userId: string
 ): Promise<string> {
   try {
@@ -731,7 +723,20 @@ async function executeTool(
 
       // ── Browser: view / navigate / restart (FUNCTIONAL) ───────────────
       case "browser_view": {
-        return JSON.stringify({ status: "ready", provider: "playwright_bridge", message: "Playwright bridge automation is available. Use browser_task to start a task." });
+        const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+        if (!BU_API_KEY) return JSON.stringify({ error: "Browser automation not configured." });
+        const res = await fetch("https://api.browser-use.com/api/v2/sessions?filterBy=active&pageSize=1", {
+          headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+        });
+        if (!res.ok) return JSON.stringify({ error: "Failed to check browser sessions." });
+        const sessions = await res.json();
+        if (!sessions.items?.length) return JSON.stringify({ status: "no_active_session", message: "No browser session running." });
+        const session = sessions.items[0];
+        const taskRes = await fetch(`https://api.browser-use.com/api/v2/sessions/${session.id}`, {
+          headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+        });
+        const detail = taskRes.ok ? await taskRes.json() : {};
+        return JSON.stringify({ sessionId: session.id, status: session.status, liveUrl: session.liveUrl || detail.liveUrl, tasks: detail.tasks || [] });
       }
 
       case "browser_navigate": {
@@ -752,6 +757,22 @@ async function executeTool(
       }
 
       case "browser_restart": {
+        const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+        if (BU_API_KEY) {
+          const res = await fetch("https://api.browser-use.com/api/v2/sessions?filterBy=active&pageSize=5", {
+            headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+          });
+          if (res.ok) {
+            const sessions = await res.json();
+            for (const s of sessions.items || []) {
+              await fetch(`https://api.browser-use.com/api/v2/sessions/${s.id}`, {
+                method: "PATCH",
+                headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "stop" }),
+              });
+            }
+          }
+        }
         return executeTool("browser_navigate", args, supabase, userId);
       }
 
@@ -906,117 +927,46 @@ async function executeTool(
         return executeTool("browser_navigate", { url: args.url }, supabase, userId);
 
       case "browser_task": {
-        // Multi-agent browser system: Researcher→Planner→Playwright Bridge
-        const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-        const taskStr = (args.task as string) || "";
-        const startUrl = (args.start_url as string) || "";
+        const BU_API_KEY = Deno.env.get("BROWSER_USE_API_KEY");
+        if (!BU_API_KEY) return JSON.stringify({ error: "Browser automation not configured — BROWSER_USE_API_KEY needed." });
 
-        // Step 1: Scrape page content via Firecrawl for immediate results
-        let pageContent = "";
-        let pageTitle = "";
-        let scrapedUrl = startUrl;
-        if (startUrl && FIRECRAWL_KEY) {
-          try {
-            const scrapeRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${FIRECRAWL_KEY}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ url: startUrl, formats: ["markdown"], onlyMainContent: true, waitFor: 3000 }),
-            });
-            if (scrapeRes.ok) {
-              const scrapeData = await scrapeRes.json();
-              pageContent = scrapeData.data?.markdown || scrapeData.markdown || "";
-              pageTitle = scrapeData.data?.metadata?.title || "";
-              scrapedUrl = scrapeData.data?.metadata?.sourceURL || startUrl;
-            }
-          } catch (e) {
-            console.error("[browser_task] Firecrawl scrape failed:", e);
-          }
-        }
+        const { data: browserProfile } = await supabase.from("browser_profiles")
+          .select("browser_use_profile_id").eq("user_id", userId).single();
 
-        // Step 2: Delegate to multi-agent browser-agent function (uses Playwright bridge)
-        let agentResult: any = null;
-        let agentError: string | null = null;
-
-        try {
-          const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-          const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-          const agentRes = await fetch(`${supabaseUrl}/functions/v1/browser-agent`, {
+        const taskBody: any = { task: args.task as string, maxSteps: (args.max_steps as number) || 50 };
+        if (args.start_url) taskBody.startUrl = args.start_url as string;
+        if (browserProfile?.browser_use_profile_id) {
+          const sessionRes = await fetch("https://api.browser-use.com/api/v2/sessions", {
             method: "POST",
-            headers: {
-              Authorization: `Bearer ${serviceKey}`,
-              "Content-Type": "application/json",
-              apikey: serviceKey,
-            },
-            body: JSON.stringify({
-              action: "run",
-              goal: taskStr,
-              start_url: startUrl || undefined,
-              context: { userId, source: "manus_agent" },
-            }),
+            headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({ profileId: browserProfile.browser_use_profile_id }),
           });
-
-          if (agentRes.ok) {
-            agentResult = await agentRes.json();
-            console.log(`[browser_task] Multi-agent browser task started: ${agentResult.runId}`);
-          } else {
-            const errText = await agentRes.text();
-            agentError = `Browser agent failed (${agentRes.status}): ${errText.slice(0, 500)}`;
-            console.error(`[browser_task] Browser agent error: ${agentError}`);
+          if (sessionRes.ok) {
+            const session = await sessionRes.json();
+            taskBody.sessionId = session.id;
           }
-        } catch (err: any) {
-          agentError = err?.message || "Browser agent request failed.";
-          console.error("[browser_task] Browser agent error:", err);
         }
 
-        // Log
-        await supabase.from("agent_logs").insert({
-          user_id: userId,
-          agent_name: "manus",
-          log_level: agentResult ? "info" : "error",
-          message: `Browser task: ${taskStr.substring(0, 200)}`,
-          metadata: {
-            task: taskStr,
-            start_url: startUrl,
-            multiAgentRunId: agentResult?.runId,
-            multiAgentStatus: agentResult?.status,
-            agentError: agentError,
-            hasContent: !!pageContent,
-          },
+        const res = await fetch("https://api.browser-use.com/api/v2/tasks", {
+          method: "POST",
+          headers: { "X-Browser-Use-API-Key": BU_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify(taskBody),
         });
-
-        // Build response
-        const result: any = {
-          success: !!agentResult,
-          provider: "multi_agent_browser",
-          architecture: "analyst_director_navigator",
-          task: taskStr,
-          url: scrapedUrl || startUrl,
-        };
-
-        if (pageContent) {
-          result.pageTitle = pageTitle;
-          result.pageContent = pageContent.substring(0, 6000);
+        if (!res.ok) {
+          const errText = await res.text();
+          return JSON.stringify({ error: `Browser task failed (${res.status}): ${errText}` });
         }
+        const taskData = await res.json();
 
-        if (agentResult) {
-          result.runId = agentResult.runId;
-          result.sessionId = agentResult.sessionId || null;
-          result.liveUrl = agentResult.liveUrl || null;
-          result.taskStatus = agentResult.status || "running";
-          result.message = `🤖 Multi-agent browser task ${agentResult.runId} is running (Analyst→Director→Navigator loop active).`;
-          if (agentResult.liveUrl) {
-            result.browserEmbed = `[BROWSER_EMBED]{"debugUrl":"${agentResult.liveUrl}","sessionId":"${agentResult.sessionId || ""}","interactive":true}[/BROWSER_EMBED]`;
-          }
-        } else {
-          result.taskStatus = "failed_to_start";
-          result.error = agentError || "Multi-agent browser task failed to start.";
-          result.message = pageContent
-            ? "Page content was retrieved via Firecrawl, but the multi-agent browser task failed to start."
-            : "Multi-agent browser task failed to start.";
-        }
+        const sessionRes2 = await fetch(`https://api.browser-use.com/api/v2/sessions/${taskData.sessionId}`, {
+          headers: { "X-Browser-Use-API-Key": BU_API_KEY },
+        });
+        const sessionData = sessionRes2.ok ? await sessionRes2.json() : {};
 
-        return JSON.stringify(result);
+        return JSON.stringify({
+          success: true, taskId: taskData.id, sessionId: taskData.sessionId,
+          liveUrl: sessionData.liveUrl || null, message: "Browser task launched. The agent is working on it now.",
+        });
       }
 
       case "phone_call": {
@@ -1025,7 +975,7 @@ async function executeTool(
         const TWILIO_NUMBER = Deno.env.get("TWILIO_WHATSAPP_NUMBER")?.replace("whatsapp:", "") || "";
         if (!TWILIO_SID || !TWILIO_TOKEN) return JSON.stringify({ error: "Telephony not configured — Twilio credentials needed." });
 
-        const twiml = `<Response><Say voice="Polly.Matthew">${String(args.script || args.objective || "").replace(/[<>&'"]/g, "")}</Say></Response>`;
+        const twiml = `<Response><Say voice="Polly.Matthew">${(args.script || args.objective as string).replace(/[<>&'"]/g, "")}</Say></Response>`;
         const callParams = new URLSearchParams();
         callParams.append("To", args.phone_number as string);
         callParams.append("From", TWILIO_NUMBER);
@@ -1078,9 +1028,26 @@ async function executeTool(
       }
 
       case "submit_application": {
-        // Route through Browser Use browser_task for form automation
+        const SKYVERN_KEY = Deno.env.get("SKYVERN_API_KEY");
+        if (!SKYVERN_KEY) return JSON.stringify({ error: "Job application engine not configured — Skyvern API key needed." });
+
+        const [profileRes, resumeRes] = await Promise.all([
+          supabase.from("profiles").select("*").eq("user_id", userId).single(),
+          supabase.from("resumes").select("*").eq("user_id", userId).eq("is_primary", true).single(),
+        ]);
+
+        let jobId = args.job_id as string;
+        if (!jobId) {
+          const { data: newJob } = await supabase.from("jobs").insert({
+            user_id: userId, title: "Direct Application",
+            company: new URL(args.job_url as string).hostname,
+            source: "agent", url: args.job_url as string,
+          }).select().single();
+          jobId = newJob?.id || "";
+        }
+
         const { data, error } = await supabase.functions.invoke("submit-application", {
-          body: { jobId: args.job_id, jobUrl: args.job_url, coverLetter: args.cover_letter || undefined, userId },
+          body: { jobId, jobUrl: args.job_url, coverLetter: args.cover_letter || undefined, userId },
           headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}` },
         });
         return JSON.stringify(data || { error: error?.message || "Application submission failed" });

@@ -1,46 +1,58 @@
-# Playwright Bridge (Command Executor)
+# Browser-Use Bridge (Self-hosted)
 
-This is a lightweight self-hosted bridge that executes **structured Playwright commands** sent from edge functions. No AI runs on the bridge — all intelligence lives in the edge function's Planner/Researcher agents.
-
-## Architecture
-
-```
-Edge Function (Planner LLM)  →  Playwright Bridge  →  Headless Chromium
-       ↑                              ↓
-   OpenAI GPT-4o              Execute commands:
-   generates CSS              navigate, click, type,
-   selectors &                extract_text, screenshot...
-   command sequences
-```
+This repository contains a self-hosted bridge to run Browser-Use / Playwright tasks on your own server with **custom proxy support**.
 
 ## Quick Start (Docker)
 
+### 1. Build and run directly:
 ```bash
-docker build -t playwright-bridge .
-docker run -e BRIDGE_API_KEY="your_key" -p 8000:8000 playwright-bridge
+docker build -t browser-use-bridge .
+docker run -e BRIDGE_API_KEY="your_key" -p 8000:8000 browser-use-bridge
 ```
 
-Or with docker-compose:
+### 2. Or with docker-compose:
 ```bash
 BRIDGE_API_KEY=your_key docker-compose up --build -d
 ```
 
+### 3. Test the health endpoint:
+```bash
+curl -X POST http://localhost:8000/health
+```
+
+### 4. Run a test task with proxy:
+```bash
+curl -X POST http://localhost:8000/run-task \
+  -H "Authorization: Bearer your_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "https://api.ipify.org?format=json",
+    "proxy": {
+      "server": "http://proxy.example.com:8080",
+      "username": "user",
+      "password": "pass"
+    }
+  }'
+```
+
+## Deploy to Render
+
+1. Push this folder to a GitHub repository
+2. Create a new Web Service on Render
+3. Connect your GitHub repo
+4. Set Environment Variables:
+   - `BRIDGE_API_KEY` = create a secret key (e.g., `my-super-secret-key-123`)
+5. Render will use the `render.yaml` for build/start commands
+
 ## API Endpoints
 
-### POST /execute (Primary)
-Execute a sequence of Playwright commands.
+### POST /run-task
+Run a browser automation task with optional proxy.
 
 ```json
 {
-  "commands": [
-    { "action": "navigate", "url": "https://example.com" },
-    { "action": "click", "selector": "#search-button" },
-    { "action": "type", "selector": "#search-input", "value": "query" },
-    { "action": "press", "value": "Enter" },
-    { "action": "wait", "value": "2000" },
-    { "action": "extract_text", "selector": ".results .item" },
-    { "action": "screenshot" }
-  ],
+  "task": "Go to amazon.com and search for 'laptop'",
+  "profile_id": "optional-profile-id",
   "proxy": {
     "server": "http://proxy.example.com:8080",
     "username": "user",
@@ -49,61 +61,52 @@ Execute a sequence of Playwright commands.
 }
 ```
 
-### Supported Commands
-
-| Action | Params | Description |
-|--------|--------|-------------|
-| `navigate` | `url` | Go to URL |
-| `click` | `selector` | Click element |
-| `type` | `selector`, `value` | Fill input field |
-| `press` | `value`, `selector?` | Press keyboard key |
-| `select` | `selector`, `value` | Select dropdown option |
-| `wait` | `value` (ms) | Wait N milliseconds |
-| `wait_for_selector` | `selector`, `timeout?` | Wait for element to appear |
-| `scroll` | `value` (down/up/bottom/top) | Scroll page |
-| `screenshot` | `value?` ("full" for full page) | Capture screenshot |
-| `extract_text` | `selector?` | Extract text from elements |
-| `extract_html` | `selector?` | Extract HTML |
-| `extract_attribute` | `selector`, `value` (attr name) | Extract attribute values |
-| `evaluate` | `value` (JS code) | Run JavaScript |
-| `hover` | `selector` | Hover over element |
-| `check` | `selector` | Check checkbox |
-| `uncheck` | `selector` | Uncheck checkbox |
-| `get_url` | — | Get current URL |
-| `get_title` | — | Get page title |
-
-### POST /run-task (Legacy)
-Accepts either new `commands` format or legacy `task` string (auto-converts to navigate+screenshot).
+**Response:**
+```json
+{
+  "run_id": "abc123",
+  "status_url": "/runs/abc123/status",
+  "screenshot_url": "/runs/abc123/screenshot"
+}
+```
 
 ### GET /runs/{run_id}/status
-Check execution progress and results.
+Check the status of a running task.
 
 ### GET /runs/{run_id}/screenshot
-Get screenshot (latest or `?step=N` for specific step).
+Get the screenshot from a completed task.
+
+### POST /sessions
+Create an interactive session (human-in-the-loop).
+
+### GET /sessions/{sid}/live
+Get the live view screenshot of a session.
+
+### POST /sessions/{sid}/complete
+Complete a session and save the profile.
+
+### GET /profiles/{profile_id}
+Download a saved profile as a ZIP file.
+
+### DELETE /profiles/{profile_id}
+Delete a saved profile.
 
 ### POST /health
-Health check.
-
-## Deploy to Render
-
-1. Push to GitHub
-2. Create Web Service on Render
-3. Set `BRIDGE_API_KEY` environment variable
-4. Render uses `render.yaml` for build/start
+Health check endpoint.
 
 ## Connecting to Lovable
 
-Add these secrets:
+Once deployed, add these secrets to your Lovable project:
 
-| Secret | Value |
-|--------|-------|
+| Secret Name | Value |
+|-------------|-------|
 | `BROWSER_USE_BRIDGE_URL` | `https://your-bridge.onrender.com` |
 | `BROWSER_USE_BRIDGE_API_KEY` | Your `BRIDGE_API_KEY` value |
 
-## Key Differences from Previous Version
+The edge functions will automatically route tasks through this bridge when a custom proxy is configured.
 
-- **No browser-use dependency** — removed AI agent loop from bridge
-- **No OpenAI key needed on bridge** — all LLM calls happen in edge functions
-- **Faster cold starts** — smaller Docker image without browser-use + langchain
-- **Deterministic execution** — commands run exactly as specified
-- **Better debugging** — each command result is individually tracked
+## Notes
+
+- **Profile Persistence**: Profiles are stored in `./profiles` and runs in `./runs`. When using docker-compose, these are mounted as volumes to persist across restarts.
+- **Headless Mode**: The bridge runs in headless mode by default. For interactive sessions requiring a real desktop, consider running on a VM with X server / noVNC.
+- **Playwright**: Falls back to raw Playwright if browser-use library has issues.

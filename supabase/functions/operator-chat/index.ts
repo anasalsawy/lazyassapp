@@ -499,7 +499,7 @@ Use these tools to execute tasks autonomously when the user requests action.`;
 async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
-  supabase: any,
+  supabase: ReturnType<typeof createClient>,
   userId: string
 ): Promise<string> {
   try {
@@ -777,7 +777,7 @@ async function executeTool(
             source: "agent",
             url: args.job_url as string,
           }).select().single();
-          jobId = (newJob?.id as string) || "";
+          jobId = newJob?.id || "";
         }
 
         const { data, error } = await supabase.functions.invoke("submit-application", {

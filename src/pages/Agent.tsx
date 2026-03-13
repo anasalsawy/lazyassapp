@@ -1,92 +1,41 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { SteelSessionEmbed } from "@/components/chat/SteelSessionEmbed";
-import { VoiceRelayAgent } from "@/components/voice/VoiceRelayAgent";
 import { useAuth } from "@/hooks/useAuth";
 import {
-  Bot, Send, Loader2, Sparkles, Briefcase, FileText,
-  Search, Mail, Activity, User, Zap, Mic,
+  Bot,
+  Send,
+  Loader2,
+  Sparkles,
+  Briefcase,
+  FileText,
+  ShoppingCart,
+  Search,
+  Mail,
+  Activity,
+  User,
+  Zap,
 } from "lucide-react";
 
 type Msg = { role: "user" | "assistant"; content: string };
-
-interface SteelEmbedData {
-  debugUrl: string;
-  sessionId?: string;
-  interactive?: boolean;
-}
 
 const SUGGESTIONS = [
   { icon: Briefcase, text: "Find me matching jobs", color: "text-blue-400" },
   { icon: FileText, text: "Optimize my resume", color: "text-green-400" },
   { icon: Activity, text: "Check my pipeline status", color: "text-yellow-400" },
   { icon: Mail, text: "Check for recruiter emails", color: "text-purple-400" },
-  { icon: Sparkles, text: "Give me turn-by-turn direction and reroute if needed", color: "text-pink-400" },
+  { icon: ShoppingCart, text: "Order something for me", color: "text-pink-400" },
   { icon: Search, text: "Research average salaries for my target roles", color: "text-cyan-400" },
 ];
-
-/** Extract browser embed JSON blocks from assistant messages */
-function parseBrowserEmbeds(content: string): { text: string; embeds: SteelEmbedData[] } {
-  const embeds: SteelEmbedData[] = [];
-  // Match [BROWSER_EMBED] or legacy [STEEL_EMBED] blocks
-  const embedRegex = /\[(BROWSER_EMBED|STEEL_EMBED)\]([\s\S]*?)\[\/(BROWSER_EMBED|STEEL_EMBED)\]/g;
-  let text = content;
-  let match;
-
-  while ((match = embedRegex.exec(content)) !== null) {
-    try {
-      const data = JSON.parse(match[2]);
-      const url = data.debugUrl || data.liveUrl;
-      if (url) {
-        embeds.push({ debugUrl: url, sessionId: data.sessionId, interactive: data.interactive });
-      }
-    } catch { /* ignore */ }
-    text = text.replace(match[0], "");
-  }
-
-  // Also detect Browser Use live URLs and Steel URLs in raw text
-  const urlRegex = /https:\/\/[^\s"]+(?:\.steel\.dev|browser-use\.com\/live|\.browserbase\.com)[^\s"]*/g;
-  const urls = content.match(urlRegex) || [];
-  for (const url of urls) {
-    if (!embeds.some((e) => e.debugUrl === url)) {
-      embeds.push({ debugUrl: url, interactive: false });
-    }
-  }
-
-  return { text: text.trim(), embeds };
-}
-
-function MessageContent({ content, role }: { content: string; role: "user" | "assistant" }) {
-  const { text, embeds } = useMemo(() =>
-    role === "assistant" ? parseBrowserEmbeds(content) : { text: content, embeds: [] },
-    [content, role]
-  );
-
-  return (
-    <>
-      {text && <div className="text-sm whitespace-pre-wrap leading-relaxed">{text}</div>}
-      {embeds.map((embed, i) => (
-        <SteelSessionEmbed
-          key={`${embed.debugUrl}-${i}`}
-          debugUrl={embed.debugUrl}
-          sessionId={embed.sessionId}
-          interactive={embed.interactive}
-        />
-      ))}
-    </>
-  );
-}
 
 export default function Agent() {
   const { session } = useAuth();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [showVoice, setShowVoice] = useState(false);
-  const [voiceAgentId, setVoiceAgentId] = useState("agent_1801kkj49vz6fx8t8wya5j5rppxx");
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -127,7 +76,10 @@ export default function Agent() {
           Authorization: `Bearer ${session.access_token}`,
           apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
         },
-        body: JSON.stringify({ messages: [...messages, userMsg], stream: true }),
+        body: JSON.stringify({
+          messages: [...messages, userMsg],
+          stream: true,
+        }),
       });
 
       if (!resp.ok || !resp.body) {
@@ -184,6 +136,7 @@ export default function Agent() {
         }
       }
 
+      // If no response came through, set a fallback
       if (!assistantSoFar) {
         upsertAssistant("I processed your request. Check the relevant section of the app for results.");
       }
@@ -257,7 +210,7 @@ export default function Agent() {
                           : "bg-muted/60 text-foreground rounded-bl-md"
                       }`}
                     >
-                      <MessageContent content={msg.content} role={msg.role} />
+                      <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
                     </div>
                     {msg.role === "user" && (
                       <div className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center shrink-0 mt-1">
@@ -285,35 +238,10 @@ export default function Agent() {
           </div>
         </div>
 
-        {/* Voice Relay Panel */}
-        {showVoice && voiceAgentId && (
-          <div className="border-t border-border/40 bg-background/80 px-4 py-3">
-            <div className="max-w-3xl mx-auto">
-              <VoiceRelayAgent
-                agentId={voiceAgentId}
-                onTranscript={(role, text) => {
-                  console.log(`[Voice ${role}]:`, text);
-                }}
-              />
-            </div>
-          </div>
-        )}
-
         {/* Input Area */}
         <div className="border-t border-border/40 bg-background/80 backdrop-blur-xl">
           <div className="max-w-3xl mx-auto px-4 py-4">
             <div className="relative flex items-end gap-2">
-              <Button
-                variant={showVoice ? "default" : "outline"}
-                size="icon"
-                className="shrink-0 h-10 w-10 rounded-xl"
-                onClick={() => {
-                  setShowVoice(!showVoice);
-                }}
-                title="Toggle Voice Relay"
-              >
-                <Mic className="w-4 h-4" />
-              </Button>
               <Textarea
                 ref={textareaRef}
                 value={input}

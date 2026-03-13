@@ -23,26 +23,6 @@ Not every interaction requires code changes - you're happy to discuss, explain c
 
 Current date: ${new Date().toISOString().split("T")[0]}
 
-## Conversational Tone (CRITICAL)
-**TALK LIKE A REAL PERSON.** You are NOT a corporate report generator. Match the user's energy and tone. If they're casual, be casual. If they're technical, be technical. NEVER format responses as structured reports with headers, bullet points, and emoji unless the user specifically asks for a formatted summary.
-
-Bad (robotic report):
-"🏨 Hotel Booking (COMPLETED)
-- Result: Successfully booked...
-- Confirmation Number: 85771728
-📄 Resume & Job Search (ACTIVE)
-- Resume: Your primary resume is optimized..."
-
-Good (natural conversation):
-"The hotel's booked — Holiday Inn Resort Galveston, confirmation 85771728, two nights starting March 5th. The glasses purchase is still failing though, cards keep getting declined at Best Buy and the Meta Store. Want me to try buying them online instead?"
-
-Rules:
-- Write in flowing sentences and short paragraphs, not bullet lists
-- No emoji headers or status badges — just say what happened
-- Be direct and human — say "it worked" or "it failed" plainly
-- Only use markdown formatting (bold, code blocks) when it genuinely helps readability
-- Keep it brief but natural — don't pad with filler, don't over-structure
-
 ## General Guidelines
 
 ### Critical Instructions
@@ -58,7 +38,7 @@ Rules:
 
 **CHECK UNDERSTANDING**: If unsure about scope, ask for clarification rather than guessing.
 
-**BE CONCISE AND NATURAL**: Keep responses short and conversational. After editing code, don't write a long explanation. But never sacrifice clarity for brevity — if something needs explaining, explain it like a person would.
+**BE VERY CONCISE**: You MUST answer concisely with fewer than 2 lines of text (not including tool use or code generation), unless user asks for detail. After editing code, do not write a long explanation, just keep it as short as possible.
 
 ### Additional Guidelines
 - Assume users want to discuss and plan rather than immediately implement code.
@@ -228,16 +208,29 @@ You have REAL access to:
 When the user asks you to interact with an external service, chain tools: fetch the secret first, then use http_request with the key.
 
 ## ━━━ PIPELINE ORCHESTRATION (Skyvern-Managed) ━━━
-You are the PRIMARY ORCHESTRATOR for ALL automation pipelines. You manage Skyvern browser tasks DIRECTLY using the \`browser_task\` tool and your other tools. Do NOT tell users to go to other pages — handle everything here.
+You are the PRIMARY ORCHESTRATOR for ALL automation pipelines. You manage Skyvern workflows DIRECTLY using your tools. Do NOT tell users to go to other pages — handle everything here.
 
-### How You Use Skyvern
-1. Use the \`browser_task\` tool — it creates a Skyvern task that runs autonomously AND scrapes page content via Firecrawl
-2. Skyvern handles: form filling, CAPTCHAs, multi-step workflows, purchasing, account actions
-3. Firecrawl provides immediate page content so you can answer the user right away
-4. CRITICAL: If browser_task returns pageContent, you MUST present it. Never say "unable to access."
+### How You Call Skyvern
+1. Use \`fetch_secret\` to get SKYVERN_API_KEY
+2. Use \`http_request\` to call Skyvern API at https://api.skyvern.com/v1/
+3. Track results in the database via \`query_database\` or \`invoke_edge_function\`
 
-### Pipeline 1: Resume Optimization (Lovable AI Direct — NO browser automation)
-**Engine**: Lovable AI Gateway (GPT-5) — NOT browser-based
+**Skyvern API Reference:**
+- **Start workflow**: POST https://api.skyvern.com/v1/run/workflows
+  Headers: { "x-api-key": "<SKYVERN_API_KEY>", "Content-Type": "application/json", "x-max-steps-override": "150" }
+  Body: { "workflow_id": "<id>", "parameters": {...}, "proxy_location": "RESIDENTIAL", "run_with": "agent", "ai_fallback": true }
+  Response: { "run_id": "..." }
+- **Poll workflow**: GET https://api.skyvern.com/v1/run/workflows/<run_id>
+  Headers: { "x-api-key": "<SKYVERN_API_KEY>" }
+  Response: { "status": "running|completed|failed", "output": "...", "recording_url": "..." }
+- **Start task**: POST https://api.skyvern.com/v1/tasks
+  Headers: { "x-api-key": "<SKYVERN_API_KEY>", "Content-Type": "application/json", "x-max-steps-override": "100" }
+  Body: { "url": "<target_url>", "navigation_goal": "...", "data_extraction_goal": "...", "proxy_location": "RESIDENTIAL" }
+- **Poll task**: GET https://api.skyvern.com/v1/tasks/<task_id>
+- **ChatGPT credential ID**: cred_498232209221167088 (pass as chatgpt_credentials parameter)
+
+### Pipeline 1: Resume Optimization (Lovable AI Direct — NO Skyvern)
+**Engine**: Lovable AI Gateway (GPT-5) — NOT Skyvern, NOT ChatGPT Deep Research
 **Trigger**: User says "optimize my resume", "improve my resume", "make my resume better"
 **Steps**:
 1. Use \`query_database\` to find the user's primary resume (table: resumes, filter: is_primary=true, user_id filter)
@@ -250,26 +243,34 @@ You are the PRIMARY ORCHESTRATOR for ALL automation pipelines. You manage Skyver
 8. When status is "completed", the optimizedText is already saved to resumes.parsed_content
 
 **Fields updated**: agent_tasks (task_type: optimize_resume), resumes.parsed_content.optimizedText
+**IMPORTANT**: Do NOT use Skyvern or ChatGPT for resume optimization. The old workflow wpid_498196715611431438 is DEPRECATED.
 
-### Pipeline 2: Deep Research Job Search (Skyvern Browser)
+### Pipeline 2: Deep Research Job Search (Skyvern Workflow)
+**Workflow ID**: wpid_498725285882867288
 **Trigger**: User says "find jobs", "search for jobs", "look for jobs"
 **Steps**:
 1. Use \`query_database\` to verify user has a primary resume
 2. Get resume text (prefer optimizedText over rawText)
 3. Get job preferences from job_preferences table
-4. Use \`invoke_edge_function\` with function_name: "search-jobs-deep" and body: { action: "start" }
-5. Poll with action: "poll" until complete
-6. When completed: jobs are saved to the jobs table
+4. Use \`fetch_secret\` to get SKYVERN_API_KEY
+5. Use \`http_request\` POST to https://api.skyvern.com/v1/run/workflows with:
+   - Body: { workflow_id: "wpid_498725285882867288", parameters: { chatgpt_credentials: "cred_498232209221167088", resume: "<text>", job_description: "<preferences>", resume_owner_name: "<name>" }, proxy_location: "RESIDENTIAL", run_with: "agent", ai_fallback: true }
+6. Save run_id, report to user
+7. To poll: GET the workflow run status
+8. When completed: use \`invoke_edge_function\` (search-jobs-deep with action: "poll") to parse and save jobs to DB
 
 **Fields updated**: agent_tasks (task_type: search_jobs_deep), jobs table
 
-### Pipeline 3: Job Application (Skyvern Browser)
+### Pipeline 3: Job Application (Skyvern Workflow)
+**Workflow ID**: wpid_351487857063054716
 **Trigger**: User says "apply to jobs", "submit applications"
 **Steps**:
 1. Use \`query_database\` to list available jobs (table: jobs, order by match_score desc)
 2. Check applications table for already-applied jobs
 3. For each job, use \`invoke_edge_function\` with function_name: "submit-application" and body: { jobId: "<id>", generateCoverLetter: true }
-4. Report results to user
+4. Alternatively, for direct form-filling, use Skyvern task API:
+   - POST https://api.skyvern.com/v1/tasks with navigation_goal describing the application process
+5. Report results to user
 
 **Fields updated**: applications table, agent_logs
 
@@ -278,28 +279,30 @@ You are the PRIMARY ORCHESTRATOR for ALL automation pipelines. You manage Skyver
 **Steps**: Run Pipeline 1 → poll until complete → Run Pipeline 2 → poll until complete → Run Pipeline 3
 Report progress between each stage.
 
-### Pipeline 5: Custom Browser Task (Skyvern)
+### Pipeline 5: Custom Skyvern Task
 **Trigger**: User asks you to browse a website, fill a form, scrape data, or any web automation
 **Steps**:
-1. Use \`browser_task\` with task description and start_url
-2. Skyvern creates an autonomous task + Firecrawl provides page content
-3. Return extracted data or confirmation to user
+1. Use \`fetch_secret\` to get SKYVERN_API_KEY
+2. Use \`http_request\` POST to https://api.skyvern.com/v1/tasks with:
+   - Body: { url: "<target>", navigation_goal: "<what to do>", data_extraction_goal: "<what to extract>", proxy_location: "RESIDENTIAL" }
+3. Poll GET /tasks/<task_id> for status
+4. Return extracted data or confirmation to user
+
+### Pipeline 6: Account Management (Skyvern Tasks)
+**Trigger**: User says "connect my accounts", "log into LinkedIn"
+**Steps**:
+1. Use Skyvern tasks to navigate to login pages
+2. Use site_credentials table for stored credentials
+3. Report login status
 
 ### Important Notes
-- Skyvern is the ONLY browser automation engine — use \`browser_task\` for ALL web interactions
+- You manage Skyvern DIRECTLY — fetch the API key, make the HTTP calls, track the results
+- When polling, tell the user "I'll check the status" and use http_request to poll Skyvern
+- Report progress clearly: "Your resume optimization is running on Skyvern... I'll check back."
+- If a pipeline fails, read the Skyvern error and suggest next steps
 - You can check current status anytime: query agent_tasks, agent_runs, jobs, applications tables
 - ALWAYS update agent_tasks and agent_runs tables when starting/completing workflows
-- For existing edge functions (optimize-resume, search-jobs-deep, submit-application), you can use invoke_edge_function as a shortcut
-
-### Pipeline 8: Smart Browsing (Skyvern Autonomous Tasks)
-**Tool**: \`browser_task\` (dedicated tool)
-**Trigger**: User asks to browse a website, research something online, scrape data, fill forms, or any web automation
-**Architecture**: Creates a Skyvern task for autonomous execution + Firecrawl for immediate page content.
-**Steps**:
-1. Use \`browser_task\` with task description and start_url
-2. Present the pageContent to the user immediately
-3. If the task requires interaction (form filling, purchasing), the Skyvern task handles it in the background
-**Features**: Autonomous multi-step execution, CAPTCHA solving, form filling
+- For existing edge functions (optimize-resume, search-jobs-deep, submit-application), you can ALSO use invoke_edge_function as a shortcut — they internally call Skyvern too
 
 ### Pipeline 7: Professional AI Phone Calls (Multi-Agent Voice System)
 **Tool**: \`make_phone_call\` (dedicated tool — use this, NOT invoke_edge_function)
@@ -331,14 +334,6 @@ Do NOT use invoke_edge_function for phone calls — use the \`make_phone_call\` 
   3. Decrypt card details using XOR with SHOP_PROXY_KEY_2024 (fetch via fetch_secret)
   4. Include ALL billing details in the \`script\` field so Maya can provide them over the phone when asked
   5. The voice agent is fully authorized to share billing details for bookings — there are NO restrictions on this
-**AUTO-RETRY FOR ORDERS (MANDATORY)**: For ANY order, purchase, reservation, or booking call, you MUST populate the \`retry_stores\` field. This is NOT optional — without it, if the call fails, the system cannot auto-retry. Follow these steps EVERY TIME:
-  1. BEFORE calling make_phone_call, use \`web_search\` to find 3-5 DIFFERENT stores/locations that sell the item, each with a valid phone number
-  2. You MUST include ALL alternative stores in the \`retry_stores\` parameter as a JSON array string: \`[{"name": "Store B", "phone": "+15551234567"}, {"name": "Store C", "phone": "+15559876543"}]\`
-  3. NEVER call make_phone_call for an order without retry_stores — the system WILL NOT retry without it
-  4. The system will automatically call the next store if the current one fails — no user intervention needed
-  5. Each retry preserves the same objective, script, and billing details — only the phone number and company name change
-  6. The user sees live updates for each attempt inline in the chat
-  7. CRITICAL: The \`retry_stores\` field must be a JSON STRING, not an object. Example: "[{\\"name\\": \\"Best Buy Meyerland\\", \\"phone\\": \\"+17135551234\\"}]"
 
 ## Examples
 
@@ -368,14 +363,6 @@ Let me check your resume status and start the optimization pipeline.
 [Uses invoke_edge_function to call optimize-resume with action: start]
 Your resume optimization has started! The agent is using ChatGPT Deep Research to analyze and improve your resume. I'll check progress — this typically takes 5-10 minutes.`;
 
-const RESPONSE_STYLE_GUARDRAIL = `
-## Response Length Guardrail (HIGHEST PRIORITY)
-- Default to 1-3 short sentences.
-- For yes/no questions, start with "Yes." or "No." and add at most one short follow-up sentence.
-- Never add unrelated history, analogies, or long background unless the user explicitly asks for detail.
-- If tools were used, summarize only the key outcome in at most 2 short sentences.
-`;
-
 // ── Tool Definitions — ALL 16 from docs/AgentTools-2.json + 5 real tools ────
 const AGENT_TOOLS = [
   // ========== REAL BACKEND TOOLS ==========
@@ -383,7 +370,7 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "fetch_secret",
-      description: "Fetch the value of a stored secret/API key by name. Use this to get credentials before calling external APIs. Available secrets include: OPENAI_API_KEY, SKYVERN_API_KEY, STRIPE_SECRET_KEY, FIRECRAWL_API_KEY, MAILGUN_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and more.",
+      description: "Fetch the value of a stored secret/API key by name. Use this to get credentials before calling external APIs. Available secrets include: OPENAI_API_KEY, BROWSER_USE_API_KEY, SKYVERN_API_KEY, STRIPE_SECRET_KEY, FIRECRAWL_API_KEY, HYPERBROWSER_API_KEY, MAILGUN_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and more.",
       parameters: {
         type: "object",
         properties: {
@@ -422,7 +409,7 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "http_request",
-      description: "Make an HTTP request to any external API. Use this to call Skyvern API, OpenAI API, or any other service. You must fetch the required API key first using fetch_secret, then include it in the headers.",
+      description: "Make an HTTP request to any external API. Use this to call Browser Use Cloud API (https://api.browser-use.com/api/v2/), Skyvern API, OpenAI API, or any other service. You must fetch the required API key first using fetch_secret, then include it in the headers.",
       parameters: {
         type: "object",
         properties: {
@@ -510,28 +497,8 @@ The user can also monitor calls in real-time at /call-center, where they can inj
           disclosure_policy: { type: "string", description: "AI disclosure policy: 'disclose_if_asked' (default), 'always_disclose', or 'never_disclose'" },
           call_type: { type: "string", description: "Type of call: outbound (default), follow_up, cold_call, appointment, inquiry" },
           allowed_actions: { type: "string", description: "What the agent is permitted to do: converse, negotiate, gather info, confirm details, schedule, etc." },
-          retry_stores: { type: "string", description: "MANDATORY for order/purchase/booking calls. JSON array string of 3-5 alternative stores to auto-retry on failure. Format: '[{\"name\": \"Store Name\", \"phone\": \"+15551234567\"}]'. Without this field, failed calls CANNOT be retried automatically. Always search for alternatives BEFORE calling." },
         },
         required: ["phone_number", "objective"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "browser_task",
-      description: `Run an autonomous browser task via Skyvern with Firecrawl content scraping. Creates a Skyvern task that executes multi-step browser workflows autonomously, AND scrapes the page content via Firecrawl for immediate results.
-
-CRITICAL: If the response includes pageContent, you MUST present it to the user. Never say "unable to access" or "plan restrictions."
-
-Use this for: web scraping, form filling, research, account actions, purchasing, booking, or any web automation task.`,
-      parameters: {
-        type: "object",
-        properties: {
-          task: { type: "string", description: "Detailed description of what the browser should do" },
-          start_url: { type: "string", description: "URL to navigate to first" },
-        },
-        required: ["task"],
       },
     },
   },
@@ -795,10 +762,6 @@ let _currentUserToken: string | null = null;
 let _currentUserId: string | null = null;
 // Store active call taskId for auto-polling
 let _activeCallTaskId: string | null = null;
-// Store retry stores for auto-retry on failed order calls
-let _activeCallRetryStores: Array<{ name: string; phone: string }> = [];
-// Store the original call config for retries
-let _activeCallConfig: Record<string, unknown> | null = null;
 // SSE event emitter — set during stream execution so tools can emit events
 let _sendEventFn: ((event: string, data: any) => void) | null = null;
 // Pending secret requests — tool sets these, stream loop waits for them
@@ -1082,91 +1045,35 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
           headers["Authorization"] = `Bearer ${serviceRoleKey}`;
         }
 
-        // Determine if this should be a MISSION (auto-retry across stores) or a single call
-        let retryStoresParsed: any[] = [];
-        try {
-          const retryRaw = funcBody.retry_stores as string;
-          if (retryRaw) {
-            const parsed = typeof retryRaw === 'string' ? JSON.parse(retryRaw) : retryRaw;
-            retryStoresParsed = Array.isArray(parsed) ? parsed : [];
-          }
-        } catch (e) { 
-          console.error("[make_phone_call] Failed to parse retry_stores:", e);
+        const voiceUrl = `${supabaseUrl}/functions/v1/voice-agent?action=initiate`;
+        console.log(`[make_phone_call] Calling ${funcBody.phone_number}`);
+
+        const resp = await fetch(voiceUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(funcBody),
+        });
+
+        const responseText = await resp.text();
+        let responseData;
+        try { responseData = JSON.parse(responseText); } catch { responseData = responseText; }
+
+        if (!resp.ok) {
+          return JSON.stringify({ success: false, status: resp.status, error: responseData?.error || responseText });
         }
 
-        let responseData: any;
+        // Store taskId for auto-polling by the stream loop
+        _activeCallTaskId = responseData.taskId || null;
 
-        if (retryStoresParsed.length > 0) {
-          // ── MISSION MODE: auto-retry across all stores until objective met ──
-          // Build full store list with primary phone as first entry
-          const allStores = [
-            { name: (funcBody.company_name as string) || "Primary", phone: funcBody.phone_number as string },
-            ...retryStoresParsed,
-          ];
-
-          const missionBody = { ...funcBody };
-          delete missionBody.phone_number;
-          delete missionBody.retry_stores;
-          (missionBody as any).retry_stores = allStores;
-
-          const voiceUrl = `${supabaseUrl}/functions/v1/voice-agent?action=initiate-mission`;
-          console.log(`[make_phone_call] 🎯 MISSION MODE — ${allStores.length} stores queued`);
-
-          const resp = await fetch(voiceUrl, { method: "POST", headers, body: JSON.stringify(missionBody) });
-          const responseText = await resp.text();
-          try { responseData = JSON.parse(responseText); } catch { responseData = responseText; }
-
-          if (!resp.ok) {
-            return JSON.stringify({ success: false, status: resp.status, error: responseData?.error || responseText });
-          }
-
-          _activeCallTaskId = responseData.firstCall?.taskId || null;
-          _activeCallRetryStores = [];
-          _activeCallConfig = {};
-
-          return JSON.stringify({
-            success: true,
-            missionId: responseData.missionId,
-            callSid: responseData.firstCall?.callSid,
-            taskId: responseData.firstCall?.taskId,
-            totalStores: allStores.length,
-            message: `🎯 MISSION STARTED — calling ${allStores[0].name} first. If objective isn't met, will auto-retry across ${allStores.length - 1} more stores. No human intervention needed.`,
-          });
-        } else {
-          // ── SINGLE CALL MODE (no retries) ──
-          const voiceUrl = `${supabaseUrl}/functions/v1/voice-agent?action=initiate`;
-          console.log(`[make_phone_call] Calling ${funcBody.phone_number}`);
-
-          const resp = await fetch(voiceUrl, { method: "POST", headers, body: JSON.stringify(funcBody) });
-          const responseText = await resp.text();
-          try { responseData = JSON.parse(responseText); } catch { responseData = responseText; }
-
-          if (!resp.ok) {
-            return JSON.stringify({ success: false, status: resp.status, error: responseData?.error || responseText });
-          }
-
-          _activeCallTaskId = responseData.taskId || null;
-          _activeCallRetryStores = [];
-          _activeCallConfig = {};
-
-          // Warn if this looks like an order call but has no retry stores
-          const orderKeywords = ['order', 'buy', 'purchase', 'book', 'reserve', 'pickup'];
-          const objectiveLower = ((funcBody.objective as string) || '').toLowerCase();
-          const isOrderCall = orderKeywords.some(kw => objectiveLower.includes(kw));
-          if (isOrderCall) {
-            console.warn("[make_phone_call] ⚠️ ORDER CALL WITHOUT RETRY STORES — consider using retry_stores for auto-retry!");
-          }
-
-          return JSON.stringify({
-            success: true,
-            callSid: responseData.callSid,
-            taskId: responseData.taskId,
-            status: responseData.status,
-            to: responseData.to,
-            greeting: responseData.greeting,
-            message: `Phone call initiated to ${funcBody.phone_number}. The multi-agent system (Analyst → Director → Caller) is now conducting the call autonomously. Task ID: ${responseData.taskId}. Live updates will stream below.`,
-          });
-        }
+        return JSON.stringify({
+          success: true,
+          callSid: responseData.callSid,
+          taskId: responseData.taskId,
+          status: responseData.status,
+          to: responseData.to,
+          greeting: responseData.greeting,
+          message: `Phone call initiated to ${funcBody.phone_number}. The multi-agent system (Analyst → Director → Caller) is now conducting the call autonomously. Task ID: ${responseData.taskId}. Live updates will stream below.`,
+        });
       } catch (err) {
         return JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Phone call failed" });
       }
@@ -1194,204 +1101,6 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         secret_name: secretName,
         awaiting_user_input: true,
       });
-    }
-
-    case "browser_task": {
-      // Route through the browser-agent edge function (Researcher → Planner → Bridge)
-      const taskStr = (args.task as string) || "";
-      const startUrl = (args.start_url as string) || "";
-      const FIRECRAWL_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-      const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-      const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-      // Step 1: Scrape page content via Firecrawl for immediate results
-      let pageContent = "";
-      let pageTitle = "";
-      let scrapedUrl = startUrl;
-      if (startUrl && FIRECRAWL_KEY) {
-        try {
-          const scrapeRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${FIRECRAWL_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ url: startUrl, formats: ["markdown"], onlyMainContent: true, waitFor: 3000 }),
-          });
-          if (scrapeRes.ok) {
-            const scrapeData = await scrapeRes.json();
-            pageContent = scrapeData.data?.markdown || scrapeData.markdown || "";
-            pageTitle = scrapeData.data?.metadata?.title || "";
-            scrapedUrl = scrapeData.data?.metadata?.sourceURL || startUrl;
-          }
-        } catch (e) {
-          console.error("[browser_task] Firecrawl scrape failed:", e);
-        }
-      }
-
-      // Step 2: Invoke browser-agent edge function (Researcher→Planner→Bridge loop, async)
-      let agentResult: any = null;
-      let agentError: string | null = null;
-
-      try {
-        console.log(`[browser_task] Invoking browser-agent for: ${taskStr.slice(0, 100)}`);
-
-        if (_sendEventFn) {
-          _sendEventFn("browser_started", { provider: "browser_agent", task: taskStr });
-        }
-
-        const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_KEY);
-
-        // Start async run
-        const agentRes = await fetch(`${SUPABASE_URL}/functions/v1/browser-agent`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${SERVICE_KEY}`,
-            apikey: SERVICE_KEY,
-          },
-          body: JSON.stringify({
-            action: "run",
-            goal: taskStr,
-            start_url: startUrl || undefined,
-            user_id: _currentUserId,
-            context: { userId: _currentUserId },
-          }),
-        });
-
-        if (!agentRes.ok) {
-          const errText = await agentRes.text();
-          throw new Error(`browser-agent returned ${agentRes.status}: ${errText.slice(0, 300)}`);
-        }
-
-        const startData = await agentRes.json();
-        const runId = startData.runId;
-        console.log(`[browser_task] browser-agent started, runId: ${runId}`);
-
-        if (_sendEventFn) {
-          _sendEventFn("browser_progress", { runId, status: "running", step: 0 });
-        }
-
-        // Auto-detect shopping tasks and create auto_shop_orders for tracking
-        const taskLower = taskStr.toLowerCase();
-        const isShoppingTask = ["buy", "purchase", "order", "checkout", "add to cart", "shop for", "find a deal"].some(kw => taskLower.includes(kw));
-        let linkedOrderId: string | null = null;
-        if (isShoppingTask && runId && _currentUserId) {
-          try {
-            const { data: newOrder } = await supabaseAdmin.from("auto_shop_orders").insert({
-              user_id: _currentUserId,
-              product_query: taskStr.slice(0, 500),
-              status: "searching",
-              source_run_id: runId,
-              browser_use_task_id: runId,
-              notes: JSON.stringify({ source: "lovable_agent", architecture: "researcher-planner-bridge" }),
-            }).select("id").single();
-            if (newOrder) {
-              linkedOrderId = newOrder.id;
-              console.log(`[browser_task] Created auto_shop_orders entry: ${linkedOrderId} for run: ${runId}`);
-            }
-          } catch (e) {
-            console.warn("[browser_task] Failed to create auto_shop_orders entry:", e);
-          }
-        }
-
-        // Poll agent_runs for completion (up to 4 minutes)
-        if (runId) {
-          for (let attempt = 0; attempt < 60; attempt++) {
-            await new Promise(r => setTimeout(r, 4000));
-            const { data: run } = await supabaseAdmin.from("agent_runs")
-              .select("*").eq("id", runId).single();
-
-            if (!run) continue;
-
-            if (_sendEventFn && (attempt % 3 === 0)) {
-              _sendEventFn("browser_progress", {
-                runId,
-                status: run.status,
-                step: attempt + 1,
-              });
-            }
-
-            if (run.status === "completed") {
-              agentResult = run.summary_json || { success: true };
-              agentResult.success = true;
-              if (_sendEventFn) {
-                _sendEventFn("browser_completed", {
-                  runId,
-                  success: true,
-                  summary: agentResult.finalResult?.summary || "Task completed",
-                });
-              }
-              // Update linked order if exists
-              if (linkedOrderId) {
-                const fr = agentResult.finalResult;
-                const resultText = (fr?.summary || "").toLowerCase();
-                const isSuccess = ["confirmation", "order placed", "success", "order #"].some(k => resultText.includes(k));
-                await supabaseAdmin.from("auto_shop_orders").update({
-                  status: isSuccess ? "completed" : "failed",
-                  completed_at: new Date().toISOString(),
-                  order_confirmation: fr?.extracted_data?.confirmation_number || fr?.summary?.match(/(?:confirmation|order)\s*(?:#|number|:)\s*([A-Z0-9-]+)/i)?.[1] || null,
-                  notes: JSON.stringify({ source: "lovable_agent", finalResult: fr }),
-                }).eq("id", linkedOrderId).then(() => {}, () => {});
-              }
-              break;
-            } else if (run.status === "failed") {
-              agentError = run.error_message || "Browser agent task failed";
-              if (_sendEventFn) {
-                _sendEventFn("browser_error", { runId, error: agentError });
-              }
-              // Update linked order if exists
-              if (linkedOrderId) {
-                await supabaseAdmin.from("auto_shop_orders").update({
-                  status: "failed",
-                  error_message: agentError,
-                }).eq("id", linkedOrderId).then(() => {}, () => {});
-              }
-              break;
-            }
-          }
-
-          if (!agentResult && !agentError) {
-            agentError = "Browser agent timed out after 4 minutes of polling.";
-            if (_sendEventFn) {
-              _sendEventFn("browser_error", { runId, error: agentError });
-            }
-          }
-        } else {
-          agentError = "browser-agent did not return a runId";
-        }
-      } catch (err: any) {
-        agentError = `browser-agent error: ${err?.message}`;
-        console.error(`[browser_task] ${agentError}`);
-      }
-
-      // Build response
-      const result: any = {
-        success: !!agentResult?.success,
-        provider: "browser_agent",
-        task: taskStr,
-        url: scrapedUrl || startUrl,
-      };
-
-      if (pageContent) {
-        result.pageTitle = pageTitle;
-        result.pageContent = pageContent.substring(0, 6000);
-      }
-
-      if (agentResult) {
-        const fr = agentResult.finalResult;
-        if (fr?.extracted_data) result.extractedData = fr.extracted_data;
-        if (fr?.summary) result.summary = fr.summary;
-        if (agentResult.stepsUsed) result.stepsTaken = agentResult.stepsUsed;
-        if (agentResult.phasesCompleted) result.phasesCompleted = agentResult.phasesCompleted;
-        if (fr?.evidence) result.evidence = fr.evidence;
-        result.message = fr?.summary || `Browser agent completed in ${agentResult.stepsUsed || '?'} steps.`;
-      } else {
-        result.taskStatus = "failed";
-        result.error = agentError || "Browser agent failed.";
-        result.message = pageContent
-          ? "Page content was retrieved via Firecrawl, but the browser agent task failed: " + (agentError || "unknown error")
-          : "Browser agent task failed: " + (agentError || "unknown error");
-      }
-
-      return JSON.stringify(result);
     }
 
     default:
@@ -1456,13 +1165,6 @@ async function buildUserContext(userId: string): Promise<string> {
   }
 
   return contextParts.join("\n");
-}
-
-function isYesNoStylePrompt(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) return false;
-  if (/\b(yes\s*or\s*no|y\/n|true\s*or\s*false)\b/.test(normalized)) return true;
-  return normalized.length <= 90 && /^(is|are|am|do|does|did|can|could|should|would|will|was|were|have|has|had)\b/.test(normalized);
 }
 
 // ── Server ──────────────────────────────────────────────────────────────────
@@ -1567,14 +1269,8 @@ serve(async (req) => {
       ? `\n\n## Current User Context (Auto-Loaded)\n${userContext}\n\nUse this context to make informed decisions. When the user asks to optimize their resume, you already know the resume ID. When they ask to search for jobs, you already know their preferences.`
       : "";
 
-    const latestUserText = [...(messages || [])]
-      .reverse()
-      .find((m: any) => m?.role === "user" && typeof m?.content === "string")
-      ?.content ?? "";
-    const finalResponseMaxTokens = isYesNoStylePrompt(latestUserText) ? 24 : 180;
-
     const apiMessages = [
-      { role: "system", content: `${SYSTEM_PROMPT}\n\n${RESPONSE_STYLE_GUARDRAIL}${contextMessage}` },
+      { role: "system", content: SYSTEM_PROMPT + contextMessage },
       ...messages,
     ];
 
@@ -1697,156 +1393,81 @@ serve(async (req) => {
             sendEvent("tools_complete", { iterations });
           }
 
-          // ── AUTO-POLL ACTIVE CALL (with auto-retry for orders) ──
+          // ── AUTO-POLL ACTIVE CALL ──
+          // If a phone call was initiated, poll agent_tasks for live updates
           if (_activeCallTaskId) {
-            let currentCallTaskId = _activeCallTaskId;
-            _activeCallTaskId = null;
-            const retryStores = [..._activeCallRetryStores];
-            _activeCallRetryStores = [];
-            const callConfig = _activeCallConfig ? { ..._activeCallConfig } : null;
-            _activeCallConfig = null;
-            const triedNumbers = new Set<string>();
-
+            const callTaskId = _activeCallTaskId;
+            _activeCallTaskId = null; // Reset for next request
             const supabase = createClient(
               Deno.env.get("SUPABASE_URL")!,
               Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
             );
 
-            const pollCall = async (taskId: string, attemptLabel?: string): Promise<"completed" | "failed"> => {
-              sendEvent("call_started", { taskId, attempt: attemptLabel || "initial" });
+            sendEvent("call_started", { taskId: callTaskId });
 
-              let lastTurnCount = 0;
-              let lastStatus = "running";
-              const MAX_POLLS = 120;
-              const POLL_INTERVAL = 2000;
+            let lastTurnCount = 0;
+            let lastStatus = "running";
+            const MAX_POLLS = 120; // ~4 minutes max polling
+            const POLL_INTERVAL = 2000; // 2 seconds
 
-              for (let poll = 0; poll < MAX_POLLS; poll++) {
-                await new Promise(r => setTimeout(r, POLL_INTERVAL));
+            for (let poll = 0; poll < MAX_POLLS; poll++) {
+              await new Promise(r => setTimeout(r, POLL_INTERVAL));
 
-                const { data: task } = await supabase
-                  .from("agent_tasks")
-                  .select("status, result, completed_at, error_message")
-                  .eq("id", taskId)
-                  .single();
+              const { data: task } = await supabase
+                .from("agent_tasks")
+                .select("status, result, completed_at, error_message")
+                .eq("id", callTaskId)
+                .single();
 
-                if (!task) {
-                  sendEvent("call_update", { status: "error", message: "Call task not found" });
-                  return "failed";
-                }
-
-                const result = task.result as Record<string, any> || {};
-                const history = (result.conversationHistory || []) as Array<{ role: string; content: string }>;
-                const turnCount = result.turnCount || 0;
-                const currentStatus = task.status;
-
-                if (turnCount > lastTurnCount) {
-                  const recentHistory = history.slice(-6);
-                  sendEvent("call_update", {
-                    status: currentStatus,
-                    turnCount,
-                    transcript: recentHistory,
-                    lastAnalysis: result.lastAnalysis || null,
-                    lastDirective: result.lastDirective || null,
-                    objective: result.objective || null,
-                    agentName: result.agentName || "Maya",
-                  });
-                  lastTurnCount = turnCount;
-                } else if (currentStatus !== lastStatus) {
-                  sendEvent("call_update", {
-                    status: currentStatus,
-                    turnCount,
-                    transcript: history.slice(-4),
-                    lastAnalysis: result.lastAnalysis || null,
-                    lastDirective: result.lastDirective || null,
-                  });
-                }
-
-                lastStatus = currentStatus;
-
-                if (currentStatus === "completed" || currentStatus === "failed") {
-                  sendEvent("call_ended", {
-                    status: currentStatus,
-                    turnCount,
-                    transcript: history,
-                    lastAnalysis: result.lastAnalysis || null,
-                    errorMessage: task.error_message || null,
-                    recordingUrl: result.recordingUrl || null,
-                  });
-                  return currentStatus as "completed" | "failed";
-                }
+              if (!task) {
+                sendEvent("call_update", { status: "error", message: "Call task not found" });
+                break;
               }
-              return "failed"; // timeout
-            };
 
-            // Poll the initial call
-            let callResult = await pollCall(currentCallTaskId);
+              const result = task.result as Record<string, any> || {};
+              const history = (result.conversationHistory || []) as Array<{ role: string; content: string }>;
+              const turnCount = result.turnCount || 0;
+              const currentStatus = task.status;
 
-            // ── AUTO-RETRY LOOP: if call failed and there are retry stores ──
-            while (callResult === "failed" && retryStores.length > 0 && callConfig) {
-              const nextStore = retryStores.shift()!;
-              
-              // Skip if we already tried this number
-              if (triedNumbers.has(nextStore.phone)) continue;
-              triedNumbers.add(nextStore.phone);
-
-              sendEvent("call_retry", {
-                storeName: nextStore.name,
-                phone: nextStore.phone,
-                remainingStores: retryStores.length,
-                message: `Call failed — automatically trying ${nextStore.name} at ${nextStore.phone}...`,
-              });
-
-              // Make the retry call
-              try {
-                const retryBody = {
-                  ...callConfig,
-                  phone_number: nextStore.phone,
-                  company_name: nextStore.name,
-                };
-
-                const headers: Record<string, string> = {
-                  "Content-Type": "application/json",
-                  "apikey": Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-                };
-                if (_currentUserToken) {
-                  headers["Authorization"] = `Bearer ${_currentUserToken}`;
-                } else {
-                  headers["Authorization"] = `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!}`;
-                }
-
-                const voiceUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=initiate`;
-                console.log(`[make_phone_call] Auto-retry: calling ${nextStore.name} at ${nextStore.phone}`);
-
-                const resp = await fetch(voiceUrl, {
-                  method: "POST",
-                  headers,
-                  body: JSON.stringify(retryBody),
+              // Send new transcript entries
+              if (turnCount > lastTurnCount) {
+                const newEntries = history.slice(lastTurnCount * 2); // rough: 2 entries per turn (user+assistant)
+                // Send the latest conversation entries
+                const recentHistory = history.slice(-6); // last 3 turns
+                sendEvent("call_update", {
+                  status: currentStatus,
+                  turnCount,
+                  transcript: recentHistory,
+                  lastAnalysis: result.lastAnalysis || null,
+                  lastDirective: result.lastDirective || null,
+                  objective: result.objective || null,
+                  agentName: result.agentName || "Maya",
                 });
-
-                if (!resp.ok) {
-                  const errText = await resp.text();
-                  console.error(`[make_phone_call] Retry failed for ${nextStore.name}:`, errText);
-                  sendEvent("call_retry_failed", { storeName: nextStore.name, error: errText.slice(0, 200) });
-                  continue;
-                }
-
-                const retryData = await resp.json();
-                currentCallTaskId = retryData.taskId;
-
-                // Poll the retry call
-                callResult = await pollCall(currentCallTaskId, `retry: ${nextStore.name}`);
-              } catch (err) {
-                console.error(`[make_phone_call] Retry error for ${nextStore.name}:`, err);
-                sendEvent("call_retry_failed", { storeName: nextStore.name, error: err instanceof Error ? err.message : "Unknown error" });
+                lastTurnCount = turnCount;
+              } else if (currentStatus !== lastStatus) {
+                sendEvent("call_update", {
+                  status: currentStatus,
+                  turnCount,
+                  transcript: history.slice(-4),
+                  lastAnalysis: result.lastAnalysis || null,
+                  lastDirective: result.lastDirective || null,
+                });
               }
-            }
 
-            // If all retries exhausted and still failed
-            if (callResult === "failed" && retryStores.length === 0 && triedNumbers.size > 1) {
-              sendEvent("call_all_retries_exhausted", {
-                message: `All ${triedNumbers.size} stores tried — none succeeded. You may want to try different stores or a different approach.`,
-                storesTried: Array.from(triedNumbers),
-              });
+              lastStatus = currentStatus;
+
+              // Stop polling when call is done
+              if (currentStatus === "completed" || currentStatus === "failed") {
+                sendEvent("call_ended", {
+                  status: currentStatus,
+                  turnCount,
+                  transcript: history,
+                  lastAnalysis: result.lastAnalysis || null,
+                  errorMessage: task.error_message || null,
+                  recordingUrl: result.recordingUrl || null,
+                });
+                break;
+              }
             }
           }
 
@@ -1854,12 +1475,6 @@ serve(async (req) => {
           const finalContent = choice?.message?.content || "";
 
           sendEvent("phase", { status: "generating" });
-
-          const finalMessages = [
-            ...apiMessages,
-            ...(finalContent ? [{ role: "assistant", content: finalContent }] : []),
-            { role: "user", content: "Summarize the outcome briefly and conversationally (1-3 short sentences max unless the user explicitly asks for detail). For yes/no questions, begin with 'Yes.' or 'No.'. Do NOT reveal raw API keys or secret values to the user." },
-          ];
 
           const streamResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
@@ -1869,8 +1484,11 @@ serve(async (req) => {
             },
             body: JSON.stringify({
               model: "google/gemini-3-flash-preview",
-              max_tokens: finalResponseMaxTokens,
-              messages: finalMessages,
+              messages: [
+                ...apiMessages,
+                ...(finalContent ? [{ role: "assistant", content: finalContent }] : []),
+                { role: "user", content: "Please provide your final response now, incorporating any tool results above. Do NOT reveal raw API keys or secret values to the user — only show masked versions. Summarize what you did and the results. When reporting pipeline status, be clear about what happened and next steps." },
+              ],
               stream: true,
             }),
           });

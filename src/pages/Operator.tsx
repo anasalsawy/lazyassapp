@@ -11,6 +11,7 @@ import {
   Code2,
   Briefcase,
   FileText,
+  ShoppingCart,
   Search,
   Mail,
   Activity,
@@ -25,7 +26,7 @@ const SUGGESTIONS = [
   { icon: Briefcase, text: "Find me matching jobs", color: "text-blue-400" },
   { icon: FileText, text: "Optimize my resume for ATS", color: "text-green-400" },
   { icon: Mail, text: "Check for recruiter emails", color: "text-purple-400" },
-  { icon: Activity, text: "Run browser tasks with clear step-by-step updates", color: "text-pink-400" },
+  { icon: ShoppingCart, text: "Order something for me", color: "text-pink-400" },
   { icon: Globe, text: "Research a company for me", color: "text-cyan-400" },
 ];
 
