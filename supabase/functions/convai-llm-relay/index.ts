@@ -53,20 +53,11 @@ interface MissionState {
 }
 
 interface DirectorGuidance {
-  situation_assessment: string;
-  mission_progress: string;
-  strategic_suggestion: string;
-  negotiation_hint: string | null;
-  data_from_executor: string | null;
-  validation_warning: string | null;
-  phase: string;
-  urgency: "low" | "medium" | "high";
-  state_updates: {
-    add_topics: string[];
-    add_info: Record<string, string>;
-    set_phase: string;
-    increment_failure: string | null;
-  };
+  direction: string;        // Short directive: what to do NOW (max ~15 words)
+  phase: string;            // Current call phase
+  info: Record<string, string>; // Key facts collected this turn
+  warn: string | null;      // Critical warning if any
+  end: boolean;             // true = wrap up the call
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -223,30 +214,21 @@ function applyDirectorUpdates(state: MissionState, guidance: DirectorGuidance): 
   const s = { ...state };
   s.turn_number += 1;
 
-  if (guidance.state_updates.set_phase && s.call_phase !== guidance.state_updates.set_phase) {
+  if (guidance.phase && s.call_phase !== guidance.phase) {
     s.phase_history.push(s.call_phase);
-    s.call_phase = guidance.state_updates.set_phase;
+    s.call_phase = guidance.phase;
   }
-  for (const t of guidance.state_updates.add_topics || []) {
-    if (!s.topics_discussed.includes(t)) s.topics_discussed.push(t);
-  }
-  if (guidance.state_updates.add_info) Object.assign(s.info_collected, guidance.state_updates.add_info);
-  if (guidance.state_updates.increment_failure) {
-    const k = guidance.state_updates.increment_failure;
-    s.failure_budget[k] = (s.failure_budget[k] || 0) + 1;
-  }
+  if (guidance.info) Object.assign(s.info_collected, guidance.info);
 
   // Truncate histories
   if (s.phase_history.length > 20) s.phase_history = s.phase_history.slice(-20);
-  if (s.topics_discussed.length > 30) s.topics_discussed = s.topics_discussed.slice(-30);
   if (s.director_guidance_history.length > 20) s.director_guidance_history = s.director_guidance_history.slice(-20);
 
-  // Track signatures for loop detection
-  const sig = `${guidance.phase}::${guidance.strategic_suggestion.substring(0, 50)}`.toLowerCase();
+  // Loop detection via direction signature
+  const sig = `${guidance.phase}::${guidance.direction.substring(0, 40)}`.toLowerCase();
   s.visited_signatures.push(sig);
   if (s.visited_signatures.length > 30) s.visited_signatures = s.visited_signatures.slice(-30);
 
-  // Loop detection
   const sigCount = s.visited_signatures.filter(x => x === sig).length;
   if (sigCount >= 3) {
     s.recovery_attempts += 1;
@@ -255,9 +237,7 @@ function applyDirectorUpdates(state: MissionState, guidance: DirectorGuidance): 
     s.recovery_attempts = 0;
   }
 
-  // Store guidance summary
-  s.director_guidance_history.push(guidance.strategic_suggestion.substring(0, 100));
-
+  s.director_guidance_history.push(guidance.direction.substring(0, 80));
   return s;
 }
 
@@ -265,62 +245,30 @@ function applyDirectorUpdates(state: MissionState, guidance: DirectorGuidance): 
 
 function buildDirectorSystem(missionContext: string, operatorInstructions: string[], state: MissionState): string {
   const opBlock = operatorInstructions.length > 0
-    ? `\n\n🚨 HUMAN OPERATOR INSTRUCTIONS (highest priority):\n${operatorInstructions.map((x, i) => `${i + 1}. ${x}`).join("\n")}`
+    ? `\nOPERATOR SAYS: ${operatorInstructions.join(" | ")}`
     : "";
 
-  return `You are DIRECTOR, the strategic mission brain in a two-brain voice system.
+  return `You are DIRECTOR. You give SHORT DIRECTIONS to Maya (voice AI on a live call).
 
-You do NOT speak to humans. You analyze and guide.
+Maya is smart. She handles conversation. You handle STRATEGY.
 
-Your partner Maya is an autonomous conversational AI on a live phone call. She can reason and talk independently. Your job is to provide her with STRATEGIC CONTEXT and SUGGESTIONS — not scripts or commands.
+RULES:
+- "direction" must be ONE short sentence: what to do NOW. Max 15 words. Be direct.
+- "phase" = current call phase
+- "info" = any key facts learned THIS turn (name, price, date, etc.)
+- "warn" = only if something is wrong (suspicious info, loop, danger). Otherwise null.
+- "end" = true ONLY when objective is met OR call is hopeless
 
-Maya decides WHAT to say and HOW to say it. You decide the MISSION STRATEGY.
+MISSION:
+${missionContext}${opBlock}
 
-YOUR RESPONSIBILITIES:
-1. Assess the conversation situation (phase, human intent, emotion, blockers)
-2. Track mission progress against the objective
-3. Validate information critically (challenge fake dates, placeholder data, impossible prices)
-4. Suggest negotiation tactics or strategic moves
-5. Flag when browser/executor actions are needed
-6. Detect conversation loops and suggest course corrections
+STATE: Turn ${state.turn_number}, phase: ${state.call_phase}, collected: ${JSON.stringify(state.info_collected)}, recovery: ${state.recovery_attempts}
+Last directions: [${state.director_guidance_history.slice(-3).join(" | ")}]
 
-MISSION CONTEXT:
-${missionContext}
-${opBlock}
+${state.recovery_attempts > 2 ? "⚠️ LOOPING. Set end=true or try completely different approach." : ""}
 
-CURRENT STATE:
-- Turn: ${state.turn_number}
-- Phase: ${state.call_phase}
-- Recent phases: [${state.phase_history.slice(-5).join(" → ")}]
-- Topics covered: [${state.topics_discussed.slice(-10).join(", ")}]
-- Info collected: ${JSON.stringify(state.info_collected)}
-- Failures: ${JSON.stringify(state.failure_budget)}
-- Recovery attempts: ${state.recovery_attempts}
-- Recent guidance: [${state.director_guidance_history.slice(-3).join(" | ")}]
-
-LOOP DETECTION:
-- If your last 3 suggestions are similar, you ARE looping. Change approach completely.
-- If recovery_attempts > 3, suggest END_CALL.
-
-OUTPUT exactly one JSON object:
-{
-  "situation_assessment": "1-2 sentence analysis of what's happening",
-  "mission_progress": "how close to objective (percentage or description)",
-  "strategic_suggestion": "what Maya should consider doing strategically",
-  "negotiation_hint": "negotiation tactic if relevant, or null",
-  "data_from_executor": "any browser results to share with Maya, or null",
-  "validation_warning": "flag suspicious info (fake dates, placeholder data) or null",
-  "phase": "greeting|discovery|ivr_menu|voicemail|hold|negotiation|confirmation|closing|stuck",
-  "urgency": "low|medium|high",
-  "state_updates": {
-    "add_topics": [],
-    "add_info": {},
-    "set_phase": "phase",
-    "increment_failure": null
-  }
-}
-
-Output ONLY valid JSON.`;
+Output ONE JSON:
+{"direction":"...","phase":"...","info":{},"warn":null,"end":false}`;
 }
 
 // ─── Maya Brain (Conversational Intelligence) ─────────────────────────────────
@@ -539,19 +487,15 @@ serve(async (req) => {
     } catch {
       guidanceRaw = "{}";
       guidance = {
-        situation_assessment: "Unable to analyze — proceeding with Maya's autonomous judgment.",
-        mission_progress: "unknown",
-        strategic_suggestion: "Respond naturally to what the human said.",
-        negotiation_hint: null,
-        data_from_executor: null,
-        validation_warning: null,
-        phase: "unknown",
-        urgency: "low",
-        state_updates: { add_topics: [], add_info: {}, set_phase: missionState.call_phase, increment_failure: null },
+        direction: "Respond naturally.",
+        phase: missionState.call_phase,
+        info: {},
+        warn: null,
+        end: false,
       };
     }
 
-    console.log(`[relay] Director: phase=${guidance.phase}, progress="${guidance.mission_progress}", suggestion="${guidance.strategic_suggestion.substring(0, 100)}"`);
+    console.log(`[relay] Director: phase=${guidance.phase}, direction="${guidance.direction}"`);
 
     // ── Apply state updates ──────────────────────────────────────────────
     const updatedState = applyDirectorUpdates(missionState, guidance);
@@ -559,7 +503,8 @@ serve(async (req) => {
     // ── Force END_CALL if stuck in loop ──────────────────────────────────
     let forceEnd = false;
     if (updatedState.recovery_attempts > 3) {
-      guidance.strategic_suggestion = "END_CALL — stuck in loop, objective not achievable.";
+      guidance.direction = "End call — stuck in loop.";
+      guidance.end = true;
       forceEnd = true;
     }
 
@@ -592,7 +537,7 @@ serve(async (req) => {
     }
 
     // ── DTMF handling ────────────────────────────────────────────────────
-    const dtmfSource = guidance.strategic_suggestion || "";
+    const dtmfSource = guidance.direction || "";
     const dtmfDigits = extractDtmfDigits(dtmfSource);
     if (dtmfDigits && relayContext.callSid) {
       console.log(`[relay] DTMF detected: "${dtmfDigits}"`);
@@ -629,17 +574,12 @@ serve(async (req) => {
     }
 
     // ── Check for END_CALL ───────────────────────────────────────────────
-    if (guidance.strategic_suggestion.includes("END_CALL") || forceEnd) {
-      const isSuccess = guidance.strategic_suggestion.toLowerCase().includes("objective met");
-
-      // Build Director context for Maya's closing
-      const closingGuidance = isSuccess
-        ? "Director guidance: Mission objective achieved. Wrap up positively, thank them, confirm any final details."
-        : "Director guidance: Mission cannot be completed here. Thank them for their time and end gracefully.";
+    if (guidance.end || forceEnd) {
+      const closingGuidance = `Director: ${guidance.direction}`;
 
       const closingLine = await llm(
         MAYA_SYSTEM,
-        `${closingGuidance}\n\nCONVERSATION:\n${transcript}\n\nSay your closing line.`,
+        `${closingGuidance}\n\nCONVERSATION:\n${transcript}\n\nSay your closing line. Be brief.`,
       );
 
       if (taskId) {
@@ -647,52 +587,33 @@ serve(async (req) => {
           const supabase = getSupabase();
           const { data: t } = await supabase.from("agent_tasks").select("result").eq("id", taskId).single();
           await supabase.from("agent_tasks").update({
-            status: isSuccess ? "completed" : "failed",
+            status: "completed",
             completed_at: new Date().toISOString(),
-            result: { ...(t?.result as any || {}), objective_met: isSuccess, final_guidance: guidance, final_state: updatedState },
+            result: { ...(t?.result as any || {}), final_guidance: guidance, final_state: updatedState },
           }).eq("id", taskId);
         } catch {}
       }
 
-      return buildResponse(closingLine || "Thank you so much for your time. Take care!");
+      return buildResponse(closingLine || "Thank you for your time. Take care!");
     }
 
-    // ── BRAIN 1: Maya responds autonomously with Director context ────────
+    // ── BRAIN 1: Maya responds with Director's direction ────────────────
     const missionBlock = taskPayload.objective
-      ? `\nYOUR MISSION: ${taskPayload.objective}\nYou are calling ${taskPayload.company_name || "a business"}. You are the CALLER.\n`
+      ? `\nMISSION: ${taskPayload.objective}\nCalling: ${taskPayload.company_name || "a business"}.\n`
       : "";
 
-    // Build Director guidance as context (suggestions, not commands)
-    const guidanceBlock = [
-      `📋 DIRECTOR ASSESSMENT: ${guidance.situation_assessment}`,
-      `📊 MISSION PROGRESS: ${guidance.mission_progress}`,
-      `💡 STRATEGIC SUGGESTION: ${guidance.strategic_suggestion}`,
-      guidance.negotiation_hint ? `🤝 NEGOTIATION HINT: ${guidance.negotiation_hint}` : null,
-      guidance.data_from_executor ? `🌐 BROWSER DATA: ${guidance.data_from_executor}` : null,
-      guidance.validation_warning ? `⚠️ VALIDATION WARNING: ${guidance.validation_warning}` : null,
-    ].filter(Boolean).join("\n");
+    const directionLine = `DIRECTOR: ${guidance.direction}`;
+    const warnLine = guidance.warn ? `⚠️ ${guidance.warn}` : "";
 
-    // Include any browser results
     const browserBlock = missionState.browser_results.length > 0
-      ? `\n🌐 EXECUTOR RESULTS:\n${JSON.stringify(missionState.browser_results.slice(-3))}`
+      ? `\nDATA: ${JSON.stringify(missionState.browser_results.slice(-3))}`
       : "";
 
     const turnHint = turnNumber <= 1
-      ? "\n⚠️ You have ALREADY introduced yourself. Do NOT re-introduce. Address the mission."
-      : `\nThis is turn ${turnNumber}. Progress the conversation.`;
+      ? "\nYou already introduced yourself. Don't re-introduce."
+      : "";
 
-    const mayaInput = `${missionBlock}${turnHint}
-
-═══ DIRECTOR GUIDANCE (consider but decide independently) ═══
-${guidanceBlock}${browserBlock}
-═══ END GUIDANCE ═══
-
-CONVERSATION SO FAR:
-${transcript}
-
-LATEST FROM HUMAN: "${lastUserMessage}"
-
-Respond as Maya. ONLY what you would say aloud.`;
+    const mayaInput = `${missionBlock}${turnHint}\n\n${directionLine}\n${warnLine}${browserBlock}\n\nCONVERSATION:\n${transcript}\n\nRespond naturally. ONLY what you'd say aloud.`;
 
     let spokenResponse: string;
     try {
