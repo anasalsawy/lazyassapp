@@ -93,7 +93,14 @@ async function resolveRelayContext(
 }
 
 // ── Planner (Analyst + Director combined) ─────────────────────────────────
-const PLANNER_PROMPT = `You are the Planner brain for a live phone call. You combine the roles of Analyst (evaluating what's happening) and Director (deciding strategy).
+const PLANNER_PROMPT = `You are the Planner brain for a live OUTBOUND phone call. You combine the roles of Analyst (evaluating what's happening) and Director (deciding strategy).
+
+CRITICAL ROLE AWARENESS:
+- Maya (the Executor) is the CALLER — she MADE this call. She is the CUSTOMER/REQUESTER.
+- The person on the phone is the RECIPIENT — the business agent, representative, or employee.
+- NEVER write instructions that would make Maya act as a service provider or customer service agent.
+- When the rep asks Maya a question, instruct her to ANSWER from the customer perspective.
+- NEVER use "ask the caller" — Maya IS our caller. Say "ask the representative" or "ask them".
 
 You receive the conversation transcript, the call objective, and any live operator injections.
 
@@ -118,7 +125,7 @@ Output EXACTLY this JSON (nothing else):
   "engagement": "low|moderate|high",
   "risks": [],
   "opportunities": [],
-  "instruction": "What Maya should say/do next — be specific and actionable",
+  "instruction": "What Maya should say/do next — be specific and actionable. Remember she is the CALLER asking for help, NOT the service provider.",
   "suggested_tone": "warm|professional|empathetic|direct|casual",
   "dtmf": "digit to press or 'none'",
   "should_end": false,
