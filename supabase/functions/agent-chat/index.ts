@@ -1098,7 +1098,7 @@ serve(async (req) => {
           method: "POST",
           headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "gpt-4o",
+            model: "gpt-4.1",
             messages: currentMessages,
             tools: AGENT_TOOLS,
             tool_choice: "auto",
@@ -1128,7 +1128,7 @@ serve(async (req) => {
         const streamRes = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o", messages: currentMessages, stream: true }),
+          body: JSON.stringify({ model: "gpt-4.1", messages: currentMessages, stream: true }),
         });
 
         if (!streamRes.ok) throw new Error("Stream failed");
@@ -1146,7 +1146,7 @@ serve(async (req) => {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "gpt-4o", messages: fullMessages, tools: AGENT_TOOLS, tool_choice: "auto" }),
+      body: JSON.stringify({ model: "gpt-4.1", messages: fullMessages, tools: AGENT_TOOLS, tool_choice: "auto" }),
     });
     const data = await res.json();
     return new Response(JSON.stringify(data), {
