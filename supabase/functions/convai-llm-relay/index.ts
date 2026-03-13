@@ -503,7 +503,8 @@ serve(async (req) => {
     // ── Force END_CALL if stuck in loop ──────────────────────────────────
     let forceEnd = false;
     if (updatedState.recovery_attempts > 3) {
-      guidance.strategic_suggestion = "END_CALL — stuck in loop, objective not achievable.";
+      guidance.direction = "End call — stuck in loop.";
+      guidance.end = true;
       forceEnd = true;
     }
 
