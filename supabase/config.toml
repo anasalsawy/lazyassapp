@@ -62,3 +62,9 @@ verify_jwt = false
 
 [functions.voice-agent]
 verify_jwt = false
+
+[functions.convai-llm-relay]
+verify_jwt = false
+
+[functions.elevenlabs-conversation-token]
+verify_jwt = false
