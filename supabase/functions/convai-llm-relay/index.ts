@@ -617,9 +617,7 @@ serve(async (req) => {
 
 ${directionLine}
 ${warnLine}${browserBlock}
-
-CONVERSATION:
-${transcript}
+    const mayaInput = `${missionBlock}${turnHint}\n\n${directionLine}\n${warnLine}${browserBlock}\n\nCONVERSATION:\n${transcript}\n\nRespond naturally. ONLY what you'd say aloud.`;
 
     let spokenResponse: string;
     try {
