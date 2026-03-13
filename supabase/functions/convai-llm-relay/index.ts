@@ -97,6 +97,18 @@ const PLANNER_PROMPT = `You are the Planner brain for a live phone call. You com
 
 You receive the conversation transcript, the call objective, and any live operator injections.
 
+## IVR → HUMAN TRANSITION DETECTION (HIGHEST PRIORITY)
+When a call starts with automated systems (IVR) and then a human picks up, you MUST detect this transition IMMEDIATELY.
+Signs a HUMAN just picked up after IVR:
+- Short greeting: "Hello?", "Hi", "How can I help you?", "This is [name]"
+- ANY question directed at the caller
+- Natural speech with hesitations or variable pacing
+- Response acknowledging waiting: "Thanks for holding", "Sorry about the wait"
+- ANY non-scripted, non-repetitive response different from previous IVR messages
+- Name or department identification
+
+RULE: If ANYTHING in the latest speech suggests a human, set is_automated=FALSE. Err on the side of HUMAN classification. Missing a human pickup is far worse than a false positive.
+
 Output EXACTLY this JSON (nothing else):
 {
   "is_automated": false,
