@@ -537,7 +537,7 @@ serve(async (req) => {
     }
 
     // ── DTMF handling ────────────────────────────────────────────────────
-    const dtmfSource = guidance.strategic_suggestion || "";
+    const dtmfSource = guidance.direction || "";
     const dtmfDigits = extractDtmfDigits(dtmfSource);
     if (dtmfDigits && relayContext.callSid) {
       console.log(`[relay] DTMF detected: "${dtmfDigits}"`);
