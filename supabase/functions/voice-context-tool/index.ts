@@ -195,50 +195,67 @@ serve(async (req) => {
     // Persist state: consume injections, update turn count, store directive + transcript
     const injectionHistory = result.operatorInjectionHistory || [];
     const directiveHistory = result.directorDirectiveHistory || [];
-    const conversationHistory: Array<{ role: string; content: string }> = result.conversationHistory || [];
+    let conversationHistory: Array<{ role: string; content: string }> = result.conversationHistory || [];
 
-    // Append transcript as conversation turns
+    // Parse transcript — ElevenLabs sends the FULL conversation context each turn (llm_prompt),
+    // so we rebuild the history from scratch rather than appending.
     if (transcript && transcript.trim()) {
-      const lastEntry = conversationHistory[conversationHistory.length - 1];
       const trimmedTranscript = transcript.trim();
+      const lines = trimmedTranscript.split("\n").filter((l: string) => l.trim());
       
-      // Avoid exact duplicates
-      if (!lastEntry || lastEntry.content !== trimmedTranscript) {
-        const lines = trimmedTranscript.split("\n").filter((l: string) => l.trim());
-        let parsedAny = false;
-        
+      // Try to detect role-prefixed lines
+      const parsed: Array<{ role: string; content: string }> = [];
+      const rolePrefixRegex = /^(user|human|caller|customer|recipient|agent|assistant|maya|ai|bot):\s*/i;
+      
+      let hasPrefixes = false;
+      for (const line of lines) {
+        if (rolePrefixRegex.test(line.trim())) { hasPrefixes = true; break; }
+      }
+      
+      if (hasPrefixes) {
+        // Parse role-prefixed lines, accumulating multi-line content
+        let currentRole = "";
+        let currentContent = "";
         for (const line of lines) {
-          const lower = line.toLowerCase().trim();
-          if (!lower) continue;
-          
-          // Try role-prefixed format: "User: ...", "Agent: ...", etc.
-          const roleMatch = lower.match(/^(user|human|caller|customer|recipient|agent|assistant|maya|ai):\s*/i);
-          if (roleMatch) {
-            const prefix = roleMatch[1].toLowerCase();
-            const content = line.substring(roleMatch[0].length).trim();
-            if (content) {
-              const role = ["agent", "assistant", "maya", "ai"].includes(prefix) ? "assistant" : "user";
-              conversationHistory.push({ role, content });
-              parsedAny = true;
+          const match = line.trim().match(rolePrefixRegex);
+          if (match) {
+            if (currentRole && currentContent.trim()) {
+              parsed.push({ role: currentRole, content: currentContent.trim() });
             }
+            const prefix = match[1].toLowerCase();
+            currentRole = ["agent", "assistant", "maya", "ai", "bot"].includes(prefix) ? "assistant" : "user";
+            currentContent = line.substring(match[0].length).trim();
+          } else {
+            currentContent += " " + line.trim();
           }
         }
-        
-        // If no role prefixes found, store raw transcript lines as alternating turns
-        // or as raw content so transcript panel always shows something
-        if (!parsedAny && lines.length > 0) {
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            // Heuristic: if last entry was user, this is likely assistant, and vice versa
-            const lastRole = conversationHistory[conversationHistory.length - 1]?.role;
-            const role = lastRole === "user" ? "assistant" : "user";
-            conversationHistory.push({ role, content: trimmed });
+        if (currentRole && currentContent.trim()) {
+          parsed.push({ role: currentRole, content: currentContent.trim() });
+        }
+      } else {
+        // No prefixes — alternating turns heuristic
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const lastRole = parsed[parsed.length - 1]?.role;
+          parsed.push({ role: lastRole === "user" ? "assistant" : "user", content: trimmed });
+        }
+      }
+      
+      // Replace history if we parsed more turns than we had, otherwise keep existing
+      // (ElevenLabs sends full context, so parsed should always be >= existing)
+      if (parsed.length > 0 && parsed.length >= conversationHistory.length) {
+        conversationHistory = parsed;
+      } else if (parsed.length > 0) {
+        // Partial update — append only genuinely new content
+        const lastKnown = conversationHistory[conversationHistory.length - 1]?.content || "";
+        for (const entry of parsed) {
+          if (entry.content !== lastKnown) {
+            conversationHistory.push(entry);
           }
         }
       }
       
-      // Also store raw transcript for debugging
       result.lastRawTranscript = trimmedTranscript;
     }
 
