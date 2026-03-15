@@ -391,7 +391,12 @@ serve(async (req) => {
     }).eq("id", taskId);
 
     // Build response for the ElevenLabs native LLM
-    const response: any = {
+    // Only inject full directive when Analyst flags it as needed
+    const shouldInject = directive.inject === true || hasInjections || turnCount <= 2;
+    
+    console.log(`[voice-context-tool] inject=${shouldInject}, analyst_inject=${directive.inject}, hasInjections=${hasInjections}, turn=${turnCount}`);
+
+    const response: any = shouldInject ? {
       instruction: directive.instruction || "Continue the conversation naturally.",
       suggested_tone: directive.suggested_tone || "professional",
       priority: directive.priority || "continue",
@@ -414,6 +419,14 @@ serve(async (req) => {
       has_operator_update: operatorInjections.length > 0,
       action: directive.action || "CONTINUE",
       turn: turnCount,
+      injected: true,
+    } : {
+      // Lightweight response — no steering needed, agent continues naturally
+      instruction: "Continue naturally.",
+      should_end: false,
+      action: "CONTINUE",
+      turn: turnCount,
+      injected: false,
     };
 
     return new Response(JSON.stringify(response), {
