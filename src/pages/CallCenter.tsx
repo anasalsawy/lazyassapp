@@ -205,27 +205,6 @@ export default function CallCenter() {
     // Immediate first fetch, then start loop
     poll();
   }, [pollCallState]);
-    try {
-      const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=get-state&task_id=${taskId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${session?.access_token}`,
-            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          },
-        }
-      );
-      if (resp.ok) {
-        const data = await resp.json();
-        setActiveCall(data);
-        if (data.status === "completed" || data.status === "failed") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          pollRef.current = null;
-          if (channelRef.current) {
-            supabase.removeChannel(channelRef.current);
-            channelRef.current = null;
-          }
-        }
 
   // Load recent calls
   useEffect(() => {
