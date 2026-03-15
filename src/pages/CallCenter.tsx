@@ -56,8 +56,9 @@ export default function CallCenter() {
   const [recentCalls, setRecentCalls] = useState<RecentCall[]>([]);
   const [isKilling, setIsKilling] = useState(false);
 
-  // Polling
+  // Realtime + fallback polling
   const pollRef = useRef<number | null>(null);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll transcript
@@ -67,7 +68,103 @@ export default function CallCenter() {
     }
   }, [activeCall?.conversationHistory]);
 
-  // Poll active call state
+  // Parse a realtime row update into CallState
+  const parseTaskToCallState = useCallback((task: any): CallState => {
+    const result = task.result || {};
+    const directive = result?.lastDirectorDirective || {};
+    const conversationHistory = result?.conversationHistory || [];
+    const turnCount = Math.max(result?.turnCount || 0, conversationHistory.length);
+
+    const lastAnalysis = turnCount > 0 ? {
+      tone: directive.tone || "neutral",
+      intent: directive.intent || "",
+      engagement: directive.engagement || "moderate",
+      cooperation: directive.engagement === "high" ? "cooperative" : "neutral",
+      emotional_state: directive.tone || "calm",
+      is_automated: directive.is_automated || false,
+      automated_type: directive.automated_type || "none",
+      risks: directive.risks || [],
+      opportunities: directive.opportunities || [],
+      key_info_extracted: "",
+      recommended_approach: directive.instruction || "",
+    } : null;
+
+    const lastDirective = turnCount > 0 ? {
+      instruction: directive.instruction || "",
+      tone: directive.suggested_tone || "professional",
+      priority: directive.priority || "continue",
+      shouldEnd: directive.should_end || false,
+      action: directive.action || "CONTINUE",
+      dtmf: "none",
+      target: "none",
+    } : null;
+
+    return {
+      taskId: task.id,
+      status: task.status,
+      callSid: result?.callSid,
+      turnCount,
+      conversationHistory,
+      lastAnalysis,
+      lastDirective,
+      pendingInjections: result?.operatorInjections?.length || 0,
+      config: task.payload,
+    };
+  }, []);
+
+  // Subscribe to realtime updates for a task
+  const subscribeToTask = useCallback((taskId: string) => {
+    // Clean up previous
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+
+    // Realtime channel for this specific task
+    const channel = supabase
+      .channel(`task-monitor-${taskId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'agent_tasks',
+          filter: `id=eq.${taskId}`,
+        },
+        (payload) => {
+          const task = payload.new as any;
+          const state = parseTaskToCallState(task);
+          setActiveCall(state);
+
+          // Stop listening when call ends
+          if (state.status === "completed" || state.status === "failed") {
+            if (channelRef.current) {
+              supabase.removeChannel(channelRef.current);
+              channelRef.current = null;
+            }
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    channelRef.current = channel;
+
+    // Fallback: slow poll every 10s in case realtime misses an update
+    pollRef.current = window.setInterval(() => pollCallState(taskId), 10000);
+
+    // Immediate first fetch
+    pollCallState(taskId);
+  }, [parseTaskToCallState]);
+
+  // Fetch state via REST (used for initial load + slow fallback)
   const pollCallState = useCallback(async (taskId: string) => {
     try {
       const resp = await fetch(
@@ -85,6 +182,10 @@ export default function CallCenter() {
         if (data.status === "completed" || data.status === "failed") {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
+          if (channelRef.current) {
+            supabase.removeChannel(channelRef.current);
+            channelRef.current = null;
+          }
         }
       }
     } catch (e) {
@@ -92,15 +193,11 @@ export default function CallCenter() {
     }
   }, [session]);
 
-  // Start polling when we have an active call
-  const startPolling = useCallback((taskId: string) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = window.setInterval(() => pollCallState(taskId), 3000);
-    pollCallState(taskId); // immediate first poll
-  }, [pollCallState]);
-
   useEffect(() => {
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (channelRef.current) supabase.removeChannel(channelRef.current);
+    };
   }, []);
 
   // Load recent calls
@@ -152,7 +249,7 @@ export default function CallCenter() {
       if (!resp.ok) throw new Error(data.error || "Failed to initiate call");
 
       toast.success("Call initiated!", { description: `Calling ${phoneNumber}` });
-      startPolling(data.taskId);
+      subscribeToTask(data.taskId);
     } catch (e: any) {
       toast.error("Call failed", { description: e.message });
     } finally {
@@ -193,7 +290,7 @@ export default function CallCenter() {
 
   // Resume monitoring a recent call
   const resumeMonitoring = (taskId: string) => {
-    startPolling(taskId);
+    subscribeToTask(taskId);
   };
 
   // Kill active call
