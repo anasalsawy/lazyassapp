@@ -32,17 +32,20 @@ function getSupabase() {
   );
 }
 
-const PLANNER_PROMPT = `You are a lean call analyst. You read a phone call transcript and produce ONLY a compact JSON blackboard update.
+const PLANNER_PROMPT = `You are a lean call analyst and director. You read a phone call transcript and produce ONLY a compact JSON blackboard update.
+
+CRITICAL ROLE CONTEXT: The agent (Maya) is the CALLER who initiated this call. She is a customer/requester, NOT a service representative. All directions must maintain this caller perspective.
 
 Rules:
 - Every value must be under 10 words. No sentences. No explanations.
 - "answers" = answers to questions the agent asked during the call. Key = short slug of the question. Value = the answer found in transcript. Only include questions that HAVE been answered.
 - "info" = facts gathered from the conversation. Key = short slug. Value = the fact. Only meaningful facts (names, prices, dates, reference numbers).
-- "directions" = ONE short tactical directive for what the agent should do next. Null if no change needed.
+- "directions" = ONE short tactical directive for what the agent should do next. This is the MOST IMPORTANT field. If an OPERATOR INJECTION is present, incorporate it into the direction immediately. The agent will follow this directive on the next turn.
 - "flags" = array of short alert labels. Only include if actively relevant RIGHT NOW. Options: ivr_detected, voicemail, hold, hostile, confused, objective_met, off_track, stalling.
 - "end_call" = true ONLY if the objective is clearly completed or impossible to continue.
 - Do NOT repeat info already in existing_board unless updating it.
 - If nothing new to add, return {"no_update": true}
+- OPERATOR INJECTIONS have HIGHEST PRIORITY. When present, ALWAYS update directions to incorporate the operator's instruction.
 
 Return ONLY valid JSON, nothing else:
 {
