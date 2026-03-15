@@ -131,44 +131,31 @@ export default function CallCenter() {
         (payload) => {
           const task = payload.new as any;
           const result = task.result || {};
-          const directive = result?.lastDirectorDirective || {};
           const conversationHistory = result?.conversationHistory || [];
-          const turnCount = Math.max(result?.turnCount || 0, conversationHistory.length);
+          
+          // Realtime payloads can be truncated for large JSONB — only use for
+          // status changes and transcript updates, never overwrite analysis data
+          // with potentially empty fields.
+          setActiveCall((prev) => {
+            // If no previous state, do a basic parse
+            if (!prev) {
+              // Trigger an immediate poll to get full data
+              pollCallState(taskId);
+              return prev;
+            }
 
-          const lastAnalysis = turnCount > 0 ? {
-            tone: directive.tone || "neutral",
-            intent: directive.intent || "",
-            engagement: directive.engagement || "moderate",
-            cooperation: directive.engagement === "high" ? "cooperative" : "neutral",
-            emotional_state: directive.tone || "calm",
-            is_automated: directive.is_automated || false,
-            automated_type: directive.automated_type || "none",
-            risks: directive.risks || [],
-            opportunities: directive.opportunities || [],
-            key_info_extracted: "",
-            recommended_approach: directive.instruction || "",
-          } : null;
+            // Only update transcript and status from realtime; keep analysis from polls
+            const newHistory = conversationHistory.length > (prev.conversationHistory?.length || 0)
+              ? conversationHistory
+              : prev.conversationHistory;
 
-          const lastDirective = turnCount > 0 ? {
-            instruction: directive.instruction || "",
-            tone: directive.suggested_tone || "professional",
-            priority: directive.priority || "continue",
-            shouldEnd: directive.should_end || false,
-            action: directive.action || "CONTINUE",
-            dtmf: "none",
-            target: "none",
-          } : null;
-
-          setActiveCall({
-            taskId: task.id,
-            status: task.status,
-            callSid: result?.callSid,
-            turnCount,
-            conversationHistory,
-            lastAnalysis,
-            lastDirective,
-            pendingInjections: result?.operatorInjections?.length || 0,
-            config: task.payload,
+            return {
+              ...prev,
+              status: task.status || prev.status,
+              turnCount: Math.max(result?.turnCount || 0, newHistory.length, prev.turnCount || 0),
+              conversationHistory: newHistory,
+              pendingInjections: result?.operatorInjections?.length ?? prev.pendingInjections,
+            };
           });
 
           // Stop if call ended
