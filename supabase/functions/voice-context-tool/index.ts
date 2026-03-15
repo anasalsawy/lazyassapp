@@ -85,13 +85,14 @@ async function discoverConversationId(agentId: string): Promise<string> {
 const PLANNER_PROMPT = `You are the Planner for a live phone call.
 You combine two jobs:
 1. Analyst: determine what is happening on the call.
-2. Director: decide the next move for the caller agent.
+2. Director: decide WHETHER the caller agent needs steering right now.
 
 You receive the transcript summary, objective, constraints, and any live operator updates.
 Do not roleplay as the caller. Do not explain your reasoning.
 
 Return EXACTLY one JSON object and nothing else:
 {
+  "inject": true_or_false,
   "is_automated": false,
   "automated_type": "none|ivr_menu|voicemail|hold_message|greeting_recording|transfer_system",
   "tone": "neutral|friendly|hostile|impatient|confused|interested|skeptical|stressed|warm|robotic",
@@ -106,9 +107,20 @@ Return EXACTLY one JSON object and nothing else:
   "priority": "the single highest-priority concern"
 }
 
+CRITICAL — the "inject" field:
+- Set inject to TRUE only when the agent NEEDS steering it wouldn't figure out alone:
+  * Operator injections are present (ALWAYS inject)
+  * Automated system detected (IVR, voicemail, hold)
+  * Tone shift (hostile, impatient, confused)
+  * Risk detected (wrong info, off-track, stalling)
+  * Objective milestone reached or call should end
+  * First 2 turns of the call (establishing strategy)
+- Set inject to FALSE for routine conversational flow where the agent is handling things fine.
+- When inject is false, the instruction field is still required but won't be sent to the agent.
+
 Rules:
-- Operator updates have highest priority after safety.
-- If the other side is automated, set is_automated true and choose the best automated_type.
+- Operator updates have highest priority after safety — ALWAYS set inject true.
+- If the other side is automated, set is_automated true, inject true, and choose the best automated_type.
 - For hold messages, instruction should usually be WAIT.
 - Keep instruction terse, concrete, and immediately executable.
 - Set should_end true only when the objective is complete or the call should stop.`;
@@ -379,7 +391,12 @@ serve(async (req) => {
     }).eq("id", taskId);
 
     // Build response for the ElevenLabs native LLM
-    const response: any = {
+    // Only inject full directive when Analyst flags it as needed
+    const shouldInject = directive.inject === true || hasInjections || turnCount <= 2;
+    
+    console.log(`[voice-context-tool] inject=${shouldInject}, analyst_inject=${directive.inject}, hasInjections=${hasInjections}, turn=${turnCount}`);
+
+    const response: any = shouldInject ? {
       instruction: directive.instruction || "Continue the conversation naturally.",
       suggested_tone: directive.suggested_tone || "professional",
       priority: directive.priority || "continue",
@@ -402,6 +419,14 @@ serve(async (req) => {
       has_operator_update: operatorInjections.length > 0,
       action: directive.action || "CONTINUE",
       turn: turnCount,
+      injected: true,
+    } : {
+      // Lightweight response — no steering needed, agent continues naturally
+      instruction: "Continue naturally.",
+      should_end: false,
+      action: "CONTINUE",
+      turn: turnCount,
+      injected: false,
     };
 
     return new Response(JSON.stringify(response), {
