@@ -412,45 +412,16 @@ serve(async (req) => {
         }
       }
 
-      // Map blackboard → UI-compatible lastAnalysis and lastDirective
+      // Raw blackboard → UI
       const board = result?.blackboard || {};
-      const directive = result?.lastDirectorDirective || {};
-      const boardFlags = board.flags || [];
-      const boardInfo = board.info || {};
-      const boardAnswers = board.answers || {};
-      const boardDirections = board.directions || "";
 
-      // Build a rich directive string from blackboard contents
-      const directiveParts: string[] = [];
-      if (boardDirections) directiveParts.push(boardDirections);
-      const infoKeys = Object.keys(boardInfo);
-      if (infoKeys.length > 0) directiveParts.push(infoKeys.map(k => `${k}: ${boardInfo[k]}`).join(", "));
-      const answerKeys = Object.keys(boardAnswers);
-      if (answerKeys.length > 0) directiveParts.push("Pending: " + answerKeys.map(k => `${k}: ${boardAnswers[k]}`).join(", "));
-
-      const lastAnalysis = {
-        tone: boardFlags.includes("hostile") ? "hostile" : boardFlags.includes("confused") ? "confused" : directive.tone || "neutral",
-        intent: directive.intent || boardDirections || "",
-        engagement: boardFlags.includes("stalling") ? "low" : directive.engagement || "moderate",
-        cooperation: "neutral",
-        emotional_state: boardFlags.includes("hostile") ? "hostile" : "calm",
-        is_automated: boardFlags.includes("ivr_detected") || boardFlags.includes("voicemail"),
-        automated_type: boardFlags.includes("ivr_detected") ? "ivr_menu" : boardFlags.includes("voicemail") ? "voicemail" : "none",
-        risks: boardFlags.filter((f: string) => ["hostile", "off_track", "stalling"].includes(f)),
-        opportunities: boardFlags.filter((f: string) => ["objective_met"].includes(f)),
-        key_info_extracted: infoKeys.length > 0 ? infoKeys.map(k => `${k}: ${boardInfo[k]}`).join(" | ") : "",
-        recommended_approach: boardDirections || directive.instruction || "",
-      };
+      const lastAnalysis = null;
 
       const lastDirective = {
-        instruction: directiveParts.join(" | ") || directive.instruction || "",
-        tone: directive.suggested_tone || "professional",
-        priority: board.end_call ? "end_call" : directive.priority || "continue",
-        shouldEnd: board.end_call || directive.should_end || false,
-        action: board.end_call ? "END_CALL" : directive.action || "CONTINUE",
-        dtmf: "none",
-        target: "none",
-        blackboard: board,
+        ...board,
+        instruction: board.directions || "",
+        shouldEnd: board.end_call || false,
+        action: board.end_call ? "END_CALL" : "CONTINUE",
       };
 
       const turnCount = Math.max(result?.turnCount || 0, conversationHistory.length);
