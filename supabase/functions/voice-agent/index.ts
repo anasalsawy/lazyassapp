@@ -143,10 +143,16 @@ serve(async (req) => {
           agent_id: ELEVENLABS_AGENT_ID,
           agent_phone_number_id: ELEVENLABS_PHONE_NUMBER_ID,
           to_number: phone_number,
-          overrides: {
-            agent: {
-              prompt: {
-                template_variables: { task_id: taskId },
+          conversation_initiation_client_data: {
+            dynamic_variables: {
+              task_id: taskId,
+            },
+            conversation_config_override: {
+              agent: {
+                prompt: {
+                  prompt: undefined, // don't override prompt, just pass variables
+                },
+                first_message: undefined,
               },
             },
           },
