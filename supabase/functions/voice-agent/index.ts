@@ -492,7 +492,7 @@ serve(async (req) => {
       }
 
       // Create task record
-      const { data: task } = await supabase.from("agent_tasks").insert({
+      const { data: task, error: taskError } = await supabase.from("agent_tasks").insert({
         user_id: userId,
         task_type: "voice_call_multi_agent",
         status: "running",
@@ -500,7 +500,14 @@ serve(async (req) => {
         payload: callConfig,
       }).select("id").single();
 
-      const taskId = task?.id || "unknown";
+      if (taskError || !task?.id) {
+        console.error("[voice-agent] Failed to create agent_task:", taskError);
+        return new Response(JSON.stringify({ error: `Failed to create task: ${taskError?.message || "unknown insert error"}` }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const taskId = task.id;
       const gatherUrl = `${SUPABASE_URL}/functions/v1/voice-agent?action=gather&task_id=${taskId}`;
 
       // Generate initial greeting — KEEP IT SHORT AND RELAXED
