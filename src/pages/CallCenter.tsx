@@ -319,7 +319,9 @@ export default function CallCenter() {
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || "Failed to kill call");
       toast.success("Call killed");
-      if (pollRef.current) clearInterval(pollRef.current);
+      isActiveRef.current = false;
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+      if (channelRef.current) { supabase.removeChannel(channelRef.current); channelRef.current = null; }
       setActiveCall((prev) => prev ? { ...prev, status: "failed" } : null);
     } catch (e: any) {
       toast.error("Kill failed", { description: e.message });
