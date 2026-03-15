@@ -226,18 +226,6 @@ export default function CallCenter() {
             channelRef.current = null;
           }
         }
-      }
-    } catch (e) {
-      console.error("[CallCenter] poll error:", e);
-    }
-  }, [session]);
-
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      if (channelRef.current) supabase.removeChannel(channelRef.current);
-    };
-  }, []);
 
   // Load recent calls
   useEffect(() => {
