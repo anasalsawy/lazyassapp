@@ -249,7 +249,7 @@ export default function CallCenter() {
       if (!resp.ok) throw new Error(data.error || "Failed to initiate call");
 
       toast.success("Call initiated!", { description: `Calling ${phoneNumber}` });
-      startPolling(data.taskId);
+      subscribeToTask(data.taskId);
     } catch (e: any) {
       toast.error("Call failed", { description: e.message });
     } finally {
