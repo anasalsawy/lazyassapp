@@ -105,8 +105,8 @@ serve(async (req) => {
       });
     }
 
-    // Skip if no transcript at all
-    if (!transcript || transcript.trim().length === 0) {
+    // Skip if no transcript at all (unless operator injection pending)
+    if ((!transcript || transcript.trim().length === 0) && !hasOperatorInjection) {
       console.log(`[voice-planner-loop] Empty transcript, skipping.`);
       return new Response(JSON.stringify({ status: "skipped", reason: "empty" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
