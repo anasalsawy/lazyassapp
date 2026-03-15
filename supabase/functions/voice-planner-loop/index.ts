@@ -61,6 +61,7 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const taskId = body.task_id || "";
+    const forceRun = body.force === true;
 
     if (!taskId) {
       return new Response(JSON.stringify({ error: "task_id required" }), {
