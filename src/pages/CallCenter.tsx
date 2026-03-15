@@ -53,6 +53,7 @@ export default function CallCenter() {
   const [injection, setInjection] = useState("");
   const [isInitiating, setIsInitiating] = useState(false);
   const [isInjecting, setIsInjecting] = useState(false);
+  const [recentCalls, setRecentCalls] = useState<RecentCall[]>([]);
   const [isKilling, setIsKilling] = useState(false);
 
   // Polling
