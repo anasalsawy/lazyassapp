@@ -15,7 +15,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const ELEVENLABS_AGENT_ID = "agent_1801kkj49vz6fx8t8wya5j5rppxx";
+const ELEVENLABS_AGENT_ID = Deno.env.get("ELEVENLABS_AGENT_B_ID") || "agent_1801kkj49vz6fx8t8wya5j5rppxx";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
