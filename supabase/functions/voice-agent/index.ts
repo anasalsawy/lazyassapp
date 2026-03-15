@@ -162,7 +162,7 @@ serve(async (req) => {
 
       const taskId = task.id;
 
-      // Initialize result state
+      // Initialize result state with blackboard
       await supabase.from("agent_tasks").update({
         result: {
           conversationHistory: [],
@@ -171,6 +171,15 @@ serve(async (req) => {
           directorDirectiveHistory: [],
           turnCount: 0,
           config: callConfig,
+          blackboard: {
+            answers: {},
+            info: {},
+            directions: null,
+            flags: [],
+            operator: null,
+            end_call: false,
+            delivered: [],
+          },
         },
       }).eq("id", taskId);
 
