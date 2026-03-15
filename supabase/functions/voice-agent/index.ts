@@ -275,11 +275,16 @@ serve(async (req) => {
       }
 
       const result = task.result as any;
-      const injections = result?.operatorInjections || [];
-      injections.push(instruction);
+      const board = result?.blackboard || {};
 
+      // Write to blackboard.operator (consumed by voice-context-tool on next read)
       await supabase.from("agent_tasks").update({
-        result: { ...result, operatorInjections: injections },
+        result: {
+          ...result,
+          blackboard: { ...board, operator: instruction },
+          // Keep legacy field for backwards compat
+          operatorInjections: [...(result?.operatorInjections || []), instruction],
+        },
       }).eq("id", task_id);
 
       console.log(`[voice-agent] Operator injection: "${instruction}" → task ${task_id}`);
