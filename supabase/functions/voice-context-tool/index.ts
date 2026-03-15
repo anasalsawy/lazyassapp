@@ -192,9 +192,35 @@ serve(async (req) => {
 
     console.log(`[voice-context-tool] Planner result: instruction="${String(directive.instruction).substring(0, 80)}", end=${directive.should_end}`);
 
-    // Persist state: consume injections, update turn count, store directive
+    // Persist state: consume injections, update turn count, store directive + transcript
     const injectionHistory = result.operatorInjectionHistory || [];
     const directiveHistory = result.directorDirectiveHistory || [];
+    const conversationHistory: Array<{ role: string; content: string }> = result.conversationHistory || [];
+
+    // Append transcript as a user turn if we have content
+    if (transcript && transcript.trim()) {
+      // Parse transcript to extract latest exchanges
+      // The transcript comes as a summary from the Native LLM — store it as-is
+      const existingLen = conversationHistory.length;
+      // Only append if this looks like new content (avoid duplicates)
+      const lastEntry = conversationHistory[conversationHistory.length - 1];
+      const trimmedTranscript = transcript.trim();
+      if (!lastEntry || lastEntry.content !== trimmedTranscript) {
+        // Try to split transcript into user/assistant turns
+        const lines = trimmedTranscript.split("\n").filter((l: string) => l.trim());
+        for (const line of lines) {
+          const lower = line.toLowerCase();
+          if (lower.startsWith("user:") || lower.startsWith("human:") || lower.startsWith("caller:")) {
+            conversationHistory.push({ role: "user", content: line.replace(/^(user|human|caller):\s*/i, "").trim() });
+          } else if (lower.startsWith("agent:") || lower.startsWith("assistant:") || lower.startsWith("maya:")) {
+            conversationHistory.push({ role: "assistant", content: line.replace(/^(agent|assistant|maya):\s*/i, "").trim() });
+          } else if (existingLen === 0 && lines.length === 1) {
+            // Single line transcript with no prefix — treat as user speech
+            conversationHistory.push({ role: "user", content: line.trim() });
+          }
+        }
+      }
+    }
 
     await supabase.from("agent_tasks").update({
       result: {
@@ -202,6 +228,7 @@ serve(async (req) => {
         turnCount,
         lastTurnAt: new Date().toISOString(),
         lastDirectorDirective: directive,
+        conversationHistory: conversationHistory.slice(-50),
         directorDirectiveHistory: [
           ...directiveHistory.slice(-10),
           { ...directive, turn: turnCount, at: new Date().toISOString() },
