@@ -116,7 +116,10 @@ serve(async (req) => {
       parts.push("🛑 END CALL");
     }
 
-    const instruction = parts.length > 0
+    // Always anchor role identity
+    parts.unshift("🎯 YOU ARE THE CALLER. You initiated this call. Never act as a service rep.");
+
+    const instruction = parts.length > 1
       ? parts.join(" | ")
       : "Continue naturally.";
 

@@ -61,6 +61,7 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const taskId = body.task_id || "";
+    const forceRun = body.force === true;
 
     if (!taskId) {
       return new Response(JSON.stringify({ error: "task_id required" }), {
@@ -90,9 +91,12 @@ serve(async (req) => {
     const transcript = result.lastTranscript || "";
     const lastPlannerTranscript = result.lastPlannerTranscript || "";
 
-    // Skip if transcript hasn't changed
-    if (transcript === lastPlannerTranscript && transcript.length > 0) {
-      console.log(`[voice-planner-loop] No new transcript, skipping.`);
+    // Check for pending operator injection
+    const hasOperatorInjection = !!board.operator;
+
+    // Skip if transcript hasn't changed AND no operator injection pending
+    if (transcript === lastPlannerTranscript && transcript.length > 0 && !hasOperatorInjection && !forceRun) {
+      console.log(`[voice-planner-loop] No new transcript or injection, skipping.`);
       return new Response(JSON.stringify({ status: "skipped", reason: "no_change" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -126,9 +130,11 @@ serve(async (req) => {
       flags: board.flags || [],
     };
 
+    const operatorNote = hasOperatorInjection ? `\nOPERATOR INJECTION (PRIORITY — incorporate into directions): ${board.operator}` : "";
+
     const userContent = `DATE: ${dateStr} ${timeStr} CT
 OBJECTIVE: ${config.objective || "Help caller effectively"}
-CONSTRAINTS: ${config.constraints || "None"}
+CONSTRAINTS: ${config.constraints || "None"}${operatorNote}
 
 EXISTING BOARD:
 ${JSON.stringify(existingBoard)}
