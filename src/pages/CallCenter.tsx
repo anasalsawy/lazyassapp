@@ -196,6 +196,35 @@ export default function CallCenter() {
     startPolling(taskId);
   };
 
+  // Kill active call
+  const killCall = async () => {
+    if (!activeCall?.taskId || !session?.access_token) return;
+    setIsKilling(true);
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=kill`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ task_id: activeCall.taskId }),
+        }
+      );
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Failed to kill call");
+      toast.success("Call killed");
+      if (pollRef.current) clearInterval(pollRef.current);
+      setActiveCall((prev) => prev ? { ...prev, status: "failed" } : null);
+    } catch (e: any) {
+      toast.error("Kill failed", { description: e.message });
+    } finally {
+      setIsKilling(false);
+    }
+  };
+
   const toneColor = (tone: string) => {
     switch (tone) {
       case "hostile": case "impatient": return "text-red-400";
