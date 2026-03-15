@@ -278,14 +278,27 @@ serve(async (req) => {
       }
     }
 
-    // Run Planner (Analyst + Director)
-    const directive = await runPlanner(
-      config.objective || "Help the caller effectively.",
-      config.constraints || "",
-      transcript,
-      operatorInjections,
-      turnCount
-    );
+    // ── Skip Planner on redundant turns (no new transcript, no injections) ──
+    const lastTranscript = result.lastRawTranscript || "";
+    const transcriptChanged = transcript.trim() !== lastTranscript.trim();
+    const hasInjections = operatorInjections.length > 0;
+    const cachedDirective = result.lastDirectorDirective;
+    
+    let directive: any;
+    if (!transcriptChanged && !hasInjections && cachedDirective && turnCount > 1) {
+      // Return cached directive — skip expensive Planner call
+      console.log(`[voice-context-tool] Skipping Planner (no changes), returning cached directive, turn=${turnCount}`);
+      directive = cachedDirective;
+    } else {
+      // Run Planner (Analyst + Director)
+      directive = await runPlanner(
+        config.objective || "Help the caller effectively.",
+        config.constraints || "",
+        transcript,
+        operatorInjections,
+        turnCount
+      );
+    }
 
     console.log(`[voice-context-tool] Planner result: instruction="${String(directive.instruction).substring(0, 80)}", end=${directive.should_end}, turn=${turnCount}`);
 
