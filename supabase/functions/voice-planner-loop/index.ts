@@ -130,9 +130,11 @@ serve(async (req) => {
       flags: board.flags || [],
     };
 
+    const operatorNote = hasOperatorInjection ? `\nOPERATOR INJECTION (PRIORITY — incorporate into directions): ${board.operator}` : "";
+
     const userContent = `DATE: ${dateStr} ${timeStr} CT
 OBJECTIVE: ${config.objective || "Help caller effectively"}
-CONSTRAINTS: ${config.constraints || "None"}
+CONSTRAINTS: ${config.constraints || "None"}${operatorNote}
 
 EXISTING BOARD:
 ${JSON.stringify(existingBoard)}
