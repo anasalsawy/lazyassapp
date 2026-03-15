@@ -48,15 +48,11 @@ serve(async (req) => {
     if (taskId) {
       overrides.agent = {
         prompt: {
-          // Dynamic variable injection — agent prompt uses {{task_id}}
           template_variables: { task_id: taskId },
         },
       };
-      // Also pass as dynamic_variables for newer ElevenLabs SDK support
-      overrides.conversation_config_override = {
-        dynamic_variables: {
-          task_id: taskId,
-        },
+      overrides.dynamic_variables = {
+        task_id: taskId,
       };
     }
 
