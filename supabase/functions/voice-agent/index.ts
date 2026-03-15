@@ -31,6 +31,48 @@ function getSupabase() {
   );
 }
 
+type ConversationMessage = { role: string; content: string };
+
+function normalizeTranscriptItem(item: any): ConversationMessage | null {
+  const roleRaw = String(item?.role || item?.speaker || item?.source || "").toLowerCase();
+  const role = ["agent", "assistant", "ai", "maya", "bot"].includes(roleRaw) ? "assistant" : "user";
+  const content = String(
+    item?.message ?? item?.text ?? item?.content ?? item?.transcript ?? ""
+  ).trim();
+
+  if (!content) return null;
+  return { role, content };
+}
+
+async function fetchElevenLabsTranscript(conversationId: string): Promise<ConversationMessage[]> {
+  const ELEVENLABS_API_KEY =
+    Deno.env.get("ELEVENLABS_CONVAI_KEY") ||
+    Deno.env.get("ELEVENLABS_API_KEY");
+
+  if (!ELEVENLABS_API_KEY || !conversationId) return [];
+
+  try {
+    const resp = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${conversationId}`, {
+      headers: {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!resp.ok) return [];
+
+    const data = await resp.json();
+    const transcript = Array.isArray(data?.transcript) ? data.transcript : [];
+
+    return transcript
+      .map(normalizeTranscriptItem)
+      .filter((msg: ConversationMessage | null): msg is ConversationMessage => Boolean(msg))
+      .slice(-50);
+  } catch {
+    return [];
+  }
+}
+
 // ── Main Handler ────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") {
