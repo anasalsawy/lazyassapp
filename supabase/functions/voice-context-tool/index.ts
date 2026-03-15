@@ -197,29 +197,49 @@ serve(async (req) => {
     const directiveHistory = result.directorDirectiveHistory || [];
     const conversationHistory: Array<{ role: string; content: string }> = result.conversationHistory || [];
 
-    // Append transcript as a user turn if we have content
+    // Append transcript as conversation turns
     if (transcript && transcript.trim()) {
-      // Parse transcript to extract latest exchanges
-      // The transcript comes as a summary from the Native LLM — store it as-is
-      const existingLen = conversationHistory.length;
-      // Only append if this looks like new content (avoid duplicates)
       const lastEntry = conversationHistory[conversationHistory.length - 1];
       const trimmedTranscript = transcript.trim();
+      
+      // Avoid exact duplicates
       if (!lastEntry || lastEntry.content !== trimmedTranscript) {
-        // Try to split transcript into user/assistant turns
         const lines = trimmedTranscript.split("\n").filter((l: string) => l.trim());
+        let parsedAny = false;
+        
         for (const line of lines) {
-          const lower = line.toLowerCase();
-          if (lower.startsWith("user:") || lower.startsWith("human:") || lower.startsWith("caller:")) {
-            conversationHistory.push({ role: "user", content: line.replace(/^(user|human|caller):\s*/i, "").trim() });
-          } else if (lower.startsWith("agent:") || lower.startsWith("assistant:") || lower.startsWith("maya:")) {
-            conversationHistory.push({ role: "assistant", content: line.replace(/^(agent|assistant|maya):\s*/i, "").trim() });
-          } else if (existingLen === 0 && lines.length === 1) {
-            // Single line transcript with no prefix — treat as user speech
-            conversationHistory.push({ role: "user", content: line.trim() });
+          const lower = line.toLowerCase().trim();
+          if (!lower) continue;
+          
+          // Try role-prefixed format: "User: ...", "Agent: ...", etc.
+          const roleMatch = lower.match(/^(user|human|caller|customer|recipient|agent|assistant|maya|ai):\s*/i);
+          if (roleMatch) {
+            const prefix = roleMatch[1].toLowerCase();
+            const content = line.substring(roleMatch[0].length).trim();
+            if (content) {
+              const role = ["agent", "assistant", "maya", "ai"].includes(prefix) ? "assistant" : "user";
+              conversationHistory.push({ role, content });
+              parsedAny = true;
+            }
+          }
+        }
+        
+        // If no role prefixes found, store raw transcript lines as alternating turns
+        // or as raw content so transcript panel always shows something
+        if (!parsedAny && lines.length > 0) {
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            // Heuristic: if last entry was user, this is likely assistant, and vice versa
+            const lastRole = conversationHistory[conversationHistory.length - 1]?.role;
+            const role = lastRole === "user" ? "assistant" : "user";
+            conversationHistory.push({ role, content: trimmed });
           }
         }
       }
+      
+      // Also store raw transcript for debugging
+      result.lastRawTranscript = trimmedTranscript;
     }
 
     await supabase.from("agent_tasks").update({

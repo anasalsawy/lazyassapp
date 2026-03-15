@@ -336,6 +336,44 @@ serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // ACTION: KILL — End an active call
+    // ═══════════════════════════════════════════════════════════════════════
+    if (action === "kill") {
+      const body = await req.json();
+      const taskId = body.task_id || "";
+
+      if (!taskId) {
+        return new Response(JSON.stringify({ error: "task_id required" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const supabase = getSupabase();
+      const { data: task } = await supabase.from("agent_tasks").select("result, status").eq("id", taskId).single();
+
+      if (!task) {
+        return new Response(JSON.stringify({ error: "Task not found" }), {
+          status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const result = (task.result as any) || {};
+
+      await supabase.from("agent_tasks").update({
+        status: "failed",
+        error_message: "Killed by operator",
+        completed_at: new Date().toISOString(),
+        result: { ...result, killedAt: new Date().toISOString(), killedBy: "operator" },
+      }).eq("id", taskId);
+
+      console.log(`[voice-agent] Call killed by operator: task=${taskId}`);
+
+      return new Response(JSON.stringify({ success: true, message: "Call killed." }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // ACTION: LIST-CALLS — List active/recent voice calls
     // ═══════════════════════════════════════════════════════════════════════
     if (action === "list-calls") {

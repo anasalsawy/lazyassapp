@@ -54,6 +54,7 @@ export default function CallCenter() {
   const [isInitiating, setIsInitiating] = useState(false);
   const [isInjecting, setIsInjecting] = useState(false);
   const [recentCalls, setRecentCalls] = useState<RecentCall[]>([]);
+  const [isKilling, setIsKilling] = useState(false);
 
   // Polling
   const pollRef = useRef<number | null>(null);
@@ -193,6 +194,35 @@ export default function CallCenter() {
   // Resume monitoring a recent call
   const resumeMonitoring = (taskId: string) => {
     startPolling(taskId);
+  };
+
+  // Kill active call
+  const killCall = async () => {
+    if (!activeCall?.taskId || !session?.access_token) return;
+    setIsKilling(true);
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=kill`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ task_id: activeCall.taskId }),
+        }
+      );
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Failed to kill call");
+      toast.success("Call killed");
+      if (pollRef.current) clearInterval(pollRef.current);
+      setActiveCall((prev) => prev ? { ...prev, status: "failed" } : null);
+    } catch (e: any) {
+      toast.error("Kill failed", { description: e.message });
+    } finally {
+      setIsKilling(false);
+    }
   };
 
   const toneColor = (tone: string) => {
@@ -365,6 +395,18 @@ export default function CallCenter() {
                     <Badge variant={isCallActive ? "default" : "secondary"} className="text-xs">
                       {activeCall?.status}
                     </Badge>
+                    {isCallActive && (
+                      <Button
+                        onClick={killCall}
+                        disabled={isKilling}
+                        size="sm"
+                        variant="destructive"
+                        className="ml-1 h-7 text-xs"
+                      >
+                        {isKilling ? <Loader2 className="w-3 h-3 animate-spin" /> : <PhoneOff className="w-3 h-3 mr-1" />}
+                        Kill
+                      </Button>
+                    )}
                   </div>
                 </div>
 
