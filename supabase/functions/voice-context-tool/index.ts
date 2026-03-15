@@ -149,6 +149,19 @@ serve(async (req) => {
 
     await supabase.from("agent_tasks").update({ result: updates }).eq("id", taskId);
 
+    // ── Fire-and-forget: kick planner if new transcript ──
+    if (transcript && transcript !== result.lastTranscript) {
+      const plannerUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-planner-loop`;
+      fetch(plannerUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        },
+        body: JSON.stringify({ task_id: taskId }),
+      }).catch(e => console.error("[voice-context-tool] planner fire-and-forget error:", e));
+    }
+
     console.log(`[voice-context-tool] RESPONSE: ${instruction.substring(0, 100)}`);
 
     return new Response(JSON.stringify({
