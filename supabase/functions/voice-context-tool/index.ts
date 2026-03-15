@@ -154,13 +154,13 @@ Analyze and provide your directive.`;
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4.1-mini",
+      model: "gpt-4.1-nano",
       messages: [
         { role: "system", content: PLANNER_PROMPT },
         { role: "user", content: userContent },
       ],
-      max_tokens: 400,
-      temperature: 0.3,
+      max_tokens: 300,
+      temperature: 0.2,
     }),
   });
 
