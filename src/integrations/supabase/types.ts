@@ -176,6 +176,7 @@ export type Database = {
           error_message: string | null
           id: string
           max_retries: number | null
+          mode: string
           payload: Json | null
           priority: number | null
           result: Json | null
@@ -193,6 +194,7 @@ export type Database = {
           error_message?: string | null
           id?: string
           max_retries?: number | null
+          mode?: string
           payload?: Json | null
           priority?: number | null
           result?: Json | null
@@ -210,6 +212,7 @@ export type Database = {
           error_message?: string | null
           id?: string
           max_retries?: number | null
+          mode?: string
           payload?: Json | null
           priority?: number | null
           result?: Json | null
