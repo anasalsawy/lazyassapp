@@ -290,7 +290,7 @@ export default function CallCenter() {
 
   // Resume monitoring a recent call
   const resumeMonitoring = (taskId: string) => {
-    startPolling(taskId);
+    subscribeToTask(taskId);
   };
 
   // Kill active call
