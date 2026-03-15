@@ -344,6 +344,28 @@ serve(async (req) => {
       const result = task.result as any;
       const directive = result?.lastDirectorDirective || {};
 
+      // Fallback transcript sync: if webhook updates stall, pull transcript directly
+      // from ElevenLabs conversation API so operator UI stays live.
+      let conversationHistory: ConversationMessage[] = result?.conversationHistory || [];
+      const conversationId = result?.conversationId || "";
+      const shouldSyncFromElevenLabs =
+        task.status === "running" &&
+        !!conversationId;
+
+      if (shouldSyncFromElevenLabs) {
+        const remoteTranscript = await fetchElevenLabsTranscript(conversationId);
+        if (remoteTranscript.length > conversationHistory.length) {
+          conversationHistory = remoteTranscript;
+          await supabase.from("agent_tasks").update({
+            result: {
+              ...result,
+              conversationHistory,
+              lastTranscriptSyncAt: new Date().toISOString(),
+            },
+          }).eq("id", taskId);
+        }
+      }
+
       // Map Planner output → UI-compatible lastAnalysis and lastDirective
       const lastAnalysis = {
         tone: directive.tone || "neutral",
@@ -369,15 +391,17 @@ serve(async (req) => {
         target: "none",
       };
 
+      const turnCount = Math.max(result?.turnCount || 0, conversationHistory.length);
+
       return new Response(JSON.stringify({
         taskId: task.id,
         status: task.status,
         mode: task.mode || "FAST",
         callSid: result?.callSid,
-        turnCount: result?.turnCount || 0,
-        conversationHistory: result?.conversationHistory || [],
-        lastAnalysis: result?.turnCount > 0 ? lastAnalysis : null,
-        lastDirective: result?.turnCount > 0 ? lastDirective : null,
+        turnCount,
+        conversationHistory,
+        lastAnalysis: turnCount > 0 ? lastAnalysis : null,
+        lastDirective: turnCount > 0 ? lastDirective : null,
         pendingInjections: result?.operatorInjections?.length || 0,
         config: task.payload,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
