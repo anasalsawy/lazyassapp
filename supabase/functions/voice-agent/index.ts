@@ -31,6 +31,48 @@ function getSupabase() {
   );
 }
 
+type ConversationMessage = { role: string; content: string };
+
+function normalizeTranscriptItem(item: any): ConversationMessage | null {
+  const roleRaw = String(item?.role || item?.speaker || item?.source || "").toLowerCase();
+  const role = ["agent", "assistant", "ai", "maya", "bot"].includes(roleRaw) ? "assistant" : "user";
+  const content = String(
+    item?.message ?? item?.text ?? item?.content ?? item?.transcript ?? ""
+  ).trim();
+
+  if (!content) return null;
+  return { role, content };
+}
+
+async function fetchElevenLabsTranscript(conversationId: string): Promise<ConversationMessage[]> {
+  const ELEVENLABS_API_KEY =
+    Deno.env.get("ELEVENLABS_CONVAI_KEY") ||
+    Deno.env.get("ELEVENLABS_API_KEY");
+
+  if (!ELEVENLABS_API_KEY || !conversationId) return [];
+
+  try {
+    const resp = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${conversationId}`, {
+      headers: {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!resp.ok) return [];
+
+    const data = await resp.json();
+    const transcript = Array.isArray(data?.transcript) ? data.transcript : [];
+
+    return transcript
+      .map(normalizeTranscriptItem)
+      .filter((msg: ConversationMessage | null): msg is ConversationMessage => Boolean(msg))
+      .slice(-50);
+  } catch {
+    return [];
+  }
+}
+
 // ── Main Handler ────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -302,6 +344,28 @@ serve(async (req) => {
       const result = task.result as any;
       const directive = result?.lastDirectorDirective || {};
 
+      // Fallback transcript sync: if webhook updates stall, pull transcript directly
+      // from ElevenLabs conversation API so operator UI stays live.
+      let conversationHistory: ConversationMessage[] = result?.conversationHistory || [];
+      const conversationId = result?.conversationId || "";
+      const shouldSyncFromElevenLabs =
+        task.status === "running" &&
+        !!conversationId;
+
+      if (shouldSyncFromElevenLabs) {
+        const remoteTranscript = await fetchElevenLabsTranscript(conversationId);
+        if (remoteTranscript.length > conversationHistory.length) {
+          conversationHistory = remoteTranscript;
+          await supabase.from("agent_tasks").update({
+            result: {
+              ...result,
+              conversationHistory,
+              lastTranscriptSyncAt: new Date().toISOString(),
+            },
+          }).eq("id", taskId);
+        }
+      }
+
       // Map Planner output → UI-compatible lastAnalysis and lastDirective
       const lastAnalysis = {
         tone: directive.tone || "neutral",
@@ -327,15 +391,17 @@ serve(async (req) => {
         target: "none",
       };
 
+      const turnCount = Math.max(result?.turnCount || 0, conversationHistory.length);
+
       return new Response(JSON.stringify({
         taskId: task.id,
         status: task.status,
         mode: task.mode || "FAST",
         callSid: result?.callSid,
-        turnCount: result?.turnCount || 0,
-        conversationHistory: result?.conversationHistory || [],
-        lastAnalysis: result?.turnCount > 0 ? lastAnalysis : null,
-        lastDirective: result?.turnCount > 0 ? lastDirective : null,
+        turnCount,
+        conversationHistory,
+        lastAnalysis: turnCount > 0 ? lastAnalysis : null,
+        lastDirective: turnCount > 0 ? lastDirective : null,
         pendingInjections: result?.operatorInjections?.length || 0,
         config: task.payload,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
