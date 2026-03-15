@@ -43,13 +43,19 @@ serve(async (req) => {
     const taskId = body.task_id || "";
     const agentId = body.agent_id || ELEVENLABS_AGENT_ID;
 
-    // Build overrides if task_id provided
+    // Build overrides — inject task_id as a dynamic variable for the native LLM agent
     const overrides: any = {};
     if (taskId) {
       overrides.agent = {
         prompt: {
-          // ElevenLabs template variable injection
+          // Dynamic variable injection — agent prompt uses {{task_id}}
           template_variables: { task_id: taskId },
+        },
+      };
+      // Also pass as dynamic_variables for newer ElevenLabs SDK support
+      overrides.conversation_config_override = {
+        dynamic_variables: {
+          task_id: taskId,
         },
       };
     }
