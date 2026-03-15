@@ -4,9 +4,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 /**
  * voice-context-tool — ElevenLabs Server Tool webhook.
  *
- * Called by the ElevenLabs native LLM agent every turn via get_mission_context.
+ * Called by the ElevenLabs native LLM agent via get_mission_context.
  * Fetches mission context from agent_tasks, runs Planner (Analyst+Director),
  * and returns structured guidance for the agent to follow.
+ *
+ * If the LLM doesn't pass transcript, we self-fetch from ElevenLabs API.
  */
 
 const corsHeaders = {
@@ -20,6 +22,63 @@ function getSupabase() {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
+}
+
+function getElevenLabsKey(): string {
+  return Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY") || "";
+}
+
+// ── Fetch transcript from ElevenLabs REST API ─────────────────────────────
+async function fetchTranscriptFromElevenLabs(conversationId: string): Promise<string> {
+  const apiKey = getElevenLabsKey();
+  if (!apiKey || !conversationId) return "";
+
+  try {
+    const resp = await fetch(
+      `https://api.elevenlabs.io/v1/convai/conversations/${conversationId}`,
+      { headers: { "xi-api-key": apiKey, "Content-Type": "application/json" } }
+    );
+    if (!resp.ok) {
+      console.log(`[voice-context-tool] ElevenLabs transcript fetch failed: ${resp.status}`);
+      return "";
+    }
+    const data = await resp.json();
+    const transcript = Array.isArray(data?.transcript) ? data.transcript : [];
+    
+    return transcript
+      .map((item: any) => {
+        const roleRaw = String(item?.role || item?.speaker || item?.source || "").toLowerCase();
+        const role = ["agent", "assistant", "ai", "maya", "bot"].includes(roleRaw) ? "Maya" : "Customer";
+        const content = String(item?.message ?? item?.text ?? item?.content ?? item?.transcript ?? "").trim();
+        return content ? `${role}: ${content}` : "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  } catch (e) {
+    console.error("[voice-context-tool] transcript fetch error:", e);
+    return "";
+  }
+}
+
+// ── Discover conversationId from ElevenLabs conversations list ────────────
+async function discoverConversationId(agentId: string): Promise<string> {
+  const apiKey = getElevenLabsKey();
+  if (!apiKey || !agentId) return "";
+
+  try {
+    const resp = await fetch(
+      `https://api.elevenlabs.io/v1/convai/conversations?agent_id=${agentId}&page_size=5`,
+      { headers: { "xi-api-key": apiKey } }
+    );
+    if (!resp.ok) return "";
+    const data = await resp.json();
+    const conversations = Array.isArray(data?.conversations) ? data.conversations : [];
+    // Return the most recent active conversation
+    const active = conversations.find((c: any) => c.status === "processing" || c.status === "active");
+    return active?.conversation_id || conversations[0]?.conversation_id || "";
+  } catch {
+    return "";
+  }
 }
 
 // ── Planner Prompt (Analyst + Director combined) ──────────────────────────
@@ -140,9 +199,9 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const taskId = body.task_id || "";
-    const transcript = body.transcript || "";
+    let transcript = body.transcript || "";
 
-    console.log(`[voice-context-tool] task_id=${taskId}, transcript_len=${transcript.length}`);
+    console.log(`[voice-context-tool] INVOKED task_id=${taskId}, transcript_len=${transcript.length}, keys=${Object.keys(body).join(",")}`);
 
     if (!taskId) {
       return new Response(JSON.stringify({
@@ -181,6 +240,44 @@ serve(async (req) => {
     const operatorInjections: string[] = result.operatorInjections || [];
     const turnCount = (result.turnCount || 0) + 1;
 
+    // ── Self-fetch transcript if not provided ──
+    // ElevenLabs may not pass transcript as a tool parameter.
+    // Fall back to: 1) ElevenLabs REST API, 2) DB conversationHistory
+    if (!transcript || transcript.trim().length === 0) {
+      console.log("[voice-context-tool] No transcript from LLM, attempting self-fetch...");
+      
+      let conversationId = result.conversationId || "";
+      
+      // Discover conversationId if missing
+      if (!conversationId) {
+        const agentId = Deno.env.get("ELEVENLABS_AGENT_B_ID") || Deno.env.get("ELEVENLABS_AGENT_A_ID") || "";
+        if (agentId) {
+          conversationId = await discoverConversationId(agentId);
+          if (conversationId) {
+            console.log(`[voice-context-tool] Discovered conversationId: ${conversationId}`);
+          }
+        }
+      }
+      
+      if (conversationId) {
+        transcript = await fetchTranscriptFromElevenLabs(conversationId);
+        console.log(`[voice-context-tool] Self-fetched transcript: ${transcript.length} chars`);
+        
+        // Persist conversationId if we discovered it
+        if (!result.conversationId && conversationId) {
+          result.conversationId = conversationId;
+        }
+      }
+      
+      // Last fallback: reconstruct from DB history
+      if (!transcript && result.conversationHistory?.length > 0) {
+        transcript = result.conversationHistory
+          .map((m: any) => `${m.role === "assistant" ? "Maya" : "Customer"}: ${m.content}`)
+          .join("\n");
+        console.log(`[voice-context-tool] Used DB history: ${transcript.length} chars`);
+      }
+    }
+
     // Run Planner (Analyst + Director)
     const directive = await runPlanner(
       config.objective || "Help the caller effectively.",
@@ -190,20 +287,18 @@ serve(async (req) => {
       turnCount
     );
 
-    console.log(`[voice-context-tool] Planner result: instruction="${String(directive.instruction).substring(0, 80)}", end=${directive.should_end}`);
+    console.log(`[voice-context-tool] Planner result: instruction="${String(directive.instruction).substring(0, 80)}", end=${directive.should_end}, turn=${turnCount}`);
 
     // Persist state: consume injections, update turn count, store directive + transcript
     const injectionHistory = result.operatorInjectionHistory || [];
     const directiveHistory = result.directorDirectiveHistory || [];
     let conversationHistory: Array<{ role: string; content: string }> = result.conversationHistory || [];
 
-    // Parse transcript — ElevenLabs sends the FULL conversation context each turn (llm_prompt),
-    // so we rebuild the history from scratch rather than appending.
+    // Parse transcript into structured history
     if (transcript && transcript.trim()) {
       const trimmedTranscript = transcript.trim();
       const lines = trimmedTranscript.split("\n").filter((l: string) => l.trim());
       
-      // Try to detect role-prefixed lines
       const parsed: Array<{ role: string; content: string }> = [];
       const rolePrefixRegex = /^(user|human|caller|customer|recipient|agent|assistant|maya|ai|bot):\s*/i;
       
@@ -213,7 +308,6 @@ serve(async (req) => {
       }
       
       if (hasPrefixes) {
-        // Parse role-prefixed lines, accumulating multi-line content
         let currentRole = "";
         let currentContent = "";
         for (const line of lines) {
@@ -233,7 +327,6 @@ serve(async (req) => {
           parsed.push({ role: currentRole, content: currentContent.trim() });
         }
       } else {
-        // No prefixes — alternating turns heuristic
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
@@ -242,18 +335,8 @@ serve(async (req) => {
         }
       }
       
-      // Replace history if we parsed more turns than we had, otherwise keep existing
-      // (ElevenLabs sends full context, so parsed should always be >= existing)
       if (parsed.length > 0 && parsed.length >= conversationHistory.length) {
         conversationHistory = parsed;
-      } else if (parsed.length > 0) {
-        // Partial update — append only genuinely new content
-        const lastKnown = conversationHistory[conversationHistory.length - 1]?.content || "";
-        for (const entry of parsed) {
-          if (entry.content !== lastKnown) {
-            conversationHistory.push(entry);
-          }
-        }
       }
       
       result.lastRawTranscript = trimmedTranscript;
@@ -284,20 +367,15 @@ serve(async (req) => {
 
     // Build response for the ElevenLabs native LLM
     const response: any = {
-      // Core directive for the agent
       instruction: directive.instruction || "Continue the conversation naturally.",
       suggested_tone: directive.suggested_tone || "professional",
       priority: directive.priority || "continue",
       should_end: directive.should_end || false,
-
-      // Mission context (refreshed every turn)
       objective: config.objective || "",
       script: config.script || "",
       constraints: config.constraints || "",
       agent_name: config.agent_name || "Maya",
       company_name: config.company_name || config.caller_name || "",
-
-      // Analyst intelligence
       is_automated: directive.is_automated || false,
       automated_type: directive.automated_type || "none",
       tone_detected: directive.tone || "neutral",
@@ -305,17 +383,11 @@ serve(async (req) => {
       engagement: directive.engagement || "moderate",
       risks: directive.risks || [],
       opportunities: directive.opportunities || [],
-
-      // Operator steering
       operator_instruction: operatorInjections.length > 0
         ? operatorInjections.join(". ")
         : "",
       has_operator_update: operatorInjections.length > 0,
-
-      // Action
       action: directive.action || "CONTINUE",
-
-      // Turn info
       turn: turnCount,
     };
 

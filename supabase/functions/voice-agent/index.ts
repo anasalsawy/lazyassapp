@@ -344,21 +344,53 @@ serve(async (req) => {
       const result = task.result as any;
       const directive = result?.lastDirectorDirective || {};
 
-      // Fallback transcript sync: if webhook updates stall, pull transcript directly
-      // from ElevenLabs conversation API so operator UI stays live.
       let conversationHistory: ConversationMessage[] = result?.conversationHistory || [];
-      const conversationId = result?.conversationId || "";
-      const shouldSyncFromElevenLabs =
-        task.status === "running" &&
-        !!conversationId;
+      let conversationId = result?.conversationId || "";
 
-      if (shouldSyncFromElevenLabs) {
+      const ELEVENLABS_API_KEY =
+        Deno.env.get("ELEVENLABS_CONVAI_KEY") ||
+        Deno.env.get("ELEVENLABS_API_KEY");
+
+      // Discover conversationId if missing (outbound calls may not return it immediately)
+      if (!conversationId && task.status === "running" && ELEVENLABS_API_KEY) {
+        try {
+          const agentId = Deno.env.get("ELEVENLABS_AGENT_B_ID") || Deno.env.get("ELEVENLABS_AGENT_A_ID") || "";
+          if (agentId) {
+            const listResp = await fetch(
+              `https://api.elevenlabs.io/v1/convai/conversations?agent_id=${agentId}&page_size=5`,
+              { headers: { "xi-api-key": ELEVENLABS_API_KEY } }
+            );
+            if (listResp.ok) {
+              const listData = await listResp.json();
+              const conversations = Array.isArray(listData?.conversations) ? listData.conversations : [];
+              // Find the most recent active conversation
+              const active = conversations.find((c: any) => 
+                c.status === "processing" || c.status === "active" || c.status === "in-progress"
+              );
+              conversationId = active?.conversation_id || conversations[0]?.conversation_id || "";
+              if (conversationId) {
+                console.log(`[voice-agent] Discovered conversationId: ${conversationId}`);
+                // Persist it
+                await supabase.from("agent_tasks").update({
+                  result: { ...result, conversationId },
+                }).eq("id", taskId);
+              }
+            }
+          }
+        } catch (e) {
+          console.error("[voice-agent] conversationId discovery error:", e);
+        }
+      }
+
+      // Always try to sync transcript from ElevenLabs during active calls
+      if (task.status === "running" && conversationId) {
         const remoteTranscript = await fetchElevenLabsTranscript(conversationId);
         if (remoteTranscript.length > conversationHistory.length) {
           conversationHistory = remoteTranscript;
           await supabase.from("agent_tasks").update({
             result: {
               ...result,
+              conversationId,
               conversationHistory,
               lastTranscriptSyncAt: new Date().toISOString(),
             },
