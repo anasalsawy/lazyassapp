@@ -56,10 +56,12 @@ export default function CallCenter() {
   const [recentCalls, setRecentCalls] = useState<RecentCall[]>([]);
   const [isKilling, setIsKilling] = useState(false);
 
-  // Realtime + fallback polling
-  const pollRef = useRef<number | null>(null);
+  // Polling + Realtime boost
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const activeTaskIdRef = useRef<string | null>(null);
+  const isActiveRef = useRef(false);
 
   // Auto-scroll transcript
   useEffect(() => {
@@ -68,63 +70,54 @@ export default function CallCenter() {
     }
   }, [activeCall?.conversationHistory]);
 
-  // Parse a realtime row update into CallState
-  const parseTaskToCallState = useCallback((task: any): CallState => {
-    const result = task.result || {};
-    const directive = result?.lastDirectorDirective || {};
-    const conversationHistory = result?.conversationHistory || [];
-    const turnCount = Math.max(result?.turnCount || 0, conversationHistory.length);
-
-    const lastAnalysis = turnCount > 0 ? {
-      tone: directive.tone || "neutral",
-      intent: directive.intent || "",
-      engagement: directive.engagement || "moderate",
-      cooperation: directive.engagement === "high" ? "cooperative" : "neutral",
-      emotional_state: directive.tone || "calm",
-      is_automated: directive.is_automated || false,
-      automated_type: directive.automated_type || "none",
-      risks: directive.risks || [],
-      opportunities: directive.opportunities || [],
-      key_info_extracted: "",
-      recommended_approach: directive.instruction || "",
-    } : null;
-
-    const lastDirective = turnCount > 0 ? {
-      instruction: directive.instruction || "",
-      tone: directive.suggested_tone || "professional",
-      priority: directive.priority || "continue",
-      shouldEnd: directive.should_end || false,
-      action: directive.action || "CONTINUE",
-      dtmf: "none",
-      target: "none",
-    } : null;
-
-    return {
-      taskId: task.id,
-      status: task.status,
-      callSid: result?.callSid,
-      turnCount,
-      conversationHistory,
-      lastAnalysis,
-      lastDirective,
-      pendingInjections: result?.operatorInjections?.length || 0,
-      config: task.payload,
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isActiveRef.current = false;
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+      if (channelRef.current) supabase.removeChannel(channelRef.current);
     };
   }, []);
 
-  // Subscribe to realtime updates for a task
+  // Fetch state via REST (primary data source — includes ElevenLabs transcript sync)
+  const pollCallState = useCallback(async (taskId: string): Promise<boolean> => {
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=get-state&task_id=${taskId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session?.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+        }
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        setActiveCall(data);
+        return data.status === "completed" || data.status === "failed";
+      }
+    } catch (e) {
+      console.error("[CallCenter] poll error:", e);
+    }
+    return false;
+  }, [session]);
+
+  // Start monitoring a task: poll every 3s + Realtime for instant mid-poll updates
   const subscribeToTask = useCallback((taskId: string) => {
     // Clean up previous
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
       channelRef.current = null;
     }
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
     }
 
-    // Realtime channel for this specific task
+    activeTaskIdRef.current = taskId;
+    isActiveRef.current = true;
+
+    // Realtime channel for instant updates between polls
     const channel = supabase
       .channel(`task-monitor-${taskId}`)
       .on(
@@ -137,18 +130,53 @@ export default function CallCenter() {
         },
         (payload) => {
           const task = payload.new as any;
-          const state = parseTaskToCallState(task);
-          setActiveCall(state);
+          const result = task.result || {};
+          const directive = result?.lastDirectorDirective || {};
+          const conversationHistory = result?.conversationHistory || [];
+          const turnCount = Math.max(result?.turnCount || 0, conversationHistory.length);
 
-          // Stop listening when call ends
-          if (state.status === "completed" || state.status === "failed") {
+          const lastAnalysis = turnCount > 0 ? {
+            tone: directive.tone || "neutral",
+            intent: directive.intent || "",
+            engagement: directive.engagement || "moderate",
+            cooperation: directive.engagement === "high" ? "cooperative" : "neutral",
+            emotional_state: directive.tone || "calm",
+            is_automated: directive.is_automated || false,
+            automated_type: directive.automated_type || "none",
+            risks: directive.risks || [],
+            opportunities: directive.opportunities || [],
+            key_info_extracted: "",
+            recommended_approach: directive.instruction || "",
+          } : null;
+
+          const lastDirective = turnCount > 0 ? {
+            instruction: directive.instruction || "",
+            tone: directive.suggested_tone || "professional",
+            priority: directive.priority || "continue",
+            shouldEnd: directive.should_end || false,
+            action: directive.action || "CONTINUE",
+            dtmf: "none",
+            target: "none",
+          } : null;
+
+          setActiveCall({
+            taskId: task.id,
+            status: task.status,
+            callSid: result?.callSid,
+            turnCount,
+            conversationHistory,
+            lastAnalysis,
+            lastDirective,
+            pendingInjections: result?.operatorInjections?.length || 0,
+            config: task.payload,
+          });
+
+          // Stop if call ended
+          if (task.status === "completed" || task.status === "failed") {
+            isActiveRef.current = false;
             if (channelRef.current) {
               supabase.removeChannel(channelRef.current);
               channelRef.current = null;
-            }
-            if (pollRef.current) {
-              clearInterval(pollRef.current);
-              pollRef.current = null;
             }
           }
         }
@@ -157,15 +185,26 @@ export default function CallCenter() {
 
     channelRef.current = channel;
 
-    // Fallback: slow poll every 10s in case realtime misses an update
-    pollRef.current = window.setInterval(() => pollCallState(taskId), 10000);
+    // Polling loop with 3s interval
+    const poll = async () => {
+      if (!isActiveRef.current) return;
+      const ended = await pollCallState(taskId);
+      if (ended) {
+        isActiveRef.current = false;
+        if (channelRef.current) {
+          supabase.removeChannel(channelRef.current);
+          channelRef.current = null;
+        }
+        return;
+      }
+      if (isActiveRef.current) {
+        pollTimeoutRef.current = setTimeout(poll, 3000);
+      }
+    };
 
-    // Immediate first fetch
-    pollCallState(taskId);
-  }, [parseTaskToCallState]);
-
-  // Fetch state via REST (used for initial load + slow fallback)
-  const pollCallState = useCallback(async (taskId: string) => {
+    // Immediate first fetch, then start loop
+    poll();
+  }, [pollCallState]);
     try {
       const resp = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=get-state&task_id=${taskId}`,
