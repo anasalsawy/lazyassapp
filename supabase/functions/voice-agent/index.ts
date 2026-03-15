@@ -289,10 +289,20 @@ serve(async (req) => {
 
       console.log(`[voice-agent] Operator injection: "${instruction}" → task ${task_id}`);
 
+      // Fire planner immediately so injection is processed ASAP
+      const plannerUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-planner-loop`;
+      fetch(plannerUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        },
+        body: JSON.stringify({ task_id }),
+      }).catch(e => console.error("[voice-agent] planner kick error:", e));
+
       return new Response(JSON.stringify({
         success: true,
         message: "Instruction injected. Will be applied on next turn.",
-        pendingInjections: injections.length,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
