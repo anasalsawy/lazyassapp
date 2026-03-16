@@ -333,16 +333,6 @@ export default function CallCenter() {
     }
   };
 
-  const toneColor = (tone: string) => {
-    switch (tone) {
-      case "hostile": case "impatient": return "text-red-400";
-      case "confused": case "stressed": case "anxious": return "text-amber-400";
-      case "friendly": case "warm": case "interested": case "excited": return "text-emerald-400";
-      case "cooperative": return "text-blue-400";
-      default: return "text-muted-foreground";
-    }
-  };
-
   const isCallActive = activeCall?.status === "running";
 
   return (
