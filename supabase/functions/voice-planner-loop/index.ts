@@ -32,22 +32,23 @@ function getSupabase() {
   );
 }
 
-const PLANNER_PROMPT = `You are a lean call analyst and director. You read a phone call transcript and produce ONLY a compact JSON blackboard update.
+const PLANNER_PROMPT = `You are the background planner for a blackboard-driven caller.
 
-CRITICAL ROLE CONTEXT: The agent (Maya) is the CALLER who initiated this call. She is a customer/requester, NOT a service representative. All directions must maintain this caller perspective.
+CRITICAL ROLE CONTEXT: Maya is the CALLER who initiated this call. She handles the live present moment herself. You do NOT script her next utterance. You only maintain background blackboard state that helps her stay oriented.
 
-IVR/PHONE MENU HANDLING: When an IVR menu is detected (automated voice listing options), you MUST set directions to tell the agent to SAY the option number or name OUT LOUD. The agent CANNOT press buttons — it must speak. Example: "Say 'five' or 'customer service'" or "Say 'six' to speak with a live agent". Pick the option most relevant to the objective. This is the #1 priority when IVR is detected.
-
-Rules:
-- Every value must be under 10 words. No sentences. No explanations.
-- "answers" = answers to questions the agent asked during the call. Key = short slug of the question. Value = the answer found in transcript. Only include questions that HAVE been answered.
-- "info" = facts gathered from the conversation. Key = short slug. Value = the fact. Only meaningful facts (names, prices, dates, reference numbers).
-- "directions" = ONE short tactical directive for what the agent should do next. This is the MOST IMPORTANT field. If an OPERATOR INJECTION is present, incorporate it into the direction immediately. The agent will follow this directive on the next turn.
-- "flags" = array of short alert labels. Only include if actively relevant RIGHT NOW. Options: ivr_detected, voicemail, hold, hostile, confused, objective_met, off_track, stalling.
-- "end_call" = true ONLY if the objective is clearly completed or impossible to continue.
-- Do NOT repeat info already in existing_board unless updating it.
-- If nothing new to add, return {"no_update": true}
-- OPERATOR INJECTIONS have HIGHEST PRIORITY. When present, ALWAYS update directions to incorporate the operator's instruction.
+Planner rules:
+- The CALLER owns the present moment: greetings, acknowledgements, simple clarifications, IVR responses, pacing, interruptions, and obvious next replies.
+- Do NOT micromanage simple moment-to-moment behavior.
+- "directions" is optional background strategy only. Use it only for mission-level steering, non-obvious pivots, or explicit operator overrides.
+- If an OPERATOR INJECTION is present, incorporate it into blackboard state immediately.
+- When IVR/menu appears, usually set a flag and any useful info; do not over-direct unless objective-critical.
+- Every value should be compact.
+- "answers" = answered questions asked by Maya.
+- "info" = durable facts gathered from the call.
+- "flags" = short active labels. Options: ivr_detected, voicemail, hold, hostile, confused, objective_met, off_track, stalling.
+- "end_call" = true only if objective is completed or continuation is impossible.
+- Do NOT repeat unchanged board content.
+- If nothing meaningful changed, return {"no_update": true}
 
 Return ONLY valid JSON, nothing else:
 {
@@ -186,6 +187,22 @@ Analyze and return blackboard update.`;
       update = null;
     }
 
+    const pendingOperator = typeof board.operator === "string" && board.operator.trim().length > 0
+      ? board.operator.trim()
+      : Array.isArray(result.operatorInjections) && result.operatorInjections.length > 0
+        ? String(result.operatorInjections[result.operatorInjections.length - 1]).trim()
+        : "";
+
+    if ((!update || update.no_update) && pendingOperator) {
+      update = {
+        answers: {},
+        info: {},
+        directions: pendingOperator,
+        flags: Array.isArray(board.flags) ? board.flags : [],
+        end_call: false,
+      };
+    }
+
     if (!update || update.no_update) {
       console.log(`[voice-planner-loop] No update needed.`);
       await supabase.from("agent_tasks").update({
@@ -197,6 +214,11 @@ Analyze and return blackboard update.`;
       });
     }
 
+    const plannerCycle = (result.plannerCycles || 0) + 1;
+    const operatorHistory = Array.isArray(result.operatorInjectionHistory)
+      ? result.operatorInjectionHistory
+      : [];
+
     // ── Merge into blackboard (replace keys, don't bloat) ──
     const newBoard = {
       ...board,
@@ -205,7 +227,7 @@ Analyze and return blackboard update.`;
       directions: update.directions !== undefined ? update.directions : board.directions,
       flags: Array.isArray(update.flags) ? update.flags : (board.flags || []),
       end_call: update.end_call === true ? true : (board.end_call || false),
-      operator: board.operator, // never touch operator — that's human-only
+      operator: pendingOperator ? null : board.operator,
       delivered: board.delivered || [],
     };
 
@@ -213,9 +235,13 @@ Analyze and return blackboard update.`;
       result: {
         ...result,
         blackboard: newBoard,
+        operatorInjections: pendingOperator ? [] : (result.operatorInjections || []),
+        operatorInjectionHistory: pendingOperator
+          ? [...operatorHistory.slice(-24), { instruction: pendingOperator, applied_at: now.toISOString(), planner_cycle: plannerCycle }]
+          : operatorHistory,
         lastPlannerTranscript: transcript,
         lastPlannerAt: now.toISOString(),
-        plannerCycles: (result.plannerCycles || 0) + 1,
+        plannerCycles: plannerCycle,
       },
     }).eq("id", taskId);
 
