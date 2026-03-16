@@ -487,7 +487,7 @@ export default function CallCenter() {
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant="outline" className="text-xs">
-                      <MessageSquare className="w-3 h-3 mr-1" />
+                      <Activity className="w-3 h-3 mr-1" />
                       Turn {activeCall?.turnCount || 0}
                     </Badge>
                     <Badge variant={isCallActive ? "default" : "secondary"} className="text-xs">
