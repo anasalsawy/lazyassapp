@@ -127,31 +127,13 @@ serve(async (req) => {
     const instruction = parts.join(" | ");
 
     // ── Persist transcript for planner to consume ──
-    // Also consume operator injection after reading it
+    // Do NOT consume blackboard state here; this tool is a reader.
     const updates: any = {
       ...result,
       lastTranscript: transcript || result.lastTranscript || "",
       lastToolCallAt: new Date().toISOString(),
       turnCount: (result.turnCount || 0) + 1,
     };
-
-    // Consume operator after delivery
-    if (operatorMsg && result.blackboard) {
-      updates.blackboard = { ...board, operator: null };
-    }
-
-    // Consume answers after delivery (agent got them)
-    if (answerKeys.length > 0 && result.blackboard) {
-      updates.blackboard = {
-        ...(updates.blackboard || board),
-        answers: {},
-        // Move delivered answers to history
-        delivered: [
-          ...(board.delivered || []).slice(-20),
-          ...answerKeys.map(k => ({ k, v: answers[k], at: new Date().toISOString() })),
-        ],
-      };
-    }
 
     await supabase.from("agent_tasks").update({ result: updates }).eq("id", taskId);
 
