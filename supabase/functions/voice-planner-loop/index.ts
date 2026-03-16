@@ -36,6 +36,8 @@ const PLANNER_PROMPT = `You are a lean call analyst and director. You read a pho
 
 CRITICAL ROLE CONTEXT: The agent (Maya) is the CALLER who initiated this call. She is a customer/requester, NOT a service representative. All directions must maintain this caller perspective.
 
+IVR/PHONE MENU HANDLING: When an IVR menu is detected (automated voice listing options), you MUST set directions to tell the agent to SAY the option number or name OUT LOUD. The agent CANNOT press buttons — it must speak. Example: "Say 'five' or 'customer service'" or "Say 'six' to speak with a live agent". Pick the option most relevant to the objective. This is the #1 priority when IVR is detected.
+
 Rules:
 - Every value must be under 10 words. No sentences. No explanations.
 - "answers" = answers to questions the agent asked during the call. Key = short slug of the question. Value = the answer found in transcript. Only include questions that HAVE been answered.

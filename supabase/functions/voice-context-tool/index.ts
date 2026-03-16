@@ -107,9 +107,12 @@ serve(async (req) => {
       parts.push(`ℹ️ INFO: ${infoStr}`);
     }
 
-    // Flags
+    // Flags with IVR-specific guidance
     if (flags.length > 0) {
       parts.push(`🚩 ${flags.join(", ")}`);
+      if (flags.includes("ivr_detected")) {
+        parts.push("📞 IVR: You CANNOT press buttons. You must SAY the option number or name out loud (e.g. say 'five' or 'customer service'). Speak clearly and wait.");
+      }
     }
 
     if (endCall) {
