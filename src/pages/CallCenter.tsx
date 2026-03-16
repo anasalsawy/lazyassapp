@@ -22,8 +22,20 @@ type CallState = {
   callSid?: string;
   turnCount: number;
   conversationHistory: Array<{ role: string; content: string }>;
-  lastAnalysis: any;
-  lastDirective: any;
+  blackboard?: {
+    answers?: Record<string, string>;
+    info?: Record<string, string>;
+    directions?: string | null;
+    flags?: string[];
+    operator?: string | null;
+    end_call?: boolean;
+    delivered?: Array<{ k?: string; v?: string; at?: string }>;
+  };
+  plannerMeta?: {
+    lastPlannerAt?: string | null;
+    plannerCycles?: number;
+    lastTranscriptSyncAt?: string | null;
+  };
   pendingInjections: number;
   config: any;
 };

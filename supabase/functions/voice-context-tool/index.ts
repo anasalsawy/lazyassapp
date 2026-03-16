@@ -80,51 +80,51 @@ serve(async (req) => {
     const operatorMsg = board.operator || null;
     const endCall = board.end_call === true;
 
-    // Build a compact instruction string from blackboard contents
-    const parts: string[] = [];
-
-    // Operator injection — highest priority
-    if (operatorMsg) {
-      parts.push(`⚡ OPERATOR: ${operatorMsg}`);
-    }
-
-    // Directions from planner
-    if (directions) {
-      parts.push(`→ ${directions}`);
-    }
-
-    // Pending answers to deliver
     const answerKeys = Object.keys(answers);
+    const infoKeys = Object.keys(info);
+    const blackboard = {
+      answers,
+      info,
+      directions,
+      flags,
+      operator: operatorMsg,
+      end_call: endCall,
+      delivered: board.delivered || [],
+    };
+
+    // Build a compact instruction string from blackboard contents
+    const parts: string[] = [
+      "🎯 YOU ARE THE CALLER. You initiated this call.",
+      "🧠 Handle the live moment yourself. Use BLACKBOARD as background memory, not as a script.",
+    ];
+
+    if (operatorMsg) {
+      parts.push(`⚡ OPERATOR OVERRIDE: ${operatorMsg}`);
+    }
+
+    if (directions) {
+      parts.push(`🧭 STRATEGIC BACKGROUND: ${directions}`);
+    }
+
+    if (flags.length > 0) {
+      parts.push(`🚩 FLAGS: ${flags.join(", ")}`);
+    }
+
+    if (infoKeys.length > 0) {
+      const infoStr = infoKeys.map(k => `${k}: ${info[k]}`).join(", ");
+      parts.push(`ℹ️ FACTS: ${infoStr}`);
+    }
+
     if (answerKeys.length > 0) {
       const answerStr = answerKeys.map(k => `${k}: ${answers[k]}`).join(", ");
       parts.push(`📋 ANSWERS: ${answerStr}`);
     }
 
-    // Gathered info
-    const infoKeys = Object.keys(info);
-    if (infoKeys.length > 0) {
-      const infoStr = infoKeys.map(k => `${k}: ${info[k]}`).join(", ");
-      parts.push(`ℹ️ INFO: ${infoStr}`);
-    }
-
-    // Flags with IVR-specific guidance
-    if (flags.length > 0) {
-      parts.push(`🚩 ${flags.join(", ")}`);
-      if (flags.includes("ivr_detected")) {
-        parts.push("📞 IVR: You CANNOT press buttons. You must SAY the option number or name out loud (e.g. say 'five' or 'customer service'). Speak clearly and wait.");
-      }
-    }
-
     if (endCall) {
-      parts.push("🛑 END CALL");
+      parts.push("🛑 END CALL if objective is complete.");
     }
 
-    // Always anchor role identity
-    parts.unshift("🎯 YOU ARE THE CALLER. You initiated this call. Never act as a service rep.");
-
-    const instruction = parts.length > 1
-      ? parts.join(" | ")
-      : "Continue naturally.";
+    const instruction = parts.join(" | ");
 
     // ── Persist transcript for planner to consume ──
     // Also consume operator injection after reading it
