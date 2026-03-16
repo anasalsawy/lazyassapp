@@ -10,9 +10,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
-  Phone, PhoneOff, Send, Activity, Brain, Eye, Mic,
-  AlertTriangle, CheckCircle, Clock, MessageSquare,
-  Zap, Users, BarChart3, Radio, Loader2, ChevronDown,
+  Phone, PhoneOff, Send, Activity, Brain, Mic,
+  Zap, Users, Radio, Loader2, ChevronDown,
   ChevronUp, Volume2,
 } from "lucide-react";
 
