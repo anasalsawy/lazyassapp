@@ -45,7 +45,6 @@ type RecentCall = {
   createdAt: string;
   objective: string;
   turnCount: number;
-  lastAnalysis: any;
 };
 
 export default function CallCenter() {
