@@ -422,16 +422,21 @@ serve(async (req) => {
         }
       }
 
-      // Raw blackboard → UI
       const board = result?.blackboard || {};
+      const blackboard = {
+        answers: board.answers || {},
+        info: board.info || {},
+        directions: board.directions || null,
+        flags: Array.isArray(board.flags) ? board.flags : [],
+        operator: board.operator || null,
+        end_call: board.end_call === true,
+        delivered: Array.isArray(board.delivered) ? board.delivered : [],
+      };
 
-      const lastAnalysis = null;
-
-      const lastDirective = {
-        ...board,
-        instruction: board.directions || "",
-        shouldEnd: board.end_call || false,
-        action: board.end_call ? "END_CALL" : "CONTINUE",
+      const plannerMeta = {
+        lastPlannerAt: result?.lastPlannerAt || null,
+        plannerCycles: result?.plannerCycles || 0,
+        lastTranscriptSyncAt: result?.lastTranscriptSyncAt || null,
       };
 
       const turnCount = Math.max(result?.turnCount || 0, conversationHistory.length);
@@ -443,9 +448,11 @@ serve(async (req) => {
         callSid: result?.callSid,
         turnCount,
         conversationHistory,
-        lastAnalysis: turnCount > 0 ? lastAnalysis : null,
-        lastDirective: turnCount > 0 ? lastDirective : null,
-        pendingInjections: result?.operatorInjections?.length || 0,
+        lastAnalysis: null,
+        lastDirective: null,
+        blackboard,
+        plannerMeta,
+        pendingInjections: blackboard.operator ? 1 : (result?.operatorInjections?.length || 0),
         config: task.payload,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }

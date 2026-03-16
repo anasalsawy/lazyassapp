@@ -159,6 +159,11 @@ serve(async (req) => {
       should_end: endCall,
       flags,
       turn: updates.turnCount,
+      blackboard,
+      planner: {
+        last_planner_at: result.lastPlannerAt || null,
+        planner_cycles: result.plannerCycles || 0,
+      },
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

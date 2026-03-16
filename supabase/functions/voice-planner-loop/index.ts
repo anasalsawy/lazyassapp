@@ -187,6 +187,22 @@ Analyze and return blackboard update.`;
       update = null;
     }
 
+    const pendingOperator = typeof board.operator === "string" && board.operator.trim().length > 0
+      ? board.operator.trim()
+      : Array.isArray(result.operatorInjections) && result.operatorInjections.length > 0
+        ? String(result.operatorInjections[result.operatorInjections.length - 1]).trim()
+        : "";
+
+    if ((!update || update.no_update) && pendingOperator) {
+      update = {
+        answers: {},
+        info: {},
+        directions: pendingOperator,
+        flags: Array.isArray(board.flags) ? board.flags : [],
+        end_call: false,
+      };
+    }
+
     if (!update || update.no_update) {
       console.log(`[voice-planner-loop] No update needed.`);
       await supabase.from("agent_tasks").update({
@@ -198,6 +214,11 @@ Analyze and return blackboard update.`;
       });
     }
 
+    const plannerCycle = (result.plannerCycles || 0) + 1;
+    const operatorHistory = Array.isArray(result.operatorInjectionHistory)
+      ? result.operatorInjectionHistory
+      : [];
+
     // ── Merge into blackboard (replace keys, don't bloat) ──
     const newBoard = {
       ...board,
@@ -206,7 +227,7 @@ Analyze and return blackboard update.`;
       directions: update.directions !== undefined ? update.directions : board.directions,
       flags: Array.isArray(update.flags) ? update.flags : (board.flags || []),
       end_call: update.end_call === true ? true : (board.end_call || false),
-      operator: board.operator, // never touch operator — that's human-only
+      operator: pendingOperator ? null : board.operator,
       delivered: board.delivered || [],
     };
 
@@ -214,9 +235,13 @@ Analyze and return blackboard update.`;
       result: {
         ...result,
         blackboard: newBoard,
+        operatorInjections: pendingOperator ? [] : (result.operatorInjections || []),
+        operatorInjectionHistory: pendingOperator
+          ? [...operatorHistory.slice(-24), { instruction: pendingOperator, applied_at: now.toISOString(), planner_cycle: plannerCycle }]
+          : operatorHistory,
         lastPlannerTranscript: transcript,
         lastPlannerAt: now.toISOString(),
-        plannerCycles: (result.plannerCycles || 0) + 1,
+        plannerCycles: plannerCycle,
       },
     }).eq("id", taskId);
 
