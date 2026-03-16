@@ -156,7 +156,7 @@ export default function CallCenter() {
               return prev;
             }
 
-            // Only update transcript and status from realtime; keep analysis from polls
+            // Only update lightweight state from realtime; polls remain source of truth
             const newHistory = conversationHistory.length > (prev.conversationHistory?.length || 0)
               ? conversationHistory
               : prev.conversationHistory;
@@ -166,7 +166,13 @@ export default function CallCenter() {
               status: task.status || prev.status,
               turnCount: Math.max(result?.turnCount || 0, newHistory.length, prev.turnCount || 0),
               conversationHistory: newHistory,
-              pendingInjections: result?.operatorInjections?.length ?? prev.pendingInjections,
+              blackboard: result?.blackboard ?? prev.blackboard,
+              plannerMeta: {
+                lastPlannerAt: result?.lastPlannerAt ?? prev.plannerMeta?.lastPlannerAt,
+                plannerCycles: result?.plannerCycles ?? prev.plannerMeta?.plannerCycles,
+                lastTranscriptSyncAt: result?.lastTranscriptSyncAt ?? prev.plannerMeta?.lastTranscriptSyncAt,
+              },
+              pendingInjections: result?.blackboard?.operator ? 1 : (result?.operatorInjections?.length ?? prev.pendingInjections),
             };
           });
 
