@@ -1010,10 +1010,8 @@ async function executeTool(
       }
 
       case "phone_call": {
-        // Route through voice-agent edge function (ElevenLabs Native LLM)
-        const voiceAgentUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=initiate`;
-        const callBody = {
-          phone_number: args.phone_number as string,
+        // Create task directly in DB, then fire voice-agent as fire-and-forget
+        const callConfig = {
           objective: args.objective as string,
           tone: (args.tone as string) || "professional",
           script: (args.script as string) || "",
@@ -1023,29 +1021,51 @@ async function executeTool(
           agent_name: "Maya",
           agent_role: "AI Assistant",
           call_type: "outbound",
+          phone_number: args.phone_number as string,
+          disclosure_policy: "disclose_if_asked",
+          allowed_actions: "",
+          constraints: "",
         };
 
-        const callRes = await fetch(voiceAgentUrl, {
+        // Insert task directly — guaranteed fast
+        const { data: task, error: taskErr } = await supabase.from("agent_tasks").insert({
+          user_id: userId,
+          task_type: "voice_call_multi_agent",
+          status: "pending",
+          mode: "FAST",
+          payload: callConfig,
+          result: {
+            conversationHistory: [],
+            operatorInjections: [],
+            operatorInjectionHistory: [],
+            directorDirectiveHistory: [],
+            turnCount: 0,
+            config: callConfig,
+            blackboard: { answers: {}, info: {}, directions: null, flags: [], operator: null, end_call: false, delivered: [] },
+          },
+        }).select("id").single();
+
+        if (taskErr || !task?.id) {
+          return JSON.stringify({ error: `Failed to create call task: ${taskErr?.message || "unknown"}` });
+        }
+
+        // Fire voice-agent initiation in background — do NOT await
+        const voiceAgentUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=initiate`;
+        fetch(voiceAgentUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
           },
-          body: JSON.stringify(callBody),
-        });
-
-        const callData = await callRes.json();
-        if (!callRes.ok) {
-          return JSON.stringify({ error: callData.error || `Call initiation failed (${callRes.status})` });
-        }
+          body: JSON.stringify({ ...callConfig, _task_id: task.id }),
+        }).catch(e => console.error("[agent-chat] fire-and-forget voice-agent error:", e));
 
         return JSON.stringify({
           success: true,
-          taskId: callData.taskId,
-          callSid: callData.callSid,
+          taskId: task.id,
           to: args.phone_number,
-          status: "running",
-          message: `📞 Call initiated to ${args.phone_number}. Task ID: ${callData.taskId}. Use phone_call_status to monitor the call transcript and outcome.`,
+          status: "pending",
+          message: `📞 Call queued to ${args.phone_number}. Task ID: ${task.id}. The voice agent is dialing now. Use phone_call_status to monitor.`,
         });
       }
 
