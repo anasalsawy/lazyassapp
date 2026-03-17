@@ -486,16 +486,48 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "phone_call",
-      description: "Initiate an outbound phone call via Twilio. Dials, speaks a scripted message, and returns the call result.",
+      description: "Initiate an autonomous outbound phone call via the AI voice agent (Maya). The agent navigates IVR menus, speaks to humans, and pursues the objective autonomously. Returns a task ID for monitoring.",
       parameters: {
         type: "object",
         properties: {
-          phone_number: { type: "string", description: "Phone number in E.164 format" },
-          objective: { type: "string", description: "What the call should accomplish" },
-          tone: { type: "string", description: "Tone: professional, friendly, urgent, casual" },
-          script: { type: "string", description: "Optional script or talking points" },
+          phone_number: { type: "string", description: "Phone number in E.164 format (e.g. +14155551234)" },
+          objective: { type: "string", description: "What the call should accomplish (e.g. 'Schedule an appointment for March 20th')" },
+          tone: { type: "string", description: "Tone: professional, friendly, urgent, casual (default: professional)" },
+          script: { type: "string", description: "Optional talking points or script outline for the agent" },
+          caller_name: { type: "string", description: "Name the agent should use when identifying itself" },
+          company_name: { type: "string", description: "Company or context for the call" },
+          success_criteria: { type: "string", description: "How to determine the call succeeded" },
         },
         required: ["phone_number", "objective"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "phone_call_status",
+      description: "Check the status and transcript of an active or completed phone call by task ID.",
+      parameters: {
+        type: "object",
+        properties: {
+          task_id: { type: "string", description: "The task ID returned from phone_call" },
+        },
+        required: ["task_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "phone_call_inject",
+      description: "Send a live instruction to an active phone call. The voice agent will incorporate this into its next turn.",
+      parameters: {
+        type: "object",
+        properties: {
+          task_id: { type: "string", description: "The task ID of the active call" },
+          instruction: { type: "string", description: "Instruction for the agent (e.g. 'Ask about their return policy')" },
+        },
+        required: ["task_id", "instruction"],
       },
     },
   },
