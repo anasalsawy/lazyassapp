@@ -1374,14 +1374,14 @@ serve(async (req) => {
               sendEvent("tool_done", { name: tc.function.name, preview: resultPreview });
             }
 
-            response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            response = await fetch(AI_URL, {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                Authorization: `Bearer ${AI_KEY}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                model: "google/gemini-3-flash-preview",
+                model: AI_MODEL,
                 messages: apiMessages,
                 tools: AGENT_TOOLS,
                 stream: false,
