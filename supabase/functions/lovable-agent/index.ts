@@ -1274,15 +1274,20 @@ serve(async (req) => {
       ...messages,
     ];
 
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    const AI_URL = OPENAI_API_KEY ? "https://api.openai.com/v1/chat/completions" : "https://ai.gateway.lovable.dev/v1/chat/completions";
+    const AI_KEY = OPENAI_API_KEY || LOVABLE_API_KEY;
+    const AI_MODEL = OPENAI_API_KEY ? "gpt-4.1" : "google/gemini-3-flash-preview";
+
     // First call — may produce tool calls
-    let response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    let response = await fetch(AI_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${AI_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: AI_MODEL,
         messages: apiMessages,
         tools: AGENT_TOOLS,
         stream: false,
@@ -1369,14 +1374,14 @@ serve(async (req) => {
               sendEvent("tool_done", { name: tc.function.name, preview: resultPreview });
             }
 
-            response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            response = await fetch(AI_URL, {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                Authorization: `Bearer ${AI_KEY}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                model: "google/gemini-3-flash-preview",
+                model: AI_MODEL,
                 messages: apiMessages,
                 tools: AGENT_TOOLS,
                 stream: false,
@@ -1476,14 +1481,14 @@ serve(async (req) => {
 
           sendEvent("phase", { status: "generating" });
 
-          const streamResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          const streamResponse = await fetch(AI_URL, {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${LOVABLE_API_KEY}`,
+              Authorization: `Bearer ${AI_KEY}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model: "google/gemini-3-flash-preview",
+              model: AI_MODEL,
               messages: [
                 ...apiMessages,
                 ...(finalContent ? [{ role: "assistant", content: finalContent }] : []),
