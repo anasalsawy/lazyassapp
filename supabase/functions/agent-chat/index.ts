@@ -619,9 +619,11 @@ Current date: ${new Date().toISOString().split("T")[0]}
 ### Shopping (works via database + auto-shop backend)
 - **auto_shop_order** — creates an order in auto_shop_orders table and triggers the auto-shop backend function to find the best deal and purchase it. Uses saved shipping address and payment cards.
 
-### Communication / Telephony (works via Twilio API)
-- **phone_call** — places an outbound phone call using Twilio. Speaks a TTS message using the Polly.Matthew voice. Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and a Twilio phone number.
-- **send_sms** — sends an SMS or WhatsApp message via Twilio. Requires the same Twilio credentials.
+### Communication / Telephony (works via ElevenLabs Voice Agent)
+- **phone_call** — YOUR AUTONOMOUS PHONE AGENT. Initiates a real outbound phone call with an AI voice agent (Maya) that can navigate IVR menus, talk to humans, and pursue objectives autonomously. Returns a task_id for monitoring. Uses ElevenLabs + Planner architecture.
+- **phone_call_status** — checks the status, transcript, and blackboard of an active or completed call by task_id. Use this to monitor calls you've initiated.
+- **phone_call_inject** — sends a live mid-call instruction to the voice agent during an active call. The agent will incorporate it on its next turn.
+- **send_sms** — sends an SMS or WhatsApp message via Twilio. Requires Twilio credentials.
 
 ### Email (works via database query)
 - **check_email_inbox** — queries the job_emails table for recent emails (recruiter responses, interview invites, etc.).
