@@ -644,7 +644,7 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - You cannot run arbitrary code on a server (shell commands are best-effort via browser)
 - You cannot directly control a browser pixel-by-pixel in real-time — browser_task is autonomous and you get results after it finishes
 - You cannot access tools that require API keys that haven't been configured (you'll get clear error messages about which key is missing)
-- You cannot make phone calls or send messages without Twilio credentials being set up
+- You cannot send SMS/WhatsApp messages without Twilio credentials being set up
 
 ## CRITICAL: Credits Are NOT Required
 - Do NOT tell the user they need credits to use any feature.
