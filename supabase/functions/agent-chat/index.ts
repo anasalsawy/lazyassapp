@@ -1010,31 +1010,89 @@ async function executeTool(
       }
 
       case "phone_call": {
-        const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
-        const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
-        const TWILIO_NUMBER = Deno.env.get("TWILIO_WHATSAPP_NUMBER")?.replace("whatsapp:", "") || "";
-        if (!TWILIO_SID || !TWILIO_TOKEN) return JSON.stringify({ error: "Telephony not configured — Twilio credentials needed." });
+        // Route through voice-agent edge function (ElevenLabs Native LLM)
+        const voiceAgentUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=initiate`;
+        const callBody = {
+          phone_number: args.phone_number as string,
+          objective: args.objective as string,
+          tone: (args.tone as string) || "professional",
+          script: (args.script as string) || "",
+          caller_name: (args.caller_name as string) || "",
+          company_name: (args.company_name as string) || "",
+          success_criteria: (args.success_criteria as string) || "",
+          agent_name: "Maya",
+          agent_role: "AI Assistant",
+          call_type: "outbound",
+        };
 
-        const twiml = `<Response><Say voice="Polly.Matthew">${(args.script || args.objective as string).replace(/[<>&'"]/g, "")}</Say></Response>`;
-        const callParams = new URLSearchParams();
-        callParams.append("To", args.phone_number as string);
-        callParams.append("From", TWILIO_NUMBER);
-        callParams.append("Twiml", twiml);
-
-        const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
+        const callRes = await fetch(voiceAgentUrl, {
           method: "POST",
           headers: {
-            Authorization: "Basic " + btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`),
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
           },
-          body: callParams.toString(),
+          body: JSON.stringify(callBody),
         });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          return JSON.stringify({ error: `Call failed (${res.status}): ${errData.message || "Unknown error"}` });
+
+        const callData = await callRes.json();
+        if (!callRes.ok) {
+          return JSON.stringify({ error: callData.error || `Call initiation failed (${callRes.status})` });
         }
-        const callData = await res.json();
-        return JSON.stringify({ success: true, callSid: callData.sid, status: callData.status, to: callData.to, message: `Call initiated to ${args.phone_number}` });
+
+        return JSON.stringify({
+          success: true,
+          taskId: callData.taskId,
+          callSid: callData.callSid,
+          to: args.phone_number,
+          status: "running",
+          message: `📞 Call initiated to ${args.phone_number}. Task ID: ${callData.taskId}. Use phone_call_status to monitor the call transcript and outcome.`,
+        });
+      }
+
+      case "phone_call_status": {
+        const stateUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=get-state&task_id=${args.task_id}`;
+        const stateRes = await fetch(stateUrl, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+        });
+        const stateData = await stateRes.json();
+        if (!stateRes.ok) {
+          return JSON.stringify({ error: stateData.error || `Failed to get call state (${stateRes.status})` });
+        }
+        return JSON.stringify({
+          taskId: args.task_id,
+          status: stateData.status,
+          mode: stateData.mode,
+          transcript: stateData.transcript || [],
+          blackboard: stateData.blackboard || {},
+          turnCount: stateData.plannerMeta?.totalCycles || 0,
+          objective: stateData.config?.objective || "",
+        });
+      }
+
+      case "phone_call_inject": {
+        const injectUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=inject`;
+        const injectRes = await fetch(injectUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            task_id: args.task_id as string,
+            instruction: args.instruction as string,
+          }),
+        });
+        const injectData = await injectRes.json();
+        if (!injectRes.ok) {
+          return JSON.stringify({ error: injectData.error || `Injection failed (${injectRes.status})` });
+        }
+        return JSON.stringify({
+          success: true,
+          message: `Instruction injected into active call. The voice agent will incorporate "${args.instruction}" on its next turn.`,
+        });
       }
 
       case "send_sms": {
