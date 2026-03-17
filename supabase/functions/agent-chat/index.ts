@@ -486,16 +486,48 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "phone_call",
-      description: "Initiate an outbound phone call via Twilio. Dials, speaks a scripted message, and returns the call result.",
+      description: "Initiate an autonomous outbound phone call via the AI voice agent (Maya). The agent navigates IVR menus, speaks to humans, and pursues the objective autonomously. Returns a task ID for monitoring.",
       parameters: {
         type: "object",
         properties: {
-          phone_number: { type: "string", description: "Phone number in E.164 format" },
-          objective: { type: "string", description: "What the call should accomplish" },
-          tone: { type: "string", description: "Tone: professional, friendly, urgent, casual" },
-          script: { type: "string", description: "Optional script or talking points" },
+          phone_number: { type: "string", description: "Phone number in E.164 format (e.g. +14155551234)" },
+          objective: { type: "string", description: "What the call should accomplish (e.g. 'Schedule an appointment for March 20th')" },
+          tone: { type: "string", description: "Tone: professional, friendly, urgent, casual (default: professional)" },
+          script: { type: "string", description: "Optional talking points or script outline for the agent" },
+          caller_name: { type: "string", description: "Name the agent should use when identifying itself" },
+          company_name: { type: "string", description: "Company or context for the call" },
+          success_criteria: { type: "string", description: "How to determine the call succeeded" },
         },
         required: ["phone_number", "objective"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "phone_call_status",
+      description: "Check the status and transcript of an active or completed phone call by task ID.",
+      parameters: {
+        type: "object",
+        properties: {
+          task_id: { type: "string", description: "The task ID returned from phone_call" },
+        },
+        required: ["task_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "phone_call_inject",
+      description: "Send a live instruction to an active phone call. The voice agent will incorporate this into its next turn.",
+      parameters: {
+        type: "object",
+        properties: {
+          task_id: { type: "string", description: "The task ID of the active call" },
+          instruction: { type: "string", description: "Instruction for the agent (e.g. 'Ask about their return policy')" },
+        },
+        required: ["task_id", "instruction"],
       },
     },
   },
@@ -587,9 +619,11 @@ Current date: ${new Date().toISOString().split("T")[0]}
 ### Shopping (works via database + auto-shop backend)
 - **auto_shop_order** — creates an order in auto_shop_orders table and triggers the auto-shop backend function to find the best deal and purchase it. Uses saved shipping address and payment cards.
 
-### Communication / Telephony (works via Twilio API)
-- **phone_call** — places an outbound phone call using Twilio. Speaks a TTS message using the Polly.Matthew voice. Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and a Twilio phone number.
-- **send_sms** — sends an SMS or WhatsApp message via Twilio. Requires the same Twilio credentials.
+### Communication / Telephony (works via ElevenLabs Voice Agent)
+- **phone_call** — YOUR AUTONOMOUS PHONE AGENT. Initiates a real outbound phone call with an AI voice agent (Maya) that can navigate IVR menus, talk to humans, and pursue objectives autonomously. Returns a task_id for monitoring. Uses ElevenLabs + Planner architecture.
+- **phone_call_status** — checks the status, transcript, and blackboard of an active or completed call by task_id. Use this to monitor calls you've initiated.
+- **phone_call_inject** — sends a live mid-call instruction to the voice agent during an active call. The agent will incorporate it on its next turn.
+- **send_sms** — sends an SMS or WhatsApp message via Twilio. Requires Twilio credentials.
 
 ### Email (works via database query)
 - **check_email_inbox** — queries the job_emails table for recent emails (recruiter responses, interview invites, etc.).
@@ -610,7 +644,7 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - You cannot run arbitrary code on a server (shell commands are best-effort via browser)
 - You cannot directly control a browser pixel-by-pixel in real-time — browser_task is autonomous and you get results after it finishes
 - You cannot access tools that require API keys that haven't been configured (you'll get clear error messages about which key is missing)
-- You cannot make phone calls or send messages without Twilio credentials being set up
+- You cannot send SMS/WhatsApp messages without Twilio credentials being set up
 
 ## CRITICAL: Credits Are NOT Required
 - Do NOT tell the user they need credits to use any feature.
@@ -976,31 +1010,89 @@ async function executeTool(
       }
 
       case "phone_call": {
-        const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
-        const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
-        const TWILIO_NUMBER = Deno.env.get("TWILIO_WHATSAPP_NUMBER")?.replace("whatsapp:", "") || "";
-        if (!TWILIO_SID || !TWILIO_TOKEN) return JSON.stringify({ error: "Telephony not configured — Twilio credentials needed." });
+        // Route through voice-agent edge function (ElevenLabs Native LLM)
+        const voiceAgentUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=initiate`;
+        const callBody = {
+          phone_number: args.phone_number as string,
+          objective: args.objective as string,
+          tone: (args.tone as string) || "professional",
+          script: (args.script as string) || "",
+          caller_name: (args.caller_name as string) || "",
+          company_name: (args.company_name as string) || "",
+          success_criteria: (args.success_criteria as string) || "",
+          agent_name: "Maya",
+          agent_role: "AI Assistant",
+          call_type: "outbound",
+        };
 
-        const twiml = `<Response><Say voice="Polly.Matthew">${(args.script || args.objective as string).replace(/[<>&'"]/g, "")}</Say></Response>`;
-        const callParams = new URLSearchParams();
-        callParams.append("To", args.phone_number as string);
-        callParams.append("From", TWILIO_NUMBER);
-        callParams.append("Twiml", twiml);
-
-        const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
+        const callRes = await fetch(voiceAgentUrl, {
           method: "POST",
           headers: {
-            Authorization: "Basic " + btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`),
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
           },
-          body: callParams.toString(),
+          body: JSON.stringify(callBody),
         });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          return JSON.stringify({ error: `Call failed (${res.status}): ${errData.message || "Unknown error"}` });
+
+        const callData = await callRes.json();
+        if (!callRes.ok) {
+          return JSON.stringify({ error: callData.error || `Call initiation failed (${callRes.status})` });
         }
-        const callData = await res.json();
-        return JSON.stringify({ success: true, callSid: callData.sid, status: callData.status, to: callData.to, message: `Call initiated to ${args.phone_number}` });
+
+        return JSON.stringify({
+          success: true,
+          taskId: callData.taskId,
+          callSid: callData.callSid,
+          to: args.phone_number,
+          status: "running",
+          message: `📞 Call initiated to ${args.phone_number}. Task ID: ${callData.taskId}. Use phone_call_status to monitor the call transcript and outcome.`,
+        });
+      }
+
+      case "phone_call_status": {
+        const stateUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=get-state&task_id=${args.task_id}`;
+        const stateRes = await fetch(stateUrl, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+        });
+        const stateData = await stateRes.json();
+        if (!stateRes.ok) {
+          return JSON.stringify({ error: stateData.error || `Failed to get call state (${stateRes.status})` });
+        }
+        return JSON.stringify({
+          taskId: args.task_id,
+          status: stateData.status,
+          mode: stateData.mode,
+          transcript: stateData.transcript || [],
+          blackboard: stateData.blackboard || {},
+          turnCount: stateData.plannerMeta?.totalCycles || 0,
+          objective: stateData.config?.objective || "",
+        });
+      }
+
+      case "phone_call_inject": {
+        const injectUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/voice-agent?action=inject`;
+        const injectRes = await fetch(injectUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            task_id: args.task_id as string,
+            instruction: args.instruction as string,
+          }),
+        });
+        const injectData = await injectRes.json();
+        if (!injectRes.ok) {
+          return JSON.stringify({ error: injectData.error || `Injection failed (${injectRes.status})` });
+        }
+        return JSON.stringify({
+          success: true,
+          message: `Instruction injected into active call. The voice agent will incorporate "${args.instruction}" on its next turn.`,
+        });
       }
 
       case "send_sms": {
