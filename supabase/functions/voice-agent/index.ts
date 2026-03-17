@@ -92,6 +92,7 @@ serve(async (req) => {
         phone_number, objective, tone, script, caller_name,
         company_name, agent_name, agent_role, success_criteria,
         allowed_actions, constraints, disclosure_policy, call_type,
+        _task_id,
       } = body;
 
       if (!phone_number || !objective) {
@@ -144,23 +145,32 @@ serve(async (req) => {
         if (user) userId = user.id;
       }
 
-      // Create task record — must succeed before calling
-      const { data: task, error: taskError } = await supabase.from("agent_tasks").insert({
-        user_id: userId,
-        task_type: "voice_call_multi_agent",
-        status: "running",
-        mode: "FAST",
-        payload: callConfig,
-      }).select("id").single();
+      let taskId = _task_id as string | undefined;
 
-      if (taskError || !task?.id) {
-        console.error("[voice-agent] Failed to create agent_task:", taskError);
-        return new Response(JSON.stringify({ error: `Failed to create task: ${taskError?.message || "unknown insert error"}` }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      if (taskId) {
+        // Task was pre-created by agent-chat — just update status to running
+        await supabase.from("agent_tasks").update({
+          status: "running",
+          payload: callConfig,
+        }).eq("id", taskId);
+      } else {
+        // Create task record — must succeed before calling
+        const { data: task, error: taskError } = await supabase.from("agent_tasks").insert({
+          user_id: userId,
+          task_type: "voice_call_multi_agent",
+          status: "running",
+          mode: "FAST",
+          payload: callConfig,
+        }).select("id").single();
+
+        if (taskError || !task?.id) {
+          console.error("[voice-agent] Failed to create agent_task:", taskError);
+          return new Response(JSON.stringify({ error: `Failed to create task: ${taskError?.message || "unknown insert error"}` }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        taskId = task.id;
       }
-
-      const taskId = task.id;
 
       // Initialize result state with blackboard
       await supabase.from("agent_tasks").update({
