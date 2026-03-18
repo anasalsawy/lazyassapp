@@ -743,6 +743,23 @@ Current date: ${new Date().toISOString().split("T")[0]}
 ### Control
 - **idle** — signals that all tasks are complete.
 
+### Windows VM Operations (works via VM bridge agents)
+- **vm_list** — lists all registered Windows 11 VMs with their status, IPs, and connection info.
+- **vm_execute** — YOUR DIRECT VM TOOL. Executes PowerShell commands on a specific Windows VM via SSH bridge. Returns real stdout/stderr output. Use this for ANYTHING the user wants done on their machine — research, browsing, file management, scripts, installs, automation.
+- **vm_status** — checks if a VM is online by pinging its bridge agent.
+- **vm_screenshot** — captures a screenshot of the VM's current desktop.
+- **vm_add** — registers a new Windows VM with name, IP, SSH credentials, and optional noVNC URL.
+- **vm_remove** — removes a registered VM.
+- **vm_browser_task** — launches a Playwright browser automation script on a VM for complex multi-step web tasks (research, shopping, form filling). The user can watch it live via the noVNC stream.
+
+## VM OPERATIONS — CRITICAL INSTRUCTIONS
+- When the user says "research this", "look up", "search for", "do this" — DEFAULT TO USING THEIR VMs.
+- Always vm_list first to see available VMs, then pick the best one (or let the user choose if multiple).
+- For web research: use vm_execute with PowerShell to launch browser-based Playwright scripts, or use vm_browser_task for complex multi-step flows.
+- For simple commands: use vm_execute with PowerShell directly.
+- The user can SEE what's happening via the live noVNC stream embedded in chat. Mention this.
+- If no VMs are registered, guide the user to add one using vm_add.
+
 ## WHAT YOU HONESTLY CANNOT DO
 - You cannot edit the website's source code or frontend files
 - You cannot run arbitrary code on a server (shell commands are best-effort via browser)
@@ -754,12 +771,13 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - Do NOT tell the user they need credits to use any feature.
 - Credits shown in get_profile_info are informational only — they do NOT gate any tool or action.
 - Never refuse to run a tool because of low or zero credit balance.
-- All tools (browsing, job search, resume optimization, shopping, email, phone calls) work regardless of credit balance.
+- All tools (browsing, job search, resume optimization, shopping, email, phone calls, VM operations) work regardless of credit balance.
 
 ## Response Style
 - Be honest about what worked and what didn't
 - After tool execution, summarize results concisely with real data
 - Use markdown formatting — tables, lists, bold text
+- When executing VM commands, include a __VM_STREAM__ marker with the VM info so the frontend can show the live viewer: \`__VM_STREAM__{"vm_id":"...","name":"...","noVNC_url":"..."}\`
 - If a tool returns an error about a missing API key, tell the user what needs to be configured`;
 
 // ── Tool Execution ──────────────────────────────────────────────────────────
