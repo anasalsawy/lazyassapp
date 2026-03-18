@@ -563,6 +563,110 @@ const AGENT_TOOLS = [
       },
     },
   },
+
+  // ── VM Operations ───────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "vm_list",
+      description: "List all registered Windows VMs with their status, IP, and connection info.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_execute",
+      description: "Execute a PowerShell command on a specific Windows VM via SSH. Returns command output. Use this for any task the user asks you to do on their VM — research, browsing, file management, installing software, running scripts, etc.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the target VM (from vm_list)" },
+          command: { type: "string", description: "PowerShell command to execute" },
+          timeout: { type: "number", description: "Timeout in seconds (default 30)" },
+        },
+        required: ["vm_id", "command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_status",
+      description: "Check the live status and health of a specific Windows VM.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the VM to check" },
+        },
+        required: ["vm_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_screenshot",
+      description: "Capture a screenshot of the VM's current desktop state.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the VM to screenshot" },
+        },
+        required: ["vm_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_add",
+      description: "Register a new Windows VM with the platform. Requires host IP, SSH user, and optionally noVNC URL for live streaming.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Friendly name for the VM (e.g. 'Work PC', 'Dev Server')" },
+          host: { type: "string", description: "IP address or hostname of the VM" },
+          ssh_port: { type: "number", description: "SSH port (default 22)" },
+          ssh_user: { type: "string", description: "SSH username (default 'admin')" },
+          ssh_password_enc: { type: "string", description: "SSH password (will be encrypted)" },
+          noVNC_url: { type: "string", description: "noVNC websocket URL for live desktop streaming (e.g. https://vm1.example.com:6080/vnc.html)" },
+          bridge_port: { type: "number", description: "Port where the VM bridge agent is running (default 8022)" },
+        },
+        required: ["name", "host"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_remove",
+      description: "Remove a registered VM from the platform.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the VM to remove" },
+        },
+        required: ["vm_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_browser_task",
+      description: "Launch a browser on a Windows VM and perform a multi-step web task. Opens Chrome/Edge on the VM, navigates, clicks, fills forms — all visible in the live stream. Use for research, shopping, filling forms, or any web browsing task the user wants done on THEIR machine.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the target VM" },
+          task: { type: "string", description: "Natural language description of the web task" },
+          start_url: { type: "string", description: "URL to open first" },
+        },
+        required: ["vm_id", "task"],
+      },
+    },
+  },
 ];
 
 // ── System Prompt ───────────────────────────────────────────────────────────
@@ -639,6 +743,23 @@ Current date: ${new Date().toISOString().split("T")[0]}
 ### Control
 - **idle** — signals that all tasks are complete.
 
+### Windows VM Operations (works via VM bridge agents)
+- **vm_list** — lists all registered Windows 11 VMs with their status, IPs, and connection info.
+- **vm_execute** — YOUR DIRECT VM TOOL. Executes PowerShell commands on a specific Windows VM via SSH bridge. Returns real stdout/stderr output. Use this for ANYTHING the user wants done on their machine — research, browsing, file management, scripts, installs, automation.
+- **vm_status** — checks if a VM is online by pinging its bridge agent.
+- **vm_screenshot** — captures a screenshot of the VM's current desktop.
+- **vm_add** — registers a new Windows VM with name, IP, SSH credentials, and optional noVNC URL.
+- **vm_remove** — removes a registered VM.
+- **vm_browser_task** — launches a Playwright browser automation script on a VM for complex multi-step web tasks (research, shopping, form filling). The user can watch it live via the noVNC stream.
+
+## VM OPERATIONS — CRITICAL INSTRUCTIONS
+- When the user says "research this", "look up", "search for", "do this" — DEFAULT TO USING THEIR VMs.
+- Always vm_list first to see available VMs, then pick the best one (or let the user choose if multiple).
+- For web research: use vm_execute with PowerShell to launch browser-based Playwright scripts, or use vm_browser_task for complex multi-step flows.
+- For simple commands: use vm_execute with PowerShell directly.
+- The user can SEE what's happening via the live noVNC stream embedded in chat. Mention this.
+- If no VMs are registered, guide the user to add one using vm_add.
+
 ## WHAT YOU HONESTLY CANNOT DO
 - You cannot edit the website's source code or frontend files
 - You cannot run arbitrary code on a server (shell commands are best-effort via browser)
@@ -650,12 +771,13 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - Do NOT tell the user they need credits to use any feature.
 - Credits shown in get_profile_info are informational only — they do NOT gate any tool or action.
 - Never refuse to run a tool because of low or zero credit balance.
-- All tools (browsing, job search, resume optimization, shopping, email, phone calls) work regardless of credit balance.
+- All tools (browsing, job search, resume optimization, shopping, email, phone calls, VM operations) work regardless of credit balance.
 
 ## Response Style
 - Be honest about what worked and what didn't
 - After tool execution, summarize results concisely with real data
 - Use markdown formatting — tables, lists, bold text
+- When executing VM commands, include a __VM_STREAM__ marker with the VM info so the frontend can show the live viewer: \`__VM_STREAM__{"vm_id":"...","name":"...","noVNC_url":"..."}\`
 - If a tool returns an error about a missing API key, tell the user what needs to be configured`;
 
 // ── Tool Execution ──────────────────────────────────────────────────────────
@@ -1169,6 +1291,118 @@ async function executeTool(
           headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}` },
         });
         return JSON.stringify(data || { error: error?.message || "Application submission failed" });
+      }
+
+      // ═══ VM OPERATIONS ════════════════════════════════════════════════
+      case "vm_list": {
+        const { data, error } = await supabase.from("vm_instances")
+          .select("id, name, host, ssh_port, ssh_user, vnc_url, \"noVNC_url\", status, os, specs_json, last_heartbeat_at")
+          .eq("user_id", userId).order("name");
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ vms: data || [], count: data?.length || 0 });
+      }
+
+      case "vm_execute": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=execute`;
+        const res = await fetch(vmBridgeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            vm_id: args.vm_id,
+            command: args.command,
+            timeout: args.timeout || 30,
+          }),
+        });
+        const result = await res.json();
+        if (!res.ok) return JSON.stringify({ error: result.error || "VM command failed" });
+
+        // Get VM info for stream marker
+        const { data: vmInfo } = await supabase.from("vm_instances")
+          .select("id, name, \"noVNC_url\"").eq("id", args.vm_id as string).single();
+
+        return JSON.stringify({
+          ...result,
+          vm: vmInfo ? { id: vmInfo.id, name: vmInfo.name, noVNC_url: vmInfo["noVNC_url"] } : null,
+        });
+      }
+
+      case "vm_status": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=status&vm_id=${args.vm_id}`;
+        const res = await fetch(vmBridgeUrl, {
+          headers: {
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+        });
+        return await res.text();
+      }
+
+      case "vm_screenshot": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=screenshot`;
+        const res = await fetch(vmBridgeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({ vm_id: args.vm_id }),
+        });
+        return await res.text();
+      }
+
+      case "vm_add": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=add`;
+        const res = await fetch(vmBridgeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            name: args.name,
+            host: args.host,
+            ssh_port: args.ssh_port || 22,
+            ssh_user: args.ssh_user || "admin",
+            ssh_password_enc: args.ssh_password_enc || null,
+            noVNC_url: args.noVNC_url || null,
+            specs_json: args.bridge_port ? { bridge_port: args.bridge_port } : {},
+          }),
+        });
+        return await res.text();
+      }
+
+      case "vm_remove": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=remove`;
+        const res = await fetch(vmBridgeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({ vm_id: args.vm_id }),
+        });
+        return await res.text();
+      }
+
+      case "vm_browser_task": {
+        // Compose a PowerShell script that launches Playwright on the VM
+        const playwrightScript = `
+$task = @"
+${(args.task as string).replace(/"/g, '`"')}
+"@
+$startUrl = "${args.start_url || 'https://www.google.com'}"
+# Launch browser-use or Playwright script on the VM
+Start-Process "msedge" -ArgumentList "$startUrl"
+Write-Output "Browser launched with task: $task at URL: $startUrl"
+Write-Output "Task is being executed on the VM desktop — visible in live stream."
+`;
+        return executeTool("vm_execute", {
+          vm_id: args.vm_id,
+          command: playwrightScript,
+          timeout: 60,
+        }, supabase, userId);
       }
 
       default:

@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { VMViewer } from "@/components/agent/VMViewer";
+import { VMCommandOutput } from "@/components/agent/VMCommandOutput";
 import { useAuth } from "@/hooks/useAuth";
 import {
   Bot,
@@ -18,24 +19,78 @@ import {
   Activity,
   User,
   Zap,
+  Monitor,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
 type Msg = { role: "user" | "assistant"; content: string };
+
+interface VMStreamInfo {
+  vm_id: string;
+  name: string;
+  noVNC_url: string | null;
+}
 
 const SUGGESTIONS = [
   { icon: Briefcase, text: "Find me matching jobs", color: "text-blue-400" },
   { icon: FileText, text: "Optimize my resume", color: "text-green-400" },
+  { icon: Monitor, text: "Run a task on my VM", color: "text-orange-400" },
   { icon: Activity, text: "Check my pipeline status", color: "text-yellow-400" },
   { icon: Mail, text: "Check for recruiter emails", color: "text-purple-400" },
-  { icon: ShoppingCart, text: "Order something for me", color: "text-pink-400" },
   { icon: Search, text: "Research average salaries for my target roles", color: "text-cyan-400" },
 ];
+
+// Parse __VM_STREAM__{...} markers from assistant messages
+function parseVMStream(content: string): { cleanContent: string; vmInfo: VMStreamInfo | null } {
+  const match = content.match(/__VM_STREAM__(\{[^}]+\})/);
+  if (!match) return { cleanContent: content, vmInfo: null };
+
+  try {
+    const vmInfo = JSON.parse(match[1]) as VMStreamInfo;
+    const cleanContent = content.replace(/__VM_STREAM__\{[^}]+\}/, "").trim();
+    return { cleanContent, vmInfo };
+  } catch {
+    return { cleanContent: content, vmInfo: null };
+  }
+}
+
+// Parse VM command output blocks from content
+function parseVMCommands(content: string): Array<{ type: "text"; value: string } | { type: "vm_cmd"; command: string; output: string; exitCode?: number; vmName: string; durationMs?: number }> {
+  // Look for patterns like ```powershell\nPS> command\n```  followed by output
+  // Or structured JSON vm output markers
+  const vmOutputMatch = content.match(/__VM_OUTPUT__(\{[\s\S]*?\})__END_VM_OUTPUT__/g);
+  if (!vmOutputMatch) return [{ type: "text", value: content }];
+
+  const parts: Array<{ type: "text"; value: string } | { type: "vm_cmd"; command: string; output: string; exitCode?: number; vmName: string; durationMs?: number }> = [];
+  let remaining = content;
+
+  for (const match of vmOutputMatch) {
+    const idx = remaining.indexOf(match);
+    if (idx > 0) {
+      parts.push({ type: "text", value: remaining.slice(0, idx).trim() });
+    }
+    try {
+      const json = JSON.parse(match.replace("__VM_OUTPUT__", "").replace("__END_VM_OUTPUT__", ""));
+      parts.push({ type: "vm_cmd", ...json });
+    } catch {
+      parts.push({ type: "text", value: match });
+    }
+    remaining = remaining.slice(idx + match.length);
+  }
+
+  if (remaining.trim()) {
+    parts.push({ type: "text", value: remaining.trim() });
+  }
+
+  return parts;
+}
 
 export default function Agent() {
   const { session } = useAuth();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [activeVM, setActiveVM] = useState<VMStreamInfo | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -43,7 +98,7 @@ export default function Agent() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, activeVM]);
 
   const sendMessage = async (text?: string) => {
     const msg = text || input.trim();
@@ -58,6 +113,13 @@ export default function Agent() {
 
     const upsertAssistant = (chunk: string) => {
       assistantSoFar += chunk;
+
+      // Check for VM stream markers
+      const { vmInfo } = parseVMStream(assistantSoFar);
+      if (vmInfo && vmInfo.noVNC_url) {
+        setActiveVM(vmInfo);
+      }
+
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
@@ -119,7 +181,6 @@ export default function Agent() {
         }
       }
 
-      // Flush remaining buffer
       if (textBuffer.trim()) {
         for (let raw of textBuffer.split("\n")) {
           if (!raw) continue;
@@ -136,7 +197,6 @@ export default function Agent() {
         }
       }
 
-      // If no response came through, set a fallback
       if (!assistantSoFar) {
         upsertAssistant("I processed your request. Check the relevant section of the app for results.");
       }
@@ -155,6 +215,15 @@ export default function Agent() {
     }
   };
 
+  const renderMessageContent = (content: string) => {
+    const { cleanContent } = parseVMStream(content);
+    return (
+      <div className="text-sm leading-relaxed prose prose-sm prose-invert max-w-none">
+        <ReactMarkdown>{cleanContent}</ReactMarkdown>
+      </div>
+    );
+  };
+
   return (
     <AppLayout>
       <div className="flex flex-col h-[calc(100vh-3.5rem)]">
@@ -162,7 +231,6 @@ export default function Agent() {
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-4 py-6">
             {messages.length === 0 ? (
-              /* Empty state */
               <div className="flex flex-col items-center justify-center min-h-[60vh] gap-8">
                 <div className="relative">
                   <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-primary via-accent to-primary/60 flex items-center justify-center shadow-2xl shadow-primary/30">
@@ -176,7 +244,7 @@ export default function Agent() {
                 <div className="text-center space-y-2">
                   <h1 className="text-3xl font-display font-bold">Manus Agent</h1>
                   <p className="text-muted-foreground text-lg max-w-md">
-                    Your autonomous AI agent with full access to job search, resume optimization, shopping, email monitoring, and web research.
+                    Your autonomous AI agent with full access to job search, resume optimization, shopping, email monitoring, web research, and <strong>your Windows VMs</strong>.
                   </p>
                 </div>
 
@@ -194,7 +262,6 @@ export default function Agent() {
                 </div>
               </div>
             ) : (
-              /* Message list */
               <div className="space-y-6">
                 {messages.map((msg, i) => (
                   <div key={i} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}>
@@ -210,7 +277,10 @@ export default function Agent() {
                           : "bg-muted/60 text-foreground rounded-bl-md"
                       }`}
                     >
-                      <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                      {msg.role === "assistant"
+                        ? renderMessageContent(msg.content)
+                        : <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                      }
                     </div>
                     {msg.role === "user" && (
                       <div className="w-8 h-8 rounded-xl bg-muted flex items-center justify-center shrink-0 mt-1">
@@ -219,6 +289,18 @@ export default function Agent() {
                     )}
                   </div>
                 ))}
+
+                {/* Inline VM Viewer */}
+                {activeVM && (
+                  <div className="my-4">
+                    <VMViewer
+                      vmName={activeVM.name}
+                      noVNCUrl={activeVM.noVNC_url}
+                      status="online"
+                      onClose={() => setActiveVM(null)}
+                    />
+                  </div>
+                )}
 
                 {isLoading && !messages[messages.length - 1]?.content && (
                   <div className="flex gap-3">
@@ -262,7 +344,7 @@ export default function Agent() {
             </div>
             <div className="flex items-center justify-between mt-2">
               <p className="text-xs text-muted-foreground">
-                Manus has full access to your automations. Press Enter to send.
+                Manus has full access to your VMs & automations. Press Enter to send.
               </p>
               {isLoading && (
                 <Badge variant="outline" className="text-xs animate-pulse">
