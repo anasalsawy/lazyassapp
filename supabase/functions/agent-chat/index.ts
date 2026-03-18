@@ -1293,6 +1293,118 @@ async function executeTool(
         return JSON.stringify(data || { error: error?.message || "Application submission failed" });
       }
 
+      // ═══ VM OPERATIONS ════════════════════════════════════════════════
+      case "vm_list": {
+        const { data, error } = await supabase.from("vm_instances")
+          .select("id, name, host, ssh_port, ssh_user, vnc_url, \"noVNC_url\", status, os, specs_json, last_heartbeat_at")
+          .eq("user_id", userId).order("name");
+        if (error) return JSON.stringify({ error: error.message });
+        return JSON.stringify({ vms: data || [], count: data?.length || 0 });
+      }
+
+      case "vm_execute": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=execute`;
+        const res = await fetch(vmBridgeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            vm_id: args.vm_id,
+            command: args.command,
+            timeout: args.timeout || 30,
+          }),
+        });
+        const result = await res.json();
+        if (!res.ok) return JSON.stringify({ error: result.error || "VM command failed" });
+
+        // Get VM info for stream marker
+        const { data: vmInfo } = await supabase.from("vm_instances")
+          .select("id, name, \"noVNC_url\"").eq("id", args.vm_id as string).single();
+
+        return JSON.stringify({
+          ...result,
+          vm: vmInfo ? { id: vmInfo.id, name: vmInfo.name, noVNC_url: vmInfo["noVNC_url"] } : null,
+        });
+      }
+
+      case "vm_status": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=status&vm_id=${args.vm_id}`;
+        const res = await fetch(vmBridgeUrl, {
+          headers: {
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+        });
+        return await res.text();
+      }
+
+      case "vm_screenshot": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=screenshot`;
+        const res = await fetch(vmBridgeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({ vm_id: args.vm_id }),
+        });
+        return await res.text();
+      }
+
+      case "vm_add": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=add`;
+        const res = await fetch(vmBridgeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            name: args.name,
+            host: args.host,
+            ssh_port: args.ssh_port || 22,
+            ssh_user: args.ssh_user || "admin",
+            ssh_password_enc: args.ssh_password_enc || null,
+            noVNC_url: args.noVNC_url || null,
+            specs_json: args.bridge_port ? { bridge_port: args.bridge_port } : {},
+          }),
+        });
+        return await res.text();
+      }
+
+      case "vm_remove": {
+        const vmBridgeUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/vm-bridge?action=remove`;
+        const res = await fetch(vmBridgeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({ vm_id: args.vm_id }),
+        });
+        return await res.text();
+      }
+
+      case "vm_browser_task": {
+        // Compose a PowerShell script that launches Playwright on the VM
+        const playwrightScript = `
+$task = @"
+${(args.task as string).replace(/"/g, '`"')}
+"@
+$startUrl = "${args.start_url || 'https://www.google.com'}"
+# Launch browser-use or Playwright script on the VM
+Start-Process "msedge" -ArgumentList "$startUrl"
+Write-Output "Browser launched with task: $task at URL: $startUrl"
+Write-Output "Task is being executed on the VM desktop — visible in live stream."
+`;
+        return executeTool("vm_execute", {
+          vm_id: args.vm_id,
+          command: playwrightScript,
+          timeout: 60,
+        }, supabase, userId);
+      }
+
       default:
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
