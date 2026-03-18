@@ -563,6 +563,110 @@ const AGENT_TOOLS = [
       },
     },
   },
+
+  // ── VM Operations ───────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "vm_list",
+      description: "List all registered Windows VMs with their status, IP, and connection info.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_execute",
+      description: "Execute a PowerShell command on a specific Windows VM via SSH. Returns command output. Use this for any task the user asks you to do on their VM — research, browsing, file management, installing software, running scripts, etc.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the target VM (from vm_list)" },
+          command: { type: "string", description: "PowerShell command to execute" },
+          timeout: { type: "number", description: "Timeout in seconds (default 30)" },
+        },
+        required: ["vm_id", "command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_status",
+      description: "Check the live status and health of a specific Windows VM.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the VM to check" },
+        },
+        required: ["vm_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_screenshot",
+      description: "Capture a screenshot of the VM's current desktop state.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the VM to screenshot" },
+        },
+        required: ["vm_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_add",
+      description: "Register a new Windows VM with the platform. Requires host IP, SSH user, and optionally noVNC URL for live streaming.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Friendly name for the VM (e.g. 'Work PC', 'Dev Server')" },
+          host: { type: "string", description: "IP address or hostname of the VM" },
+          ssh_port: { type: "number", description: "SSH port (default 22)" },
+          ssh_user: { type: "string", description: "SSH username (default 'admin')" },
+          ssh_password_enc: { type: "string", description: "SSH password (will be encrypted)" },
+          noVNC_url: { type: "string", description: "noVNC websocket URL for live desktop streaming (e.g. https://vm1.example.com:6080/vnc.html)" },
+          bridge_port: { type: "number", description: "Port where the VM bridge agent is running (default 8022)" },
+        },
+        required: ["name", "host"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_remove",
+      description: "Remove a registered VM from the platform.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the VM to remove" },
+        },
+        required: ["vm_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "vm_browser_task",
+      description: "Launch a browser on a Windows VM and perform a multi-step web task. Opens Chrome/Edge on the VM, navigates, clicks, fills forms — all visible in the live stream. Use for research, shopping, filling forms, or any web browsing task the user wants done on THEIR machine.",
+      parameters: {
+        type: "object",
+        properties: {
+          vm_id: { type: "string", description: "ID of the target VM" },
+          task: { type: "string", description: "Natural language description of the web task" },
+          start_url: { type: "string", description: "URL to open first" },
+        },
+        required: ["vm_id", "task"],
+      },
+    },
+  },
 ];
 
 // ── System Prompt ───────────────────────────────────────────────────────────
