@@ -1804,6 +1804,104 @@ export type Database = {
         }
         Relationships: []
       }
+      vm_command_logs: {
+        Row: {
+          command: string
+          created_at: string
+          duration_ms: number | null
+          exit_code: number | null
+          id: string
+          output: string | null
+          user_id: string
+          vm_id: string
+        }
+        Insert: {
+          command: string
+          created_at?: string
+          duration_ms?: number | null
+          exit_code?: number | null
+          id?: string
+          output?: string | null
+          user_id: string
+          vm_id: string
+        }
+        Update: {
+          command?: string
+          created_at?: string
+          duration_ms?: number | null
+          exit_code?: number | null
+          id?: string
+          output?: string | null
+          user_id?: string
+          vm_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vm_command_logs_vm_id_fkey"
+            columns: ["vm_id"]
+            isOneToOne: false
+            referencedRelation: "vm_instances"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vm_instances: {
+        Row: {
+          created_at: string
+          host: string
+          id: string
+          last_heartbeat_at: string | null
+          name: string
+          novnc_url: string | null
+          os: string
+          specs_json: Json | null
+          ssh_key_enc: string | null
+          ssh_password_enc: string | null
+          ssh_port: number
+          ssh_user: string
+          status: string
+          updated_at: string
+          user_id: string
+          vnc_url: string | null
+        }
+        Insert: {
+          created_at?: string
+          host: string
+          id?: string
+          last_heartbeat_at?: string | null
+          name: string
+          novnc_url?: string | null
+          os?: string
+          specs_json?: Json | null
+          ssh_key_enc?: string | null
+          ssh_password_enc?: string | null
+          ssh_port?: number
+          ssh_user?: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          vnc_url?: string | null
+        }
+        Update: {
+          created_at?: string
+          host?: string
+          id?: string
+          last_heartbeat_at?: string | null
+          name?: string
+          novnc_url?: string | null
+          os?: string
+          specs_json?: Json | null
+          ssh_key_enc?: string | null
+          ssh_password_enc?: string | null
+          ssh_port?: number
+          ssh_user?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          vnc_url?: string | null
+        }
+        Relationships: []
+      }
       whatsapp_messages: {
         Row: {
           body: string
