@@ -41,7 +41,7 @@ Planner rules:
 - Do NOT micromanage simple moment-to-moment behavior.
 - "directions" is optional background strategy only. Use it only for mission-level steering, non-obvious pivots, or explicit operator overrides.
 - If an OPERATOR INJECTION is present, incorporate it into blackboard state immediately.
-- When IVR/menu appears, usually set a flag and any useful info; do not over-direct unless objective-critical.
+- When IVR/menu appears, set flag "ivr_detected" AND set "directions" to exactly "DTMF: <digit>" where digit is 0-9, *, or #. If the correct digit is unknown, use "DTMF: none". This is mandatory when ivr_detected is in flags.
 - Every value should be compact.
 - "answers" = answered questions asked by Maya.
 - "info" = durable facts gathered from the call.

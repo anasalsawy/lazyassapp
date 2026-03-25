@@ -102,7 +102,20 @@ serve(async (req) => {
       parts.push(`⚡ OPERATOR OVERRIDE: ${operatorMsg}`);
     }
 
-    if (directions) {
+    // IVR DTMF handling: extract digit from directions and instruct agent to use keypad tool
+    const isIvr = flags.includes("ivr_detected");
+    if (isIvr && directions) {
+      const dtmfMatch = directions.match(/^DTMF:\s*([0-9*#])$/i);
+      if (dtmfMatch) {
+        const digit = dtmfMatch[1];
+        parts.push(`📞 IVR DETECTED — You MUST immediately use the "keypad_tone" tool with digit="${digit}". Do NOT speak the digit. Do NOT say anything. Just call the tool.`);
+      } else if (/DTMF:\s*none/i.test(directions)) {
+        parts.push(`📞 IVR DETECTED — The correct menu option is unknown. Listen carefully to the menu options and wait for the planner to provide the correct digit.`);
+      } else {
+        // Fallback: pass directions as-is
+        parts.push(`🧭 STRATEGIC BACKGROUND: ${directions}`);
+      }
+    } else if (directions) {
       parts.push(`🧭 STRATEGIC BACKGROUND: ${directions}`);
     }
 
