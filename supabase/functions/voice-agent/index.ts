@@ -58,7 +58,11 @@ async function fetchElevenLabsTranscript(conversationId: string): Promise<Conver
     Deno.env.get("ELEVENLABS_CONVAI_KEY") ||
     Deno.env.get("ELEVENLABS_API_KEY");
 
-  if (!ELEVENLABS_API_KEY || !conversationId) return [];
+  if (!ELEVENLABS_API_KEY) {
+    console.error("[voice-agent] fetchTranscript: missing ELEVENLABS_CONVAI_KEY/ELEVENLABS_API_KEY");
+    return [];
+  }
+  if (!conversationId) return [];
 
   try {
     const resp = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${conversationId}`, {
@@ -68,16 +72,24 @@ async function fetchElevenLabsTranscript(conversationId: string): Promise<Conver
       },
     });
 
-    if (!resp.ok) return [];
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.error(`[voice-agent] fetchTranscript ${conversationId} failed: ${resp.status} ${errText.slice(0, 200)}`);
+      return [];
+    }
 
     const data = await resp.json();
     const transcript = Array.isArray(data?.transcript) ? data.transcript : [];
+    console.log(`[voice-agent] fetchTranscript ${conversationId} raw_len=${transcript.length}`);
 
-    return transcript
+    const normalized = transcript
       .map(normalizeTranscriptItem)
       .filter((msg: ConversationMessage | null): msg is ConversationMessage => Boolean(msg))
       .slice(-50);
-  } catch {
+    console.log(`[voice-agent] fetchTranscript ${conversationId} normalized_len=${normalized.length}`);
+    return normalized;
+  } catch (e) {
+    console.error("[voice-agent] fetchTranscript exception:", e);
     return [];
   }
 }
