@@ -44,6 +44,15 @@ function normalizeTranscriptItem(item: any): ConversationMessage | null {
   return { role, content };
 }
 
+function transcriptChanged(next: ConversationMessage[], current: ConversationMessage[]): boolean {
+  if (next.length !== current.length) return true;
+
+  return next.some((message, index) => {
+    const prev = current[index];
+    return message.role !== prev?.role || message.content !== prev?.content;
+  });
+}
+
 async function fetchElevenLabsTranscript(conversationId: string): Promise<ConversationMessage[]> {
   const ELEVENLABS_API_KEY =
     Deno.env.get("ELEVENLABS_CONVAI_KEY") ||
@@ -375,7 +384,7 @@ serve(async (req) => {
         });
       }
 
-      const result = task.result as any;
+      let result = task.result as any;
       const directive = result?.lastDirectorDirective || {};
 
       let conversationHistory: ConversationMessage[] = result?.conversationHistory || [];
@@ -419,16 +428,18 @@ serve(async (req) => {
       // Always try to sync transcript from ElevenLabs during active calls
       if (task.status === "running" && conversationId) {
         const remoteTranscript = await fetchElevenLabsTranscript(conversationId);
-        if (remoteTranscript.length > conversationHistory.length) {
+        if (transcriptChanged(remoteTranscript, conversationHistory)) {
+          const syncedAt = new Date().toISOString();
           conversationHistory = remoteTranscript;
-          await supabase.from("agent_tasks").update({
-            result: {
-              ...result,
-              conversationId,
-              conversationHistory,
-              lastTranscriptSyncAt: new Date().toISOString(),
-            },
-          }).eq("id", taskId);
+          result = {
+            ...result,
+            conversationId,
+            conversationHistory,
+            turnCount: Math.max(result?.turnCount || 0, remoteTranscript.length),
+            lastTranscriptSyncAt: syncedAt,
+          };
+
+          await supabase.from("agent_tasks").update({ result }).eq("id", taskId);
         }
       }
 
