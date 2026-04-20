@@ -32,6 +32,63 @@ function getSupabase() {
   );
 }
 
+type ConversationMessage = { role: "assistant" | "user"; content: string };
+
+function normalizeRole(label: string): ConversationMessage["role"] {
+  const value = label.trim().toLowerCase();
+  if (["agent", "assistant", "ai", "maya", "bot", "caller"].includes(value)) {
+    return "assistant";
+  }
+  return "user";
+}
+
+function pushMessage(target: ConversationMessage[], role: ConversationMessage["role"], content: string) {
+  const text = content.trim();
+  if (!text) return;
+
+  const prev = target[target.length - 1];
+  if (prev && prev.role === role) {
+    prev.content = `${prev.content}\n${text}`.trim();
+    return;
+  }
+
+  target.push({ role, content: text });
+}
+
+function parseConversationHistory(
+  transcript: string,
+  existingHistory: ConversationMessage[] = []
+): ConversationMessage[] {
+  const raw = String(transcript || "").replace(/\r/g, "").trim();
+  if (!raw) return existingHistory;
+
+  const speakerRegex = /(^|\n)\s*([A-Za-z][A-Za-z0-9 _-]{0,30}):\s*/g;
+  const matches = Array.from(raw.matchAll(speakerRegex));
+
+  if (matches.length === 0) {
+    const trimmed = raw.trim();
+    if (!trimmed) return existingHistory;
+
+    const last = existingHistory[existingHistory.length - 1];
+    if (last?.content?.trim() === trimmed) return existingHistory;
+
+    return [...existingHistory, { role: "user", content: trimmed }].slice(-50);
+  }
+
+  const parsed: ConversationMessage[] = [];
+
+  for (let i = 0; i < matches.length; i += 1) {
+    const match = matches[i];
+    const label = match[2] || "user";
+    const start = match.index! + match[0].length;
+    const end = i + 1 < matches.length ? matches[i + 1].index! : raw.length;
+    const content = raw.slice(start, end).trim();
+    pushMessage(parsed, normalizeRole(label), content);
+  }
+
+  return parsed.length > 0 ? parsed.slice(-50) : existingHistory;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -141,11 +198,18 @@ serve(async (req) => {
 
     // ── Persist transcript for planner to consume ──
     // Do NOT consume blackboard state here; this tool is a reader.
+    const conversationHistory = parseConversationHistory(
+      transcript,
+      Array.isArray(result.conversationHistory) ? result.conversationHistory : []
+    );
+
     const updates: any = {
       ...result,
       lastTranscript: transcript || result.lastTranscript || "",
+      conversationHistory,
       lastToolCallAt: new Date().toISOString(),
-      turnCount: (result.turnCount || 0) + 1,
+      lastTranscriptSyncAt: new Date().toISOString(),
+      turnCount: Math.max(result.turnCount || 0, conversationHistory.length),
     };
 
     await supabase.from("agent_tasks").update({ result: updates }).eq("id", taskId);
