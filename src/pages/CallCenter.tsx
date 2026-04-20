@@ -201,7 +201,7 @@ export default function CallCenter() {
         return;
       }
       if (isActiveRef.current) {
-        pollTimeoutRef.current = setTimeout(poll, 3000);
+        pollTimeoutRef.current = setTimeout(poll, 1500);
       }
     };
 
