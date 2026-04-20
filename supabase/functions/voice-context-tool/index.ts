@@ -72,7 +72,12 @@ function parseConversationHistory(
     const last = existingHistory[existingHistory.length - 1];
     if (last?.content?.trim() === trimmed) return existingHistory;
 
-    return [...existingHistory, { role: "user" as const, content: trimmed }].slice(-50);
+    const nextHistory: ConversationMessage[] = [
+      ...existingHistory,
+      { role: "user", content: trimmed },
+    ];
+
+    return nextHistory.slice(-50);
   }
 
   const parsed: ConversationMessage[] = [];
