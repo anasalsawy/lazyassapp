@@ -42,6 +42,34 @@ type CallState = {
   recordingUrl: string | null;
 };
 
+function mapVoiceAgentState(data: any, prev: CallState | null): CallState | null {
+  if (!data?.taskId && !prev) return null;
+
+  const nextStatus = data?.status === "completed" || data?.status === "failed"
+    ? data.status
+    : data?.status === "running"
+      ? "running"
+      : prev?.status || "ringing";
+
+  return {
+    taskId: data?.taskId || prev?.taskId || "",
+    status: nextStatus,
+    turnCount: Math.max(data?.turnCount || 0, data?.conversationHistory?.length || 0, prev?.turnCount || 0),
+    transcript: Array.isArray(data?.conversationHistory)
+      ? data.conversationHistory
+      : prev?.transcript || [],
+    lastAnalysis: data?.lastAnalysis
+      ? (typeof data.lastAnalysis === "string" ? data.lastAnalysis : JSON.stringify(data.lastAnalysis))
+      : prev?.lastAnalysis || null,
+    lastDirective: data?.lastDirective
+      ? (typeof data.lastDirective === "string" ? data.lastDirective : JSON.stringify(data.lastDirective))
+      : prev?.lastDirective || null,
+    agentName: data?.config?.agent_name || data?.agentName || prev?.agentName || "Maya",
+    errorMessage: data?.errorMessage || prev?.errorMessage || null,
+    recordingUrl: data?.recordingUrl || prev?.recordingUrl || null,
+  };
+}
+
 type SecretRequest = {
   secret_name: string;
   display_label: string;
@@ -413,12 +441,71 @@ export default function LovableAgent() {
   const callStateRef = useRef<CallState | null>(null);
   const [phase, setPhase] = useState<"idle" | "thinking" | "executing" | "generating" | "on_call">("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const callPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, currentPlans, phase]);
+
+  useEffect(() => {
+    return () => {
+      if (callPollTimeoutRef.current) clearTimeout(callPollTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (callPollTimeoutRef.current) {
+      clearTimeout(callPollTimeoutRef.current);
+      callPollTimeoutRef.current = null;
+    }
+
+    if (!session?.access_token || phase !== "on_call" || !currentCallState?.taskId) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const resp = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/voice-agent?action=get-state&task_id=${currentCallState.taskId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            },
+          }
+        );
+
+        if (resp.ok && !cancelled) {
+          const data = await resp.json();
+          setCurrentCallState((prev) => {
+            const updated = mapVoiceAgentState(data, prev);
+            callStateRef.current = updated;
+            return updated;
+          });
+
+          if (data.status === "completed" || data.status === "failed") return;
+        }
+      } catch (error) {
+        console.error("[LovableAgent] live call poll error:", error);
+      }
+
+      if (!cancelled) {
+        callPollTimeoutRef.current = setTimeout(poll, 1200);
+      }
+    };
+
+    poll();
+
+    return () => {
+      cancelled = true;
+      if (callPollTimeoutRef.current) {
+        clearTimeout(callPollTimeoutRef.current);
+        callPollTimeoutRef.current = null;
+      }
+    };
+  }, [currentCallState?.taskId, phase, session?.access_token]);
 
   const sendMessage = useCallback(async (text?: string) => {
     const msg = text || input.trim();
