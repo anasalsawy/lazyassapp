@@ -154,8 +154,15 @@ export default function CallCenter() {
               return prev;
             }
 
-            // Only update lightweight state from realtime; polls remain source of truth
-            const newHistory = conversationHistory.length > (prev.conversationHistory?.length || 0)
+            // Only update lightweight state from realtime; polls remain source of truth.
+            // Accept same-length transcript corrections too so live turns don't appear only after hangup.
+            const hasTranscriptUpdate = conversationHistory.length > (prev.conversationHistory?.length || 0)
+              || conversationHistory.some((msg, index) => {
+                const prevMsg = prev.conversationHistory?.[index];
+                return msg.role !== prevMsg?.role || msg.content !== prevMsg?.content;
+              });
+
+            const newHistory = hasTranscriptUpdate
               ? conversationHistory
               : prev.conversationHistory;
 
@@ -188,7 +195,7 @@ export default function CallCenter() {
 
     channelRef.current = channel;
 
-    // Polling loop with 3s interval
+    // Polling loop with a tighter interval so transcript sync feels live.
     const poll = async () => {
       if (!isActiveRef.current) return;
       const ended = await pollCallState(taskId);
@@ -201,7 +208,7 @@ export default function CallCenter() {
         return;
       }
       if (isActiveRef.current) {
-        pollTimeoutRef.current = setTimeout(poll, 1500);
+        pollTimeoutRef.current = setTimeout(poll, 1200);
       }
     };
 

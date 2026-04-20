@@ -72,7 +72,12 @@ function parseConversationHistory(
     const last = existingHistory[existingHistory.length - 1];
     if (last?.content?.trim() === trimmed) return existingHistory;
 
-    return [...existingHistory, { role: "user", content: trimmed }].slice(-50);
+    const nextHistory: ConversationMessage[] = [
+      ...existingHistory,
+      { role: "user", content: trimmed },
+    ];
+
+    return nextHistory.slice(-50);
   }
 
   const parsed: ConversationMessage[] = [];
@@ -165,13 +170,15 @@ serve(async (req) => {
       const dtmfMatch = directions.match(/^DTMF:\s*([0-9*#])$/i);
       if (dtmfMatch) {
         const digit = dtmfMatch[1];
-        parts.push(`📞 IVR DETECTED — You MUST immediately use the "keypad_tone" tool with digit="${digit}". Do NOT speak the digit. Do NOT say anything. Just call the tool.`);
+        parts.push(`📞 IVR DETECTED — This is a phone menu, not a human. You MUST immediately use the "keypad_tone" tool with digit="${digit}". Do NOT speak the digit. Do NOT say anything. Just call the tool.`);
       } else if (/DTMF:\s*none/i.test(directions)) {
-        parts.push(`📞 IVR DETECTED — The correct menu option is unknown. Listen carefully to the menu options and wait for the planner to provide the correct digit.`);
+        parts.push(`📞 IVR DETECTED — This is a phone menu, not a human. Do NOT speak to the IVR. Stay silent, listen carefully to the menu options, and wait for the planner to provide the correct digit.`);
       } else {
         // Fallback: pass directions as-is
-        parts.push(`🧭 STRATEGIC BACKGROUND: ${directions}`);
+        parts.push(`📞 IVR DETECTED — Do NOT speak to the IVR. Only use keypad tones when instructed. Background: ${directions}`);
       }
+    } else if (isIvr) {
+      parts.push(`📞 IVR DETECTED — This is a phone menu, not a human. Do NOT speak. Stay silent and wait for keypad instructions.`);
     } else if (directions) {
       parts.push(`🧭 STRATEGIC BACKGROUND: ${directions}`);
     }

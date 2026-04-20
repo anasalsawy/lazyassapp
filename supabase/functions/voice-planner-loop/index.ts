@@ -25,6 +25,18 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function normalizeIvrUpdate(update: any) {
+  if (!Array.isArray(update?.flags) || !update.flags.includes("ivr_detected")) return update;
+
+  const rawDirections = typeof update?.directions === "string" ? update.directions.trim() : "";
+  const match = rawDirections.match(/^DTMF:\s*([0-9*#]|none)$/i);
+
+  return {
+    ...update,
+    directions: match ? `DTMF: ${match[1].toLowerCase()}` : "DTMF: none",
+  };
+}
+
 function getSupabase() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -201,6 +213,10 @@ Analyze and return blackboard update.`;
         flags: Array.isArray(board.flags) ? board.flags : [],
         end_call: false,
       };
+    }
+
+    if (update && !update.no_update) {
+      update = normalizeIvrUpdate(update);
     }
 
     if (!update || update.no_update) {
