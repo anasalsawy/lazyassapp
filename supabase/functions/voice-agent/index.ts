@@ -416,10 +416,17 @@ serve(async (req) => {
         }
       }
 
-      // Always try to sync transcript from ElevenLabs during active calls
+      // Always try to sync transcript from ElevenLabs during active calls.
+      // Update if length grew OR last message text changed (partials get committed).
       if (task.status === "running" && conversationId) {
         const remoteTranscript = await fetchElevenLabsTranscript(conversationId);
-        if (remoteTranscript.length > conversationHistory.length) {
+        const remoteLast = remoteTranscript[remoteTranscript.length - 1]?.content || "";
+        const localLast = conversationHistory[conversationHistory.length - 1]?.content || "";
+        const changed =
+          remoteTranscript.length > conversationHistory.length ||
+          (remoteTranscript.length > 0 && remoteLast !== localLast);
+
+        if (changed) {
           conversationHistory = remoteTranscript;
           await supabase.from("agent_tasks").update({
             result: {
