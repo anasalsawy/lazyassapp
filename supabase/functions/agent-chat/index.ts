@@ -2004,7 +2004,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
                 temperature: typeof args.temperature === "number" ? args.temperature : 0.6,
                 built_in_tools: builtInTools,
               },
-              first_message: args.first_message,
+              first_message: simplifyFirstMessage(args.first_message),
               language: args.language || "en",
             },
             tts: { voice_id: args.voice_id || "EXAVITQu4vr4xnSDxMaL" },
