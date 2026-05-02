@@ -1943,7 +1943,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
 
       // ═══ ELEVENLABS DIRECT API HANDLERS ════════════════════════════════
       case "el_create_agent": {
-        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const apiKey = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         // Use override if provided, otherwise build hardened multi-page production prompt
         const finalPrompt = (args.system_prompt_override as string) || buildHardenedPrompt(args);
@@ -2014,7 +2014,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
       }
 
       case "el_update_agent": {
-        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const apiKey = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         const patch: any = { conversation_config: { agent: { prompt: {} } } };
         if (args.system_prompt) patch.conversation_config.agent.prompt.prompt = args.system_prompt;
@@ -2031,7 +2031,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
       }
 
       case "el_outbound_call": {
-        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const apiKey = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
         const phoneNumberId = Deno.env.get("ELEVENLABS_PHONE_NUMBER_ID");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         if (!phoneNumberId) return JSON.stringify({ error: "ELEVENLABS_PHONE_NUMBER_ID not configured" });
@@ -2066,7 +2066,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
       }
 
       case "el_get_conversation": {
-        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const apiKey = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         let convId = args.conversation_id as string | undefined;
         // Auto-discover: if no conversation_id given (or it was null from outbound-call),
@@ -2108,7 +2108,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
       }
 
       case "el_list_conversations": {
-        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const apiKey = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         const params = new URLSearchParams();
         if (args.agent_id) params.set("agent_id", String(args.agent_id));
@@ -2122,7 +2122,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
       }
 
       case "el_send_contextual_update": {
-        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const apiKey = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${args.conversation_id}/contextual-update`, {
           method: "POST",
@@ -2135,7 +2135,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
       }
 
       case "el_end_call": {
-        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const apiKey = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${args.conversation_id}`, {
           method: "DELETE",
@@ -2149,7 +2149,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
       }
 
       case "el_delete_agent": {
-        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const apiKey = Deno.env.get("ELEVENLABS_CONVAI_KEY") || Deno.env.get("ELEVENLABS_API_KEY");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         const res = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${args.agent_id}`, {
           method: "DELETE",
