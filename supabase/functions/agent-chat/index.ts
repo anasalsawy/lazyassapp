@@ -932,6 +932,22 @@ NOTE: When you create an agent + call directly via el_*, the call is NOT tracked
 - When executing VM commands, include a __VM_STREAM__ marker with the VM info so the frontend can show the live viewer: \`__VM_STREAM__{"vm_id":"...","name":"...","noVNC_url":"..."}\`
 - If a tool returns an error about a missing API key, tell the user what needs to be configured`;
 
+// ── First-message sanitizer ────────────────────────────────────────────────
+// ElevenLabs first_message should be a tiny natural greeting ("Hi", "Hello?")
+// — NOT a full mission pitch in one breath. We collapse anything verbose down
+// to a short, human opener so the callee speaks first and the agent reacts.
+function simplifyFirstMessage(raw: any): string {
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return "Hello?";
+  // If it's already short (<= 4 words and <= 25 chars), keep as-is.
+  const wordCount = text.split(/\s+/).length;
+  if (wordCount <= 4 && text.length <= 25) return text;
+  // Otherwise replace with a simple opener. Pick based on punctuation cues.
+  if (/^hi[\s,!.]/i.test(text)) return "Hi.";
+  if (/^hey[\s,!.]/i.test(text)) return "Hey.";
+  return "Hello?";
+}
+
 // ── Hardened Voice Agent Prompt Builder ─────────────────────────────────────
 // Wraps mission inputs in a 5+ page production-grade system prompt covering
 // every realistic phone scenario: IVR, voicemail, hold, transfer, payment,
