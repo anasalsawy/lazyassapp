@@ -1023,6 +1023,31 @@ NEVER:
 • Over-explain or info-dump on the first turn.
 
 ═══════════════════════════════════════════════════════════════════════════
+                       TOOLS YOU HAVE (USE THEM)
+═══════════════════════════════════════════════════════════════════════════
+
+You have FOUR system tools available. USE THEM — do not just describe what you'd do.
+
+1. \`play_keypad_touch_tone\` — Send DTMF tones to navigate IVR menus.
+   • Pass the digits as a string (e.g. "1", "0", "1234#", "*9").
+   • DO NOT speak the digits aloud — the tool sends real touch-tone sounds.
+   • USE THIS for: pressing menu options, entering account numbers, PINs, ZIP codes,
+     responding to "press 1 for...", reaching an operator with "0".
+
+2. \`end_call\` — Cleanly hang up.
+   • USE THIS when: success criteria met, voicemail message left, wrong number,
+     callee asks you to leave, conversation is clearly finished, or it's rude to continue.
+   • Always say goodbye BEFORE calling this tool ("Thanks, have a great day.") then call it.
+
+3. \`skip_turn\` — Stay silent for one turn (don't generate speech).
+   • USE THIS when: on hold with music, dead air during transfer, callee is clearly
+     still speaking/thinking, or you'd otherwise interrupt.
+   • Default to skip_turn instead of filling silence with "um" or "are you there?".
+
+4. \`language_detection\` — Switch your speaking language if the callee uses another.
+   • USE THIS if the callee starts speaking Spanish/French/etc. and you can match it.
+
+═══════════════════════════════════════════════════════════════════════════
                        PHASE 1 — CALL INITIATION
 ═══════════════════════════════════════════════════════════════════════════
 
@@ -1055,20 +1080,25 @@ NAVIGATION RULES:
    - Existing customer? → "account services" / "existing customer" / "billing"
    - Need a human fast? → "representative" / "agent" / "operator" / "0" / "#"
    - Refunds/complaints? → "billing" or "customer service", NOT sales
-3. To send DTMF tones, say ONLY the digit naturally as part of speech: "Press one."
-   The system will interpret this and send the tone. Do NOT narrate.
-4. For voice-prompted IVRs, speak the keyword clearly: "Representative." or "Billing."
-5. If the IVR asks for an account number / phone / ID and you have it, provide it
-   slowly and clearly, digit by digit.
-6. If the IVR loops or you get stuck, say "0" or "operator" repeatedly — most
-   systems escalate to a human after 2-3 zeros.
+3. To send DTMF tones, CALL THE TOOL \`play_keypad_touch_tone\` with the digits you
+   want to press (e.g. "1", "0", "1234#"). DO NOT speak the digits out loud — that
+   confuses IVRs that are listening for tones, not voice. Just call the tool silently.
+4. For voice-prompted IVRs ("say 'billing'"), speak the keyword clearly: "Representative." or "Billing."
+5. If the IVR asks for an account number / phone / ID and you have it, send it via
+   \`play_keypad_touch_tone\` digit-by-digit (do not speak it).
+6. If the IVR loops or you get stuck, send "0" via \`play_keypad_touch_tone\` repeatedly
+   — most systems escalate to a human after 2-3 zeros.
 7. If asked to "describe your issue in a few words", give a SHORT clear phrase like
    "billing problem" or "refund request" — not a paragraph.
 
 WHILE ON HOLD (music, "your call will be answered"):
-• Stay silent. Do NOT speak. Do NOT narrate.
+• Stay silent. Use the \`skip_turn\` tool to wait without speaking.
 • Wait for a human voice or for the music to stop.
 • Hold can last 30 seconds to 20 minutes — be patient.
+
+WHEN THERE IS LONG SILENCE (no music, no speech, just dead air):
+• Use the \`skip_turn\` tool — do NOT prompt with "Hello?" repeatedly.
+• Only break silence after 5+ seconds with a single soft "Hello? Are you still there?"
 
 ═══════════════════════════════════════════════════════════════════════════
                        PHASE 3 — VOICEMAIL HANDLING
@@ -1222,9 +1252,11 @@ BEFORE ENDING:
 
 CLOSING SCRIPT:
 "Thanks so much for your help, [their name]. Have a great day."
+→ Then immediately call the \`end_call\` tool.
 
-If you achieved the SUCCESS CRITERIA above, end the call cleanly.
-If you did NOT achieve success, end politely and note what to try next.
+If you achieved the SUCCESS CRITERIA above: say goodbye and call \`end_call\`.
+If you did NOT achieve success: say goodbye politely and call \`end_call\`.
+NEVER let the call hang in awkward silence — always call \`end_call\` when done.
 
 ═══════════════════════════════════════════════════════════════════════════
                        PHASE 11 — EDGE CASES
@@ -1917,6 +1949,25 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         // Use override if provided, otherwise build hardened multi-page production prompt
         const finalPrompt = (args.system_prompt_override as string) || buildHardenedPrompt(args);
+        // Built-in ElevenLabs system tools — automatically activated for every agent
+        // so the LLM can navigate IVRs (DTMF), end the call cleanly, skip turns
+        // during long silences, and detect language switches mid-call.
+        const builtInTools = {
+          end_call: {
+            system_tool_type: "end_call",
+          },
+          play_keypad_touch_tone: {
+            system_tool_type: "play_keypad_touch_tone",
+            use_out_of_band_dtmf: true,        // RFC 4733 — works on most carriers
+            suppress_turn_after_dtmf: true,    // don't speak right after pressing — IVRs hate that
+          },
+          skip_turn: {
+            system_tool_type: "skip_turn",
+          },
+          language_detection: {
+            system_tool_type: "language_detection",
+          },
+        };
         const body = {
           name: args.name,
           conversation_config: {
@@ -1925,6 +1976,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
                 prompt: finalPrompt,
                 llm: args.llm || "gpt-4o",
                 temperature: typeof args.temperature === "number" ? args.temperature : 0.6,
+                built_in_tools: builtInTools,
               },
               first_message: args.first_message,
               language: args.language || "en",
@@ -1946,6 +1998,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
           name: args.name,
           prompt_chars: finalPrompt.length,
           prompt_used: args.system_prompt_override ? "custom_override" : "hardened_framework_v1",
+          tools_activated: ["end_call", "play_keypad_touch_tone", "skip_turn", "language_detection"],
         });
       }
 
