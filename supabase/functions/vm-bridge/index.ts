@@ -18,8 +18,14 @@ serve(async (req) => {
     // Auth
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("Unauthorized");
-    const { data: { user }, error: authErr } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
-    if (authErr || !user) throw new Error("Unauthorized");
+    const token = authHeader.replace("Bearer ", "");
+    const internalUserId = req.headers.get("X-User-Id");
+    let userId = internalUserId && token === serviceKey ? internalUserId : null;
+    if (!userId) {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      if (authErr || !user) throw new Error("Unauthorized");
+      userId = user.id;
+    }
 
     const url = new URL(req.url);
     const action = url.searchParams.get("action") || "execute";
@@ -27,7 +33,7 @@ serve(async (req) => {
     if (action === "list") {
       const { data, error } = await supabase.from("vm_instances")
         .select("id, name, host, ssh_port, ssh_user, vnc_url, novnc_url, status, os, specs_json, last_heartbeat_at")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .order("name");
       if (error) throw error;
       return new Response(JSON.stringify({ vms: data }), {
@@ -38,7 +44,7 @@ serve(async (req) => {
     if (action === "add") {
       const body = await req.json();
       const { data, error } = await supabase.from("vm_instances").insert({
-        user_id: user.id,
+        user_id: userId,
         name: body.name,
         host: body.host,
         ssh_port: body.ssh_port || 22,
@@ -60,7 +66,7 @@ serve(async (req) => {
     if (action === "remove") {
       const body = await req.json();
       const { error } = await supabase.from("vm_instances")
-        .delete().eq("id", body.vm_id).eq("user_id", user.id);
+        .delete().eq("id", body.vm_id).eq("user_id", userId);
       if (error) throw error;
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
