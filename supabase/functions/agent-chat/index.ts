@@ -2070,25 +2070,48 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
         });
         const data = await res.json();
         if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        const convId = data.conversation_id || null;
         return JSON.stringify({
           success: true,
-          conversation_id: data.conversation_id,
+          conversation_id: convId,
           call_sid: data.callSid || data.call_sid,
-          message: `📞 Call initiated to ${args.to_number}. Use el_get_conversation with conversation_id="${data.conversation_id}" to monitor.`,
+          agent_id: args.agent_id,
+          message: convId
+            ? `📞 Call initiated to ${args.to_number}. Poll with el_get_conversation conversation_id="${convId}".`
+            : `📞 Call queued to ${args.to_number}. conversation_id not yet assigned (Twilio is still dialing). Poll with el_get_conversation passing agent_id="${args.agent_id}" — it will auto-resolve the latest conversation for that agent.`,
+          hint_for_polling: { agent_id: args.agent_id, retry_after_secs: 5 },
         });
       }
 
       case "el_get_conversation": {
         const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
-        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${args.conversation_id}`, {
+        let convId = args.conversation_id as string | undefined;
+        // Auto-discover: if no conversation_id given (or it was null from outbound-call),
+        // fetch the latest conversation for this agent_id.
+        if ((!convId || convId === "null") && args.agent_id) {
+          const listRes = await fetch(
+            `https://api.elevenlabs.io/v1/convai/conversations?agent_id=${args.agent_id}&page_size=1`,
+            { headers: { "xi-api-key": apiKey } },
+          );
+          const listData = await listRes.json();
+          convId = listData?.conversations?.[0]?.conversation_id;
+          if (!convId) {
+            return JSON.stringify({
+              status: "pending",
+              message: "No conversation has materialized yet for this agent. The call is still ringing or Twilio hasn't connected. Retry in 5–10s.",
+              agent_id: args.agent_id,
+            });
+          }
+        }
+        if (!convId) return JSON.stringify({ error: "Provide conversation_id or agent_id" });
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${convId}`, {
           headers: { "xi-api-key": apiKey },
         });
         const data = await res.json();
         if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
-        // Return a compact view to save tokens
         return JSON.stringify({
-          conversation_id: args.conversation_id,
+          conversation_id: convId,
           status: data.status,
           agent_id: data.agent_id,
           start_time: data.metadata?.start_time_unix_secs,
