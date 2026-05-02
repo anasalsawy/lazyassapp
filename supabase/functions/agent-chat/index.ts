@@ -1917,6 +1917,25 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         // Use override if provided, otherwise build hardened multi-page production prompt
         const finalPrompt = (args.system_prompt_override as string) || buildHardenedPrompt(args);
+        // Built-in ElevenLabs system tools — automatically activated for every agent
+        // so the LLM can navigate IVRs (DTMF), end the call cleanly, skip turns
+        // during long silences, and detect language switches mid-call.
+        const builtInTools = {
+          end_call: {
+            system_tool_type: "end_call",
+          },
+          play_keypad_touch_tone: {
+            system_tool_type: "play_keypad_touch_tone",
+            use_out_of_band_dtmf: true,        // RFC 4733 — works on most carriers
+            suppress_turn_after_dtmf: true,    // don't speak right after pressing — IVRs hate that
+          },
+          skip_turn: {
+            system_tool_type: "skip_turn",
+          },
+          language_detection: {
+            system_tool_type: "language_detection",
+          },
+        };
         const body = {
           name: args.name,
           conversation_config: {
@@ -1925,6 +1944,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
                 prompt: finalPrompt,
                 llm: args.llm || "gpt-4o",
                 temperature: typeof args.temperature === "number" ? args.temperature : 0.6,
+                built_in_tools: builtInTools,
               },
               first_message: args.first_message,
               language: args.language || "en",
