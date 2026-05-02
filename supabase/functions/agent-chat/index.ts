@@ -739,13 +739,14 @@ const AGENT_TOOLS = [
     type: "function",
     function: {
       name: "el_get_conversation",
-      description: "Fetch full conversation details, status, transcript, and metadata for an active or completed ElevenLabs call. Poll this every few seconds to monitor live calls.",
+      description: "Fetch full conversation details, status, transcript, and metadata for an active or completed ElevenLabs call. Poll every 4–6s to monitor live calls. If you don't yet have a conversation_id (el_outbound_call returned null because Twilio was still dialing), pass agent_id instead and it will auto-resolve the latest conversation for that agent.",
       parameters: {
         type: "object",
         properties: {
-          conversation_id: { type: "string", description: "ElevenLabs conversation_id from el_outbound_call" },
+          conversation_id: { type: "string", description: "ElevenLabs conversation_id from el_outbound_call (preferred when known)" },
+          agent_id: { type: "string", description: "Fallback: agent_id to auto-resolve the most recent conversation when conversation_id is null/unknown" },
         },
-        required: ["conversation_id"],
+        required: [],
       },
     },
   },
