@@ -1045,9 +1045,6 @@ You have FOUR system tools available. USE THEM — do not just describe what you
      still speaking/thinking, or you'd otherwise interrupt.
    • Default to skip_turn instead of filling silence with "um" or "are you there?".
 
-4. \`language_detection\` — Switch your speaking language if the callee uses another.
-   • USE THIS if the callee starts speaking Spanish/French/etc. and you can match it.
-
 ═══════════════════════════════════════════════════════════════════════════
                        PHASE 1 — CALL INITIATION
 ═══════════════════════════════════════════════════════════════════════════
@@ -1968,11 +1965,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
             description: "",
             response_timeout_secs: 20,
             type: "system",
-            params: {
-              system_tool_type: "play_keypad_touch_tone",
-              use_out_of_band_dtmf: true,
-              suppress_turn_after_dtmf: true,
-            },
+            params: { system_tool_type: "play_keypad_touch_tone" },
           },
           skip_turn: {
             name: "skip_turn",
@@ -1981,22 +1974,10 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
             type: "system",
             params: { system_tool_type: "skip_turn" },
           },
-          language_detection: {
-            name: "language_detection",
-            description: "",
-            response_timeout_secs: 20,
-            type: "system",
-            params: { system_tool_type: "language_detection" },
-          },
-          voicemail_detection: {
-            name: "voicemail_detection",
-            description: "",
-            response_timeout_secs: 20,
-            type: "system",
-            params: { system_tool_type: "voicemail_detection" },
-          },
+          language_detection: null,
           transfer_to_agent: null,
           transfer_to_number: null,
+          voicemail_detection: null,
         };
         const body = {
           name: args.name,
@@ -2028,7 +2009,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
           name: args.name,
           prompt_chars: finalPrompt.length,
           prompt_used: args.system_prompt_override ? "custom_override" : "hardened_framework_v1",
-          tools_activated: ["end_call", "play_keypad_touch_tone", "skip_turn", "language_detection", "voicemail_detection"],
+          tools_activated: ["end_call", "play_keypad_touch_tone", "skip_turn"],
         });
       }
 
