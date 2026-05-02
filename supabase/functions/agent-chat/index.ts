@@ -1198,6 +1198,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
         });
         const stateData = await stateRes.json();
@@ -1322,7 +1323,7 @@ async function executeTool(
 
         // Get VM info for stream marker
         const { data: vmInfo } = await supabase.from("vm_instances")
-          .select("id, name, novnc_url").eq("id", args.vm_id as string).single();
+          .select("id, name, novnc_url").eq("id", args.vm_id as string).eq("user_id", userId).single();
 
         return JSON.stringify({
           ...result,
@@ -1362,6 +1363,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({
             name: args.name,
@@ -1383,6 +1385,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({ vm_id: args.vm_id }),
         });
