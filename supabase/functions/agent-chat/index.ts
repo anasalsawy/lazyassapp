@@ -1554,6 +1554,162 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
         }, supabase, userId);
       }
 
+      // ═══ ELEVENLABS DIRECT API HANDLERS ════════════════════════════════
+      case "el_create_agent": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const body = {
+          name: args.name,
+          conversation_config: {
+            agent: {
+              prompt: {
+                prompt: args.system_prompt,
+                llm: args.llm || "gpt-4o-mini",
+                temperature: typeof args.temperature === "number" ? args.temperature : 0.5,
+              },
+              first_message: args.first_message,
+              language: args.language || "en",
+            },
+            tts: { voice_id: args.voice_id || "EXAVITQu4vr4xnSDxMaL" },
+            conversation: { max_duration_seconds: args.max_duration_seconds || 600 },
+          },
+        };
+        const res = await fetch("https://api.elevenlabs.io/v1/convai/agents/create", {
+          method: "POST",
+          headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify({ success: true, agent_id: data.agent_id, name: args.name });
+      }
+
+      case "el_update_agent": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const patch: any = { conversation_config: { agent: { prompt: {} } } };
+        if (args.system_prompt) patch.conversation_config.agent.prompt.prompt = args.system_prompt;
+        if (args.first_message) patch.conversation_config.agent.first_message = args.first_message;
+        if (args.voice_id) patch.conversation_config.tts = { voice_id: args.voice_id };
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${args.agent_id}`, {
+          method: "PATCH",
+          headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify({ success: true, agent_id: args.agent_id });
+      }
+
+      case "el_outbound_call": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const phoneNumberId = Deno.env.get("ELEVENLABS_PHONE_NUMBER_ID");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        if (!phoneNumberId) return JSON.stringify({ error: "ELEVENLABS_PHONE_NUMBER_ID not configured" });
+        const body: any = {
+          agent_id: args.agent_id,
+          agent_phone_number_id: phoneNumberId,
+          to_number: args.to_number,
+        };
+        if (args.dynamic_variables && typeof args.dynamic_variables === "object") {
+          body.conversation_initiation_client_data = {
+            dynamic_variables: args.dynamic_variables,
+          };
+        }
+        const res = await fetch("https://api.elevenlabs.io/v1/convai/twilio/outbound-call", {
+          method: "POST",
+          headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify({
+          success: true,
+          conversation_id: data.conversation_id,
+          call_sid: data.callSid || data.call_sid,
+          message: `📞 Call initiated to ${args.to_number}. Use el_get_conversation with conversation_id="${data.conversation_id}" to monitor.`,
+        });
+      }
+
+      case "el_get_conversation": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${args.conversation_id}`, {
+          headers: { "xi-api-key": apiKey },
+        });
+        const data = await res.json();
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        // Return a compact view to save tokens
+        return JSON.stringify({
+          conversation_id: args.conversation_id,
+          status: data.status,
+          agent_id: data.agent_id,
+          start_time: data.metadata?.start_time_unix_secs,
+          duration_secs: data.metadata?.call_duration_secs,
+          transcript: (data.transcript || []).map((t: any) => ({
+            role: t.role,
+            message: t.message,
+            time_in_call_secs: t.time_in_call_secs,
+          })),
+          analysis: data.analysis || null,
+        });
+      }
+
+      case "el_list_conversations": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const params = new URLSearchParams();
+        if (args.agent_id) params.set("agent_id", String(args.agent_id));
+        params.set("page_size", String(args.page_size || 30));
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations?${params}`, {
+          headers: { "xi-api-key": apiKey },
+        });
+        const data = await res.json();
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify(data);
+      }
+
+      case "el_send_contextual_update": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${args.conversation_id}/contextual-update`, {
+          method: "POST",
+          headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ text: args.text }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify({ success: true, message: "Contextual update sent — agent will incorporate it on next turn." });
+      }
+
+      case "el_end_call": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${args.conversation_id}`, {
+          method: "DELETE",
+          headers: { "xi-api-key": apiKey },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        }
+        return JSON.stringify({ success: true, message: "Call terminated." });
+      }
+
+      case "el_delete_agent": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${args.agent_id}`, {
+          method: "DELETE",
+          headers: { "xi-api-key": apiKey },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        }
+        return JSON.stringify({ success: true, message: "Agent deleted." });
+      }
+
       default:
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
