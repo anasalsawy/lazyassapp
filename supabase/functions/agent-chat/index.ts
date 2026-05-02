@@ -932,6 +932,22 @@ NOTE: When you create an agent + call directly via el_*, the call is NOT tracked
 - When executing VM commands, include a __VM_STREAM__ marker with the VM info so the frontend can show the live viewer: \`__VM_STREAM__{"vm_id":"...","name":"...","noVNC_url":"..."}\`
 - If a tool returns an error about a missing API key, tell the user what needs to be configured`;
 
+// ── First-message sanitizer ────────────────────────────────────────────────
+// ElevenLabs first_message should be a tiny natural greeting ("Hi", "Hello?")
+// — NOT a full mission pitch in one breath. We collapse anything verbose down
+// to a short, human opener so the callee speaks first and the agent reacts.
+function simplifyFirstMessage(raw: any): string {
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (!text) return "Hello?";
+  // If it's already short (<= 4 words and <= 25 chars), keep as-is.
+  const wordCount = text.split(/\s+/).length;
+  if (wordCount <= 4 && text.length <= 25) return text;
+  // Otherwise replace with a simple opener. Pick based on punctuation cues.
+  if (/^hi[\s,!.]/i.test(text)) return "Hi.";
+  if (/^hey[\s,!.]/i.test(text)) return "Hey.";
+  return "Hello?";
+}
+
 // ── Hardened Voice Agent Prompt Builder ─────────────────────────────────────
 // Wraps mission inputs in a 5+ page production-grade system prompt covering
 // every realistic phone scenario: IVR, voicemail, hold, transfer, payment,
@@ -947,28 +963,37 @@ function buildHardenedPrompt(args: Record<string, any>): string {
   const constraints = args.constraints || "(none)";
   const escalation = args.escalation_policy || "If the first representative cannot help, politely ask to speak with a supervisor or the relevant department.";
 
-  const paymentSection = paymentAuth
-    ? `
-═══ PAYMENT HANDLING ═══════════════════════════════════════════════════
-You are AUTHORIZED to provide payment information when legitimately requested:
-${paymentAuth}
+  const paymentSection = `
+═══ PAYMENT HANDLING — YOU ARE AUTHORIZED ════════════════════════════
+You ARE authorized to handle payment over the phone using the cardholder's
+saved payment method. Treat payment as a normal, expected part of completing
+the mission. Do NOT refuse, defer, or ask for an emailed link unless the
+callee explicitly cannot take a card by phone.
 
-PAYMENT RULES:
-• Provide card details ONLY when the agent has clearly explained the charge, the amount, and what it is for.
-• Read the card number in groups of 4 digits, slowly and clearly.
-• Confirm: "Did you get that?" if asked to repeat.
-• Provide expiration as "month / year" (e.g. "twelve / twenty-seven").
-• Provide CVV only when explicitly requested AFTER the card number is accepted.
-• Provide billing ZIP / postal code only when asked.
-• If the amount exceeds the authorized limit, politely refuse: "I can authorize up to that amount today. Anything above that I'd need to verify first — can we work within that?"
-• If they ask for SSN, full DOB, or any identifier NOT authorized, politely deflect: "I'd rather not share that over the phone — is there another way to verify?"
-• NEVER read fake or made-up payment data. If you don't have it, say so.
-`
-    : `
-═══ PAYMENT HANDLING ═══════════════════════════════════════════════════
-No payment is authorized for this call. If asked for payment:
-• Politely defer: "I'd prefer not to handle payment over the phone right now — can you send me a payment link by email or SMS?"
-• If pressed, escalate: "Can a supervisor email me an invoice instead?"
+${paymentAuth ? `AUTHORIZED PAYMENT DETAILS FOR THIS CALL:\n${paymentAuth}\n` : `Payment details (card number, expiry, CVV, cardholder name, billing ZIP)
+will be supplied to you by the system when you reach the payment step.
+Use whatever the system has provided — do not invent or guess any digits.`}
+
+HOW TO READ A CARD OVER THE PHONE (do this naturally, like a human):
+• Wait until the rep clearly asks for the card and has stated the amount and what it covers.
+• Confirm the amount once before reading: "Okay, so that's [amount] total, right?"
+• Read the card number in 4-digit groups, with a small pause between groups:
+  "Four two four two ... four two four two ... four two four two ... four two four two."
+• Pause and ask: "Did you get that, or want me to repeat it?"
+• Read expiration as "month / year": "Expires zero eight, twenty twenty-seven."
+• Read CVV only when asked, digit by digit: "C V V is one two three."
+• Provide cardholder name and billing ZIP when asked.
+• If the rep mishears, repeat ONLY the group they missed, not the whole number.
+• After payment goes through, get and read back the confirmation/auth number.
+
+SAFETY RULES:
+• NEVER read fake or invented card data. If a field is missing, say honestly:
+  "I don't have that one in front of me — can we proceed with what I've got?"
+• If the amount exceeds the authorized limit (when one is set), say:
+  "I can cover up to [limit] on this card today. For anything above that I'd
+   need to use a different method — can we keep it within that?"
+• Do NOT volunteer unrelated identifiers (SSN, full DOB) unless explicitly authorized.
+• Treat the call as PCI-sensitive: stay focused, no small talk while reading digits.
 `;
 
   return `
@@ -1995,7 +2020,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
                 temperature: typeof args.temperature === "number" ? args.temperature : 0.6,
                 built_in_tools: builtInTools,
               },
-              first_message: args.first_message,
+              first_message: simplifyFirstMessage(args.first_message),
               language: args.language || "en",
             },
             tts: { voice_id: args.voice_id || "EXAVITQu4vr4xnSDxMaL" },
@@ -2024,7 +2049,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         const patch: any = { conversation_config: { agent: { prompt: {} } } };
         if (args.system_prompt) patch.conversation_config.agent.prompt.prompt = args.system_prompt;
-        if (args.first_message) patch.conversation_config.agent.first_message = args.first_message;
+        if (args.first_message) patch.conversation_config.agent.first_message = simplifyFirstMessage(args.first_message);
         if (args.voice_id) patch.conversation_config.tts = { voice_id: args.voice_id };
         const res = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${args.agent_id}`, {
           method: "PATCH",
