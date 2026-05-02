@@ -1915,20 +1915,22 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
       case "el_create_agent": {
         const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        // Use override if provided, otherwise build hardened multi-page production prompt
+        const finalPrompt = (args.system_prompt_override as string) || buildHardenedPrompt(args);
         const body = {
           name: args.name,
           conversation_config: {
             agent: {
               prompt: {
-                prompt: args.system_prompt,
-                llm: args.llm || "gpt-4o-mini",
-                temperature: typeof args.temperature === "number" ? args.temperature : 0.5,
+                prompt: finalPrompt,
+                llm: args.llm || "gpt-4o",
+                temperature: typeof args.temperature === "number" ? args.temperature : 0.6,
               },
               first_message: args.first_message,
               language: args.language || "en",
             },
             tts: { voice_id: args.voice_id || "EXAVITQu4vr4xnSDxMaL" },
-            conversation: { max_duration_seconds: args.max_duration_seconds || 600 },
+            conversation: { max_duration_seconds: args.max_duration_seconds || 1200 },
           },
         };
         const res = await fetch("https://api.elevenlabs.io/v1/convai/agents/create", {
@@ -1938,7 +1940,13 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
         });
         const data = await res.json();
         if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
-        return JSON.stringify({ success: true, agent_id: data.agent_id, name: args.name });
+        return JSON.stringify({
+          success: true,
+          agent_id: data.agent_id,
+          name: args.name,
+          prompt_chars: finalPrompt.length,
+          prompt_used: args.system_prompt_override ? "custom_override" : "hardened_framework_v1",
+        });
       }
 
       case "el_update_agent": {
