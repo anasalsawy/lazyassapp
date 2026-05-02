@@ -1981,6 +1981,12 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
         };
         const body = {
           name: args.name,
+          platform_settings: {
+            auth: {
+              enable_auth: false,
+              allowlist: [],
+            },
+          },
           conversation_config: {
             agent: {
               prompt: {
