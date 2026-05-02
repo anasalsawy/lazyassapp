@@ -1178,6 +1178,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({ ...callConfig, _task_id: task.id }),
         }).catch(e => console.error("[agent-chat] fire-and-forget voice-agent error:", e));
@@ -1334,6 +1335,7 @@ async function executeTool(
         const res = await fetch(vmBridgeUrl, {
           headers: {
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
         });
         return await res.text();
@@ -1346,6 +1348,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({ vm_id: args.vm_id }),
         });
