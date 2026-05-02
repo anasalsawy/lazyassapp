@@ -26,7 +26,7 @@ serve(async (req) => {
 
     if (action === "list") {
       const { data, error } = await supabase.from("vm_instances")
-        .select("id, name, host, ssh_port, ssh_user, vnc_url, \"noVNC_url\", status, os, specs_json, last_heartbeat_at")
+        .select("id, name, host, ssh_port, ssh_user, vnc_url, novnc_url, status, os, specs_json, last_heartbeat_at")
         .eq("user_id", user.id)
         .order("name");
       if (error) throw error;
@@ -46,7 +46,7 @@ serve(async (req) => {
         ssh_password_enc: body.ssh_password_enc || null,
         ssh_key_enc: body.ssh_key_enc || null,
         vnc_url: body.vnc_url || null,
-        "noVNC_url": body.noVNC_url || null,
+        novnc_url: body.noVNC_url || body.novnc_url || null,
         os: body.os || "windows_11",
         specs_json: body.specs_json || {},
         status: "offline",
@@ -152,7 +152,7 @@ serve(async (req) => {
         name: vm.name,
         status: online ? "online" : "offline",
         host: vm.host,
-        noVNC_url: vm["noVNC_url"],
+        noVNC_url: vm.novnc_url,
         last_heartbeat_at: vm.last_heartbeat_at,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
