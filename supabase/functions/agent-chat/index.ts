@@ -2033,7 +2033,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
         if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
         const patch: any = { conversation_config: { agent: { prompt: {} } } };
         if (args.system_prompt) patch.conversation_config.agent.prompt.prompt = args.system_prompt;
-        if (args.first_message) patch.conversation_config.agent.first_message = args.first_message;
+        if (args.first_message) patch.conversation_config.agent.first_message = simplifyFirstMessage(args.first_message);
         if (args.voice_id) patch.conversation_config.tts = { voice_id: args.voice_id };
         const res = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${args.agent_id}`, {
           method: "PATCH",
