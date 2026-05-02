@@ -854,10 +854,22 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **auto_shop_order** — creates an order in auto_shop_orders table and triggers the auto-shop backend function to find the best deal and purchase it. Uses saved shipping address and payment cards.
 
 ### Communication / Telephony (works via ElevenLabs Voice Agent)
-- **phone_call** — YOUR AUTONOMOUS PHONE AGENT. Initiates a real outbound phone call with an AI voice agent (Maya) that can navigate IVR menus, talk to humans, and pursue objectives autonomously. Returns a task_id for monitoring. Uses ElevenLabs + Planner architecture.
-- **phone_call_status** — checks the status, transcript, and blackboard of an active or completed call by task_id. Use this to monitor calls you've initiated.
-- **phone_call_inject** — sends a live mid-call instruction to the voice agent during an active call. The agent will incorporate it on its next turn.
-- **send_sms** — sends an SMS or WhatsApp message via Twilio. Requires Twilio credentials.
+- **phone_call** — Maya wrapper (uses pre-built Maya persona + Planner blackboard). Use for typical missions where Maya's setup is fine.
+- **phone_call_status** — checks status/transcript/blackboard of a Maya call by task_id.
+- **phone_call_inject** — injects a live instruction into a Maya call.
+- **send_sms** — sends an SMS or WhatsApp message via Twilio.
+
+### ElevenLabs Direct API (MAXIMUM FLEXIBILITY — full control)
+Use these instead of phone_call when you need a custom agent (different persona, voice, prompt, language). Typical autonomous flow:
+1. **el_create_agent** → build a tailored agent with a mission-specific system_prompt + first_message.
+2. **el_outbound_call** → dial out using the new agent_id; returns conversation_id.
+3. **el_get_conversation** → poll every 4-6 seconds to read live transcript/status. Also check phone_call_status if the call is also tracked in agent_tasks (blackboard).
+4. **el_send_contextual_update** → inject guidance mid-call when needed.
+5. **el_end_call** → terminate when objective met.
+6. **el_delete_agent** → cleanup one-shot agents (optional).
+- **el_update_agent** — patch prompt/voice mid-mission.
+- **el_list_conversations** — find active or recent calls.
+NOTE: When you create an agent + call directly via el_*, the call is NOT tracked in agent_tasks/blackboard — you monitor it purely via el_get_conversation polling. For blackboard-style state, use phone_call instead.
 
 ### Email (works via database query)
 - **check_email_inbox** — queries the job_emails table for recent emails (recruiter responses, interview invites, etc.).
