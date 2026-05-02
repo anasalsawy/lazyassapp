@@ -667,6 +667,136 @@ const AGENT_TOOLS = [
       },
     },
   },
+
+  // ═══ ELEVENLABS DIRECT API TOOLS — Maximum Flexibility ═══════════════════
+  // These tools talk directly to the ElevenLabs ConvAI REST API. Use them when
+  // you need full control: create custom agents per call, configure prompts/voices/tools,
+  // dial out, monitor live transcripts, inject mid-call, and end calls.
+  {
+    type: "function",
+    function: {
+      name: "el_create_agent",
+      description: "Create a NEW ElevenLabs ConvAI agent tailored for a specific mission. Returns agent_id. Use this when you want a fully custom voice agent (custom prompt, voice, first message, tools) instead of reusing Maya. Each call can have its own purpose-built agent.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Agent name (e.g. 'Refund-Negotiator-2026-01-15')" },
+          system_prompt: { type: "string", description: "Full system prompt defining the agent's persona, mission, rules, and behavior. Be detailed — this drives everything." },
+          first_message: { type: "string", description: "Opening line the agent says when the call connects (e.g. 'Hi, I'm calling about order #12345')" },
+          voice_id: { type: "string", description: "ElevenLabs voice ID (default: Sarah EXAVITQu4vr4xnSDxMaL). Common: Sarah=EXAVITQu4vr4xnSDxMaL, Charlie=IKne3meq5aSn9XLyUdCD, George=JBFqnCBsd6RMkjVDRZzb" },
+          language: { type: "string", description: "Language code (default: en)" },
+          llm: { type: "string", description: "LLM model (default: gpt-4o-mini). Options: gpt-4o, gpt-4o-mini, gemini-2.0-flash" },
+          temperature: { type: "number", description: "LLM temperature 0-1 (default: 0.5)" },
+          max_duration_seconds: { type: "number", description: "Max call duration in seconds (default: 600)" },
+        },
+        required: ["name", "system_prompt", "first_message"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_update_agent",
+      description: "Update an existing ElevenLabs agent's prompt, first message, or other config. Use mid-mission to adjust strategy without creating a new agent.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_id: { type: "string", description: "ElevenLabs agent_id" },
+          system_prompt: { type: "string", description: "(Optional) New system prompt" },
+          first_message: { type: "string", description: "(Optional) New first message" },
+          voice_id: { type: "string", description: "(Optional) New voice ID" },
+        },
+        required: ["agent_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_outbound_call",
+      description: "Initiate an outbound phone call with a specific ElevenLabs agent via Twilio. Returns conversation_id and call_sid for monitoring. Use after el_create_agent.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_id: { type: "string", description: "ElevenLabs agent_id (from el_create_agent or existing)" },
+          to_number: { type: "string", description: "Destination phone number in E.164 format (e.g. +14155551234)" },
+          dynamic_variables: { type: "object", description: "(Optional) Key-value pairs to inject as {{variables}} into the agent's prompt at call time" },
+        },
+        required: ["agent_id", "to_number"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_get_conversation",
+      description: "Fetch full conversation details, status, transcript, and metadata for an active or completed ElevenLabs call. Poll this every few seconds to monitor live calls.",
+      parameters: {
+        type: "object",
+        properties: {
+          conversation_id: { type: "string", description: "ElevenLabs conversation_id from el_outbound_call" },
+        },
+        required: ["conversation_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_list_conversations",
+      description: "List recent ElevenLabs conversations, optionally filtered by agent_id. Useful to find an active call or audit recent calls.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_id: { type: "string", description: "(Optional) Filter to one agent" },
+          page_size: { type: "number", description: "(Optional) Max results (default: 30)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_send_contextual_update",
+      description: "Inject a contextual update into a live ElevenLabs conversation. The agent will incorporate this guidance on its next turn (e.g. 'The user just confirmed their address is 123 Main St').",
+      parameters: {
+        type: "object",
+        properties: {
+          conversation_id: { type: "string", description: "Active conversation_id" },
+          text: { type: "string", description: "Contextual update text (instruction or new info for the agent)" },
+        },
+        required: ["conversation_id", "text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_end_call",
+      description: "Forcefully end an active ElevenLabs conversation/call.",
+      parameters: {
+        type: "object",
+        properties: {
+          conversation_id: { type: "string", description: "Active conversation_id to terminate" },
+        },
+        required: ["conversation_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_delete_agent",
+      description: "Delete an ElevenLabs agent. Use to clean up one-shot custom agents you created with el_create_agent after the mission is done.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_id: { type: "string", description: "Agent to delete" },
+        },
+        required: ["agent_id"],
+      },
+    },
+  },
 ];
 
 // ── System Prompt ───────────────────────────────────────────────────────────
