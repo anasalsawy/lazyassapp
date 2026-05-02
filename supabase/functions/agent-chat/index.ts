@@ -1252,9 +1252,11 @@ BEFORE ENDING:
 
 CLOSING SCRIPT:
 "Thanks so much for your help, [their name]. Have a great day."
+→ Then immediately call the \`end_call\` tool.
 
-If you achieved the SUCCESS CRITERIA above, end the call cleanly.
-If you did NOT achieve success, end politely and note what to try next.
+If you achieved the SUCCESS CRITERIA above: say goodbye and call \`end_call\`.
+If you did NOT achieve success: say goodbye politely and call \`end_call\`.
+NEVER let the call hang in awkward silence — always call \`end_call\` when done.
 
 ═══════════════════════════════════════════════════════════════════════════
                        PHASE 11 — EDGE CASES
