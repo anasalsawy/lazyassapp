@@ -79,7 +79,7 @@ serve(async (req) => {
 
       // Get VM details
       const { data: vm, error: vmErr } = await supabase.from("vm_instances")
-        .select("*").eq("id", vm_id).eq("user_id", user.id).single();
+        .select("*").eq("id", vm_id).eq("user_id", userId).single();
       if (vmErr || !vm) throw new Error("VM not found");
 
       // Call the VM's SSH bridge endpoint
@@ -106,7 +106,7 @@ serve(async (req) => {
 
       // Log the command
       await supabase.from("vm_command_logs").insert({
-        user_id: user.id,
+        user_id: userId,
         vm_id,
         command,
         output: result.output || result.stdout || JSON.stringify(result),
@@ -135,7 +135,7 @@ serve(async (req) => {
       if (!vmId) throw new Error("vm_id required");
 
       const { data: vm, error } = await supabase.from("vm_instances")
-        .select("*").eq("id", vmId).eq("user_id", user.id).single();
+        .select("*").eq("id", vmId).eq("user_id", userId).single();
       if (error || !vm) throw new Error("VM not found");
 
       // Try to ping the bridge
@@ -170,7 +170,7 @@ serve(async (req) => {
       const { vm_id } = body;
 
       const { data: vm, error } = await supabase.from("vm_instances")
-        .select("*").eq("id", vm_id).eq("user_id", user.id).single();
+        .select("*").eq("id", vm_id).eq("user_id", userId).single();
       if (error || !vm) throw new Error("VM not found");
 
       const bridgePort = (vm.specs_json as any)?.bridge_port || 8022;
