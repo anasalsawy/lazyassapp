@@ -667,6 +667,136 @@ const AGENT_TOOLS = [
       },
     },
   },
+
+  // ═══ ELEVENLABS DIRECT API TOOLS — Maximum Flexibility ═══════════════════
+  // These tools talk directly to the ElevenLabs ConvAI REST API. Use them when
+  // you need full control: create custom agents per call, configure prompts/voices/tools,
+  // dial out, monitor live transcripts, inject mid-call, and end calls.
+  {
+    type: "function",
+    function: {
+      name: "el_create_agent",
+      description: "Create a NEW ElevenLabs ConvAI agent tailored for a specific mission. Returns agent_id. Use this when you want a fully custom voice agent (custom prompt, voice, first message, tools) instead of reusing Maya. Each call can have its own purpose-built agent.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Agent name (e.g. 'Refund-Negotiator-2026-01-15')" },
+          system_prompt: { type: "string", description: "Full system prompt defining the agent's persona, mission, rules, and behavior. Be detailed — this drives everything." },
+          first_message: { type: "string", description: "Opening line the agent says when the call connects (e.g. 'Hi, I'm calling about order #12345')" },
+          voice_id: { type: "string", description: "ElevenLabs voice ID (default: Sarah EXAVITQu4vr4xnSDxMaL). Common: Sarah=EXAVITQu4vr4xnSDxMaL, Charlie=IKne3meq5aSn9XLyUdCD, George=JBFqnCBsd6RMkjVDRZzb" },
+          language: { type: "string", description: "Language code (default: en)" },
+          llm: { type: "string", description: "LLM model (default: gpt-4o-mini). Options: gpt-4o, gpt-4o-mini, gemini-2.0-flash" },
+          temperature: { type: "number", description: "LLM temperature 0-1 (default: 0.5)" },
+          max_duration_seconds: { type: "number", description: "Max call duration in seconds (default: 600)" },
+        },
+        required: ["name", "system_prompt", "first_message"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_update_agent",
+      description: "Update an existing ElevenLabs agent's prompt, first message, or other config. Use mid-mission to adjust strategy without creating a new agent.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_id: { type: "string", description: "ElevenLabs agent_id" },
+          system_prompt: { type: "string", description: "(Optional) New system prompt" },
+          first_message: { type: "string", description: "(Optional) New first message" },
+          voice_id: { type: "string", description: "(Optional) New voice ID" },
+        },
+        required: ["agent_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_outbound_call",
+      description: "Initiate an outbound phone call with a specific ElevenLabs agent via Twilio. Returns conversation_id and call_sid for monitoring. Use after el_create_agent.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_id: { type: "string", description: "ElevenLabs agent_id (from el_create_agent or existing)" },
+          to_number: { type: "string", description: "Destination phone number in E.164 format (e.g. +14155551234)" },
+          dynamic_variables: { type: "object", description: "(Optional) Key-value pairs to inject as {{variables}} into the agent's prompt at call time" },
+        },
+        required: ["agent_id", "to_number"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_get_conversation",
+      description: "Fetch full conversation details, status, transcript, and metadata for an active or completed ElevenLabs call. Poll this every few seconds to monitor live calls.",
+      parameters: {
+        type: "object",
+        properties: {
+          conversation_id: { type: "string", description: "ElevenLabs conversation_id from el_outbound_call" },
+        },
+        required: ["conversation_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_list_conversations",
+      description: "List recent ElevenLabs conversations, optionally filtered by agent_id. Useful to find an active call or audit recent calls.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_id: { type: "string", description: "(Optional) Filter to one agent" },
+          page_size: { type: "number", description: "(Optional) Max results (default: 30)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_send_contextual_update",
+      description: "Inject a contextual update into a live ElevenLabs conversation. The agent will incorporate this guidance on its next turn (e.g. 'The user just confirmed their address is 123 Main St').",
+      parameters: {
+        type: "object",
+        properties: {
+          conversation_id: { type: "string", description: "Active conversation_id" },
+          text: { type: "string", description: "Contextual update text (instruction or new info for the agent)" },
+        },
+        required: ["conversation_id", "text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_end_call",
+      description: "Forcefully end an active ElevenLabs conversation/call.",
+      parameters: {
+        type: "object",
+        properties: {
+          conversation_id: { type: "string", description: "Active conversation_id to terminate" },
+        },
+        required: ["conversation_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "el_delete_agent",
+      description: "Delete an ElevenLabs agent. Use to clean up one-shot custom agents you created with el_create_agent after the mission is done.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_id: { type: "string", description: "Agent to delete" },
+        },
+        required: ["agent_id"],
+      },
+    },
+  },
 ];
 
 // ── System Prompt ───────────────────────────────────────────────────────────
@@ -724,10 +854,22 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **auto_shop_order** — creates an order in auto_shop_orders table and triggers the auto-shop backend function to find the best deal and purchase it. Uses saved shipping address and payment cards.
 
 ### Communication / Telephony (works via ElevenLabs Voice Agent)
-- **phone_call** — YOUR AUTONOMOUS PHONE AGENT. Initiates a real outbound phone call with an AI voice agent (Maya) that can navigate IVR menus, talk to humans, and pursue objectives autonomously. Returns a task_id for monitoring. Uses ElevenLabs + Planner architecture.
-- **phone_call_status** — checks the status, transcript, and blackboard of an active or completed call by task_id. Use this to monitor calls you've initiated.
-- **phone_call_inject** — sends a live mid-call instruction to the voice agent during an active call. The agent will incorporate it on its next turn.
-- **send_sms** — sends an SMS or WhatsApp message via Twilio. Requires Twilio credentials.
+- **phone_call** — Maya wrapper (uses pre-built Maya persona + Planner blackboard). Use for typical missions where Maya's setup is fine.
+- **phone_call_status** — checks status/transcript/blackboard of a Maya call by task_id.
+- **phone_call_inject** — injects a live instruction into a Maya call.
+- **send_sms** — sends an SMS or WhatsApp message via Twilio.
+
+### ElevenLabs Direct API (MAXIMUM FLEXIBILITY — full control)
+Use these instead of phone_call when you need a custom agent (different persona, voice, prompt, language). Typical autonomous flow:
+1. **el_create_agent** → build a tailored agent with a mission-specific system_prompt + first_message.
+2. **el_outbound_call** → dial out using the new agent_id; returns conversation_id.
+3. **el_get_conversation** → poll every 4-6 seconds to read live transcript/status. Also check phone_call_status if the call is also tracked in agent_tasks (blackboard).
+4. **el_send_contextual_update** → inject guidance mid-call when needed.
+5. **el_end_call** → terminate when objective met.
+6. **el_delete_agent** → cleanup one-shot agents (optional).
+- **el_update_agent** — patch prompt/voice mid-mission.
+- **el_list_conversations** — find active or recent calls.
+NOTE: When you create an agent + call directly via el_*, the call is NOT tracked in agent_tasks/blackboard — you monitor it purely via el_get_conversation polling. For blackboard-style state, use phone_call instead.
 
 ### Email (works via database query)
 - **check_email_inbox** — queries the job_emails table for recent emails (recruiter responses, interview invites, etc.).
@@ -1410,6 +1552,162 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
           command: playwrightScript,
           timeout: 60,
         }, supabase, userId);
+      }
+
+      // ═══ ELEVENLABS DIRECT API HANDLERS ════════════════════════════════
+      case "el_create_agent": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const body = {
+          name: args.name,
+          conversation_config: {
+            agent: {
+              prompt: {
+                prompt: args.system_prompt,
+                llm: args.llm || "gpt-4o-mini",
+                temperature: typeof args.temperature === "number" ? args.temperature : 0.5,
+              },
+              first_message: args.first_message,
+              language: args.language || "en",
+            },
+            tts: { voice_id: args.voice_id || "EXAVITQu4vr4xnSDxMaL" },
+            conversation: { max_duration_seconds: args.max_duration_seconds || 600 },
+          },
+        };
+        const res = await fetch("https://api.elevenlabs.io/v1/convai/agents/create", {
+          method: "POST",
+          headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify({ success: true, agent_id: data.agent_id, name: args.name });
+      }
+
+      case "el_update_agent": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const patch: any = { conversation_config: { agent: { prompt: {} } } };
+        if (args.system_prompt) patch.conversation_config.agent.prompt.prompt = args.system_prompt;
+        if (args.first_message) patch.conversation_config.agent.first_message = args.first_message;
+        if (args.voice_id) patch.conversation_config.tts = { voice_id: args.voice_id };
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${args.agent_id}`, {
+          method: "PATCH",
+          headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify({ success: true, agent_id: args.agent_id });
+      }
+
+      case "el_outbound_call": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        const phoneNumberId = Deno.env.get("ELEVENLABS_PHONE_NUMBER_ID");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        if (!phoneNumberId) return JSON.stringify({ error: "ELEVENLABS_PHONE_NUMBER_ID not configured" });
+        const body: any = {
+          agent_id: args.agent_id,
+          agent_phone_number_id: phoneNumberId,
+          to_number: args.to_number,
+        };
+        if (args.dynamic_variables && typeof args.dynamic_variables === "object") {
+          body.conversation_initiation_client_data = {
+            dynamic_variables: args.dynamic_variables,
+          };
+        }
+        const res = await fetch("https://api.elevenlabs.io/v1/convai/twilio/outbound-call", {
+          method: "POST",
+          headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify({
+          success: true,
+          conversation_id: data.conversation_id,
+          call_sid: data.callSid || data.call_sid,
+          message: `📞 Call initiated to ${args.to_number}. Use el_get_conversation with conversation_id="${data.conversation_id}" to monitor.`,
+        });
+      }
+
+      case "el_get_conversation": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${args.conversation_id}`, {
+          headers: { "xi-api-key": apiKey },
+        });
+        const data = await res.json();
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        // Return a compact view to save tokens
+        return JSON.stringify({
+          conversation_id: args.conversation_id,
+          status: data.status,
+          agent_id: data.agent_id,
+          start_time: data.metadata?.start_time_unix_secs,
+          duration_secs: data.metadata?.call_duration_secs,
+          transcript: (data.transcript || []).map((t: any) => ({
+            role: t.role,
+            message: t.message,
+            time_in_call_secs: t.time_in_call_secs,
+          })),
+          analysis: data.analysis || null,
+        });
+      }
+
+      case "el_list_conversations": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const params = new URLSearchParams();
+        if (args.agent_id) params.set("agent_id", String(args.agent_id));
+        params.set("page_size", String(args.page_size || 30));
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations?${params}`, {
+          headers: { "xi-api-key": apiKey },
+        });
+        const data = await res.json();
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify(data);
+      }
+
+      case "el_send_contextual_update": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${args.conversation_id}/contextual-update`, {
+          method: "POST",
+          headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify({ text: args.text }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        return JSON.stringify({ success: true, message: "Contextual update sent — agent will incorporate it on next turn." });
+      }
+
+      case "el_end_call": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${args.conversation_id}`, {
+          method: "DELETE",
+          headers: { "xi-api-key": apiKey },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        }
+        return JSON.stringify({ success: true, message: "Call terminated." });
+      }
+
+      case "el_delete_agent": {
+        const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+        if (!apiKey) return JSON.stringify({ error: "ELEVENLABS_API_KEY not configured" });
+        const res = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${args.agent_id}`, {
+          method: "DELETE",
+          headers: { "xi-api-key": apiKey },
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          return JSON.stringify({ error: `ElevenLabs error ${res.status}`, details: data });
+        }
+        return JSON.stringify({ success: true, message: "Agent deleted." });
       }
 
       default:
