@@ -1178,6 +1178,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({ ...callConfig, _task_id: task.id }),
         }).catch(e => console.error("[agent-chat] fire-and-forget voice-agent error:", e));
@@ -1197,6 +1198,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
         });
         const stateData = await stateRes.json();
@@ -1221,6 +1223,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({
             task_id: args.task_id as string,
@@ -1296,7 +1299,7 @@ async function executeTool(
       // ═══ VM OPERATIONS ════════════════════════════════════════════════
       case "vm_list": {
         const { data, error } = await supabase.from("vm_instances")
-          .select("id, name, host, ssh_port, ssh_user, vnc_url, \"noVNC_url\", status, os, specs_json, last_heartbeat_at")
+          .select("id, name, host, ssh_port, ssh_user, vnc_url, novnc_url, status, os, specs_json, last_heartbeat_at")
           .eq("user_id", userId).order("name");
         if (error) return JSON.stringify({ error: error.message });
         return JSON.stringify({ vms: data || [], count: data?.length || 0 });
@@ -1321,11 +1324,11 @@ async function executeTool(
 
         // Get VM info for stream marker
         const { data: vmInfo } = await supabase.from("vm_instances")
-          .select("id, name, \"noVNC_url\"").eq("id", args.vm_id as string).single();
+          .select("id, name, novnc_url").eq("id", args.vm_id as string).eq("user_id", userId).single();
 
         return JSON.stringify({
           ...result,
-          vm: vmInfo ? { id: vmInfo.id, name: vmInfo.name, noVNC_url: vmInfo["noVNC_url"] } : null,
+          vm: vmInfo ? { id: vmInfo.id, name: vmInfo.name, noVNC_url: vmInfo.novnc_url } : null,
         });
       }
 
@@ -1334,6 +1337,7 @@ async function executeTool(
         const res = await fetch(vmBridgeUrl, {
           headers: {
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
         });
         return await res.text();
@@ -1346,6 +1350,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({ vm_id: args.vm_id }),
         });
@@ -1359,6 +1364,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({
             name: args.name,
@@ -1380,6 +1386,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({ vm_id: args.vm_id }),
         });
