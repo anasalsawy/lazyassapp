@@ -1296,7 +1296,7 @@ async function executeTool(
       // ═══ VM OPERATIONS ════════════════════════════════════════════════
       case "vm_list": {
         const { data, error } = await supabase.from("vm_instances")
-          .select("id, name, host, ssh_port, ssh_user, vnc_url, \"noVNC_url\", status, os, specs_json, last_heartbeat_at")
+          .select("id, name, host, ssh_port, ssh_user, vnc_url, novnc_url, status, os, specs_json, last_heartbeat_at")
           .eq("user_id", userId).order("name");
         if (error) return JSON.stringify({ error: error.message });
         return JSON.stringify({ vms: data || [], count: data?.length || 0 });
@@ -1321,11 +1321,11 @@ async function executeTool(
 
         // Get VM info for stream marker
         const { data: vmInfo } = await supabase.from("vm_instances")
-          .select("id, name, \"noVNC_url\"").eq("id", args.vm_id as string).single();
+          .select("id, name, novnc_url").eq("id", args.vm_id as string).single();
 
         return JSON.stringify({
           ...result,
-          vm: vmInfo ? { id: vmInfo.id, name: vmInfo.name, noVNC_url: vmInfo["noVNC_url"] } : null,
+          vm: vmInfo ? { id: vmInfo.id, name: vmInfo.name, noVNC_url: vmInfo.novnc_url } : null,
         });
       }
 
