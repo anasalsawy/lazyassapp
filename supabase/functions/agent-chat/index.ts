@@ -1966,6 +1966,7 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
           name: args.name,
           prompt_chars: finalPrompt.length,
           prompt_used: args.system_prompt_override ? "custom_override" : "hardened_framework_v1",
+          tools_activated: ["end_call", "play_keypad_touch_tone", "skip_turn", "language_detection"],
         });
       }
 
