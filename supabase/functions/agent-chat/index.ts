@@ -1223,6 +1223,7 @@ async function executeTool(
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "X-User-Id": userId,
           },
           body: JSON.stringify({
             task_id: args.task_id as string,
