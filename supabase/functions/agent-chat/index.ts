@@ -1952,21 +1952,50 @@ Write-Output "Task is being executed on the VM desktop — visible in live strea
         // Built-in ElevenLabs system tools — automatically activated for every agent
         // so the LLM can navigate IVRs (DTMF), end the call cleanly, skip turns
         // during long silences, and detect language switches mid-call.
+        // Built-in ElevenLabs system tools — must follow the BuiltInTools-Input schema:
+        // each key maps to an object with name/description/type/params (or null to disable).
         const builtInTools = {
           end_call: {
-            system_tool_type: "end_call",
+            name: "end_call",
+            description: "",
+            response_timeout_secs: 20,
+            type: "system",
+            params: { system_tool_type: "end_call" },
           },
           play_keypad_touch_tone: {
-            system_tool_type: "play_keypad_touch_tone",
-            use_out_of_band_dtmf: true,        // RFC 4733 — works on most carriers
-            suppress_turn_after_dtmf: true,    // don't speak right after pressing — IVRs hate that
+            name: "play_keypad_touch_tone",
+            description: "",
+            response_timeout_secs: 20,
+            type: "system",
+            params: {
+              system_tool_type: "play_keypad_touch_tone",
+              use_out_of_band_dtmf: true,
+              suppress_turn_after_dtmf: true,
+            },
           },
           skip_turn: {
-            system_tool_type: "skip_turn",
+            name: "skip_turn",
+            description: "",
+            response_timeout_secs: 20,
+            type: "system",
+            params: { system_tool_type: "skip_turn" },
           },
           language_detection: {
-            system_tool_type: "language_detection",
+            name: "language_detection",
+            description: "",
+            response_timeout_secs: 20,
+            type: "system",
+            params: { system_tool_type: "language_detection" },
           },
+          voicemail_detection: {
+            name: "voicemail_detection",
+            description: "",
+            response_timeout_secs: 20,
+            type: "system",
+            params: { system_tool_type: "voicemail_detection" },
+          },
+          transfer_to_agent: null,
+          transfer_to_number: null,
         };
         const body = {
           name: args.name,
