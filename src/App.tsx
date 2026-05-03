@@ -160,6 +160,8 @@ const App = () => (
             }
           />
           
+          <Route path="/vms" element={<ProtectedRoute><VMs /></ProtectedRoute>} />
+
           {/* Catch-all */}
           <Route path="*" element={<NotFound />} />
         </Routes>
