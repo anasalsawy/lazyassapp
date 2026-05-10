@@ -58,8 +58,7 @@ Deno.serve(async (req) => {
     if (insertErr) return json({ error: insertErr.message }, 500);
 
     // Build assistant overrides
-    const promptRaw = await Deno.readTextFile(new URL("./prompt.txt", import.meta.url));
-    const systemPrompt = transformPromptForVapi(promptRaw);
+    const systemPrompt = transformPromptForVapi(VOICEOPS_SYSTEM_PROMPT);
 
     // Flat variable set (Vapi templating doesn't truly nest — flat keys are reliable)
     const ci = (customer_info ?? {}) as Record<string, unknown>;
