@@ -98,8 +98,7 @@ Deno.serve(async (req) => {
       // Inline assistant if no preconfigured assistant in Vapi dashboard
       vapiBody.assistant = {
         name: "VoiceOps Alex",
-        firstMessage:
-          "Hi, this is Alex calling from VoiceOps. This call may be recorded for quality. Do you have a quick minute?",
+        firstMessage,
         model: {
           provider: "openai",
           model: "gpt-4o",
