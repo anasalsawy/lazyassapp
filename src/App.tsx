@@ -21,9 +21,7 @@ import JobAgent from "./pages/JobAgent";
 import AutoShop from "./pages/AutoShop";
 import AgentMonitoring from "./pages/AgentMonitoring";
 import Agent from "./pages/Agent";
-import Operator from "./pages/Operator";
 import LovableAgent from "./pages/LovableAgent";
-import CallCenter from "./pages/CallCenter";
 import VMs from "./pages/VMs";
 import VoiceOps from "./pages/VoiceOps";
 
@@ -131,16 +129,6 @@ const App = () => (
             }
           />
           
-          {/* Operator Agent */}
-          <Route
-            path="/operator"
-            element={
-              <ProtectedRoute>
-                <Operator />
-              </ProtectedRoute>
-            }
-          />
-          
           {/* Lovable Agent */}
           <Route
             path="/lovable-agent"
@@ -150,19 +138,13 @@ const App = () => (
               </ProtectedRoute>
             }
           />
-          
-          {/* Call Center */}
-          <Route
-            path="/call-center"
-            element={
-              <ProtectedRoute>
-                <CallCenter />
-              </ProtectedRoute>
-            }
-          />
-          
-          <Route path="/vms" element={<ProtectedRoute><VMs /></ProtectedRoute>} />
+
+          {/* Voice (Vapi-powered Alex) — replaces legacy Call Center / Operator */}
           <Route path="/voiceops" element={<ProtectedRoute><VoiceOps /></ProtectedRoute>} />
+          <Route path="/call-center" element={<Navigate to="/voiceops" replace />} />
+          <Route path="/operator" element={<Navigate to="/voiceops" replace />} />
+
+          <Route path="/vms" element={<ProtectedRoute><VMs /></ProtectedRoute>} />
 
           {/* Catch-all */}
           <Route path="*" element={<NotFound />} />
