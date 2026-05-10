@@ -411,24 +411,51 @@ export default function VoiceOps() {
             ))}
           </div>
 
-          <div className="command-bar">
+          <div className="command-bar" style={{ border: "2px solid #f59e0b", borderRadius: 12, padding: 12, background: "rgba(245,158,11,0.06)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#f59e0b" }}>
+                💉 OPERATOR INJECTION {isLive ? "· LIVE" : activeCall ? `· ${activeCall.status?.toUpperCase() ?? "INACTIVE"}` : "· NO CALL"}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  className="quick-cmd"
+                  onClick={() => { inject(command || "", "say-now"); setCommand(""); }}
+                  disabled={!isLive || !command.trim()}
+                  title="Make Alex say this verbatim"
+                  style={{ borderColor: "#f59e0b", color: "#f59e0b" }}
+                >🗣 Say verbatim</button>
+                <button
+                  className="quick-cmd"
+                  onClick={() => { inject(command, "context"); setCommand(""); }}
+                  disabled={!isLive || !command.trim()}
+                  title="Steer Alex's reasoning (system message)"
+                  style={{ background: "#f59e0b", color: "#0a0e1a", borderColor: "#f59e0b", fontWeight: 700 }}
+                >➤ Steer & Send</button>
+              </div>
+            </div>
             <div className="command-input-wrapper">
               <input
                 className="command-input"
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
                 onKeyDown={handleCommandKey}
-                placeholder={isLive ? "Type a command to inject into the live call..." : "Start a call to inject commands"}
+                placeholder={isLive ? "Type to inject — Enter to steer, button to say verbatim..." : "Start a call to inject commands"}
                 disabled={!isLive}
+                style={{ borderColor: isLive ? "#f59e0b" : undefined }}
               />
-              <span className="command-hint">Enter ↵</span>
+              <span className="command-hint">Enter ↵ steer</span>
             </div>
-            <div className="quick-commands">
+            <div className="quick-commands" style={{ marginTop: 8 }}>
               <button className="quick-cmd" disabled={!isLive} onClick={() => inject("Ask the lead for clarification on their last point")}>❓ Clarify</button>
               <button className="quick-cmd" disabled={!isLive} onClick={() => inject("Escalate: offer to bring in a human supervisor")}>⬆️ Escalate</button>
               <button className="quick-cmd" disabled={!isLive} onClick={() => inject("Offer a 20% discount if they commit today", "say-now")}>🏷️ Offer</button>
               <button className="quick-cmd" disabled={!isLive} onClick={() => inject("end", "end-call")}>📴 End</button>
             </div>
+            {!isLive && activeCall && (
+              <div style={{ fontSize: 11, color: "#ef4444", marginTop: 8 }}>
+                ⚠ Selected call is "{activeCall.status}". Injection only works during a live call.
+              </div>
+            )}
           </div>
         </div>
 
