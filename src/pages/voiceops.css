@@ -1,4 +1,26 @@
-        :root {
+.voiceops-modal-portal {
+    --bg-primary: #0a0e1a;
+    --bg-secondary: #111827;
+    --bg-tertiary: #1a2332;
+    --bg-card: #161f2e;
+    --border: #1e293b;
+    --border-hover: #334155;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --accent: #06b6d4;
+    --accent-glow: rgba(6, 182, 212, 0.3);
+    --success: #10b981;
+    --success-glow: rgba(16, 185, 129, 0.3);
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --agent: #8b5cf6;
+    --human: #06b6d4;
+    --system: #f59e0b;
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: var(--text-primary);
+}
+        .voiceops-shell {
             --bg-primary: #0a0e1a;
             --bg-secondary: #111827;
             --bg-tertiary: #1a2332;
@@ -18,7 +40,7 @@
             --human: #06b6d4;
             --system: #f59e0b;
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .voiceops-shell, .voiceops-shell *, .voiceops-modal-portal, .voiceops-modal-portal * { margin: 0; padding: 0; box-sizing: border-box; }
         .voiceops-shell {
             font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: var(--bg-primary);
