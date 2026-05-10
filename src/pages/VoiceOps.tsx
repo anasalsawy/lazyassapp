@@ -411,7 +411,7 @@ export default function VoiceOps() {
             ))}
           </div>
 
-          <div className="command-bar" style={{ border: "2px solid #f59e0b", borderRadius: 12, padding: 12, background: "rgba(245,158,11,0.06)" }}>
+          <div className="command-bar" style={{ border: "2px solid #f59e0b", borderRadius: 12, padding: 12, background: "rgba(245,158,11,0.06)", display: "flex", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "#f59e0b" }}>
                 💉 OPERATOR INJECTION {isLive ? "· LIVE" : activeCall ? `· ${activeCall.status?.toUpperCase() ?? "INACTIVE"}` : "· NO CALL"}
