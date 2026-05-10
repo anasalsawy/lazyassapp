@@ -36,7 +36,7 @@ const ACTIVE = new Set(["queued", "starting", "ringing", "in-progress", "active"
 export default function VoiceOps() {
   const [phone, setPhone] = useState("");
   const [objective, setObjective] = useState("");
-  const [customer, setCustomer] = useState('{\n  "name": "",\n  "company": ""\n}');
+  const [customer, setCustomer] = useState('{\n  "firstName": "",\n  "lastName": "",\n  "company": "",\n  "title": "",\n  "timezone": "",\n  "constraints": "",\n  "offer": ""\n}');
   const [calls, setCalls] = useState<Call[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
