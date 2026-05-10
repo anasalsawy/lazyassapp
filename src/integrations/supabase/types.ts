@@ -1902,6 +1902,145 @@ export type Database = {
         }
         Relationships: []
       }
+      voiceops_calls: {
+        Row: {
+          control_url: string | null
+          cost_usd: number | null
+          created_at: string
+          customer_info: Json | null
+          duration_seconds: number | null
+          ended_reason: string | null
+          id: string
+          metadata: Json | null
+          objective: string
+          outcome: string | null
+          phone_number: string
+          recording_url: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          vapi_call_id: string | null
+        }
+        Insert: {
+          control_url?: string | null
+          cost_usd?: number | null
+          created_at?: string
+          customer_info?: Json | null
+          duration_seconds?: number | null
+          ended_reason?: string | null
+          id?: string
+          metadata?: Json | null
+          objective: string
+          outcome?: string | null
+          phone_number: string
+          recording_url?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+          vapi_call_id?: string | null
+        }
+        Update: {
+          control_url?: string | null
+          cost_usd?: number | null
+          created_at?: string
+          customer_info?: Json | null
+          duration_seconds?: number | null
+          ended_reason?: string | null
+          id?: string
+          metadata?: Json | null
+          objective?: string
+          outcome?: string | null
+          phone_number?: string
+          recording_url?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+          vapi_call_id?: string | null
+        }
+        Relationships: []
+      }
+      voiceops_injections: {
+        Row: {
+          call_id: string
+          created_at: string
+          delivered_at: string | null
+          error: string | null
+          id: string
+          mode: string
+          status: string
+          text: string
+          user_id: string
+        }
+        Insert: {
+          call_id: string
+          created_at?: string
+          delivered_at?: string | null
+          error?: string | null
+          id?: string
+          mode?: string
+          status?: string
+          text: string
+          user_id: string
+        }
+        Update: {
+          call_id?: string
+          created_at?: string
+          delivered_at?: string | null
+          error?: string | null
+          id?: string
+          mode?: string
+          status?: string
+          text?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voiceops_injections_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "voiceops_calls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      voiceops_transcripts: {
+        Row: {
+          call_id: string
+          created_at: string
+          id: string
+          is_final: boolean
+          role: string
+          seq: number | null
+          text: string
+        }
+        Insert: {
+          call_id: string
+          created_at?: string
+          id?: string
+          is_final?: boolean
+          role: string
+          seq?: number | null
+          text: string
+        }
+        Update: {
+          call_id?: string
+          created_at?: string
+          id?: string
+          is_final?: boolean
+          role?: string
+          seq?: number | null
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voiceops_transcripts_call_id_fkey"
+            columns: ["call_id"]
+            isOneToOne: false
+            referencedRelation: "voiceops_calls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_messages: {
         Row: {
           body: string
