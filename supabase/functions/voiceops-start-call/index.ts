@@ -92,9 +92,7 @@ Deno.serve(async (req) => {
           messages: [
             {
               role: "system",
-              content:
-                systemPrompt +
-                "\n\nIMPORTANT: If directly asked whether you are an AI/bot, answer truthfully and continue the call professionally.",
+              content: systemPrompt,
             },
           ],
         },
