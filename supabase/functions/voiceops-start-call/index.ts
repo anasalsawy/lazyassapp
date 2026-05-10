@@ -8,9 +8,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const VAPI_API_KEY = Deno.env.get("VAPI_API_KEY")!;
-const VAPI_PHONE_NUMBER_ID = Deno.env.get("VAPI_PHONE_NUMBER_ID")!;
-const VAPI_ASSISTANT_ID = Deno.env.get("VAPI_ASSISTANT_ID") || "";
+const VAPI_API_KEY = (Deno.env.get("VAPI_API_KEY") || "").trim().replace(/^['"]|['"]$/g, "");
+const VAPI_PHONE_NUMBER_ID = (Deno.env.get("VAPI_PHONE_NUMBER_ID") || "").trim();
+const VAPI_ASSISTANT_ID = (Deno.env.get("VAPI_ASSISTANT_ID") || "").trim();
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
@@ -28,6 +28,10 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
+    if (!VAPI_API_KEY || !VAPI_PHONE_NUMBER_ID) {
+      return json({ error: "voiceops_not_configured", detail: "Missing VAPI_API_KEY or VAPI_PHONE_NUMBER_ID" }, 500);
+    }
+
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "unauthorized" }, 401);
 
@@ -130,11 +134,17 @@ Deno.serve(async (req) => {
 
     const vapiJson = await vapiRes.json();
     if (!vapiRes.ok) {
+      const isInvalidKey = vapiRes.status === 401 || /invalid key|unauthorized/i.test(JSON.stringify(vapiJson));
       await admin
         .from("voiceops_calls")
         .update({ status: "failed", ended_reason: JSON.stringify(vapiJson) })
         .eq("id", call.id);
-      return json({ error: "vapi_failed", detail: vapiJson }, 500);
+      return json({
+        error: isInvalidKey ? "vapi_api_key_invalid" : "vapi_failed",
+        detail: isInvalidKey
+          ? "Vapi rejected the stored server API key. VAPI_API_KEY must be a Vapi private/server key, not the public browser key."
+          : vapiJson,
+      }, isInvalidKey ? 401 : 502);
     }
 
     await admin
