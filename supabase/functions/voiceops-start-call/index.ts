@@ -1,5 +1,6 @@
 // VoiceOps: start an outbound call via Vapi
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { VOICEOPS_SYSTEM_PROMPT } from "./prompt.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
