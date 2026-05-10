@@ -60,7 +60,25 @@ Deno.serve(async (req) => {
     const promptRaw = await Deno.readTextFile(new URL("./prompt.txt", import.meta.url));
     const systemPrompt = transformPromptForVapi(promptRaw);
 
-    const customerInfoStr = JSON.stringify(customer_info ?? {}, null, 2);
+    // Flat variable set (Vapi templating doesn't truly nest — flat keys are reliable)
+    const ci = (customer_info ?? {}) as Record<string, unknown>;
+    const flatVars: Record<string, string> = {
+      // Lead
+      firstName: String(ci.firstName ?? ci.first_name ?? ci.name ?? ""),
+      lastName: String(ci.lastName ?? ci.last_name ?? ""),
+      company: String(ci.company ?? ""),
+      title: String(ci.title ?? ci.role ?? ""),
+      timezone: String(ci.timezone ?? ci.tz ?? ""),
+      // Task
+      taskObjective: objective,
+      constraints: String(ci.constraints ?? body.constraints ?? ""),
+      offer: String(ci.offer ?? body.offer ?? ""),
+      // Ops (mid-call injections arrive as system messages, but seed empty)
+      injection: "",
+    };
+
+    const greetingName = flatVars.firstName ? ` ${flatVars.firstName}` : "";
+    const firstMessage = `Hi${greetingName}, this is Alex calling from VoiceOps. This call may be recorded for quality. Do you have a quick minute?`;
 
     const vapiBody: Record<string, unknown> = {
       phoneNumberId: VAPI_PHONE_NUMBER_ID,
@@ -68,14 +86,11 @@ Deno.serve(async (req) => {
       maxDurationSeconds: Math.min(Math.max(max_duration_seconds ?? 900, 60), 1800),
       metadata: { voiceops_call_id: call.id, user_id: user.id },
       assistantOverrides: {
-        variableValues: {
-          TASK_OBJECTIVE: objective,
-          CUSTOMER_INFO: customerInfoStr,
-        },
-        firstMessage:
-          "Hi, this is Alex calling from VoiceOps. This call may be recorded for quality. Do you have a quick minute?",
+        variableValues: flatVars,
+        firstMessage,
       },
     };
+
 
     if (VAPI_ASSISTANT_ID) {
       vapiBody.assistantId = VAPI_ASSISTANT_ID;
@@ -83,8 +98,7 @@ Deno.serve(async (req) => {
       // Inline assistant if no preconfigured assistant in Vapi dashboard
       vapiBody.assistant = {
         name: "VoiceOps Alex",
-        firstMessage:
-          "Hi, this is Alex calling from VoiceOps. This call may be recorded for quality. Do you have a quick minute?",
+        firstMessage,
         model: {
           provider: "openai",
           model: "gpt-4o",
