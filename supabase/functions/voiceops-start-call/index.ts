@@ -42,8 +42,20 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: "unauthorized" }, 401);
 
     const body = await req.json();
-    const { phone_number, objective, customer_info, max_duration_seconds } = body;
-    if (!phone_number || !objective) return json({ error: "phone_number and objective required" }, 400);
+    const { phone_number: rawPhone, objective, customer_info, max_duration_seconds } = body;
+    if (!rawPhone || !objective) return json({ error: "phone_number and objective required" }, 400);
+
+    // Normalize to E.164. Strip everything except digits and a leading +.
+    let phone_number = String(rawPhone).trim().replace(/[^\d+]/g, "");
+    if (!phone_number.startsWith("+")) {
+      // 10 digits → assume US (+1). 11 digits starting with 1 → prepend +.
+      if (/^\d{10}$/.test(phone_number)) phone_number = `+1${phone_number}`;
+      else if (/^1\d{10}$/.test(phone_number)) phone_number = `+${phone_number}`;
+      else phone_number = `+${phone_number}`;
+    }
+    if (!/^\+[1-9]\d{6,14}$/.test(phone_number)) {
+      return json({ error: "invalid_phone", detail: `Phone must be E.164 (e.g. +15089198327). Got: ${rawPhone}` }, 400);
+    }
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
