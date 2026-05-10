@@ -25,6 +25,7 @@ import Operator from "./pages/Operator";
 import LovableAgent from "./pages/LovableAgent";
 import CallCenter from "./pages/CallCenter";
 import VMs from "./pages/VMs";
+import VoiceOps from "./pages/VoiceOps";
 
 const queryClient = new QueryClient();
 
@@ -161,6 +162,7 @@ const App = () => (
           />
           
           <Route path="/vms" element={<ProtectedRoute><VMs /></ProtectedRoute>} />
+          <Route path="/voiceops" element={<ProtectedRoute><VoiceOps /></ProtectedRoute>} />
 
           {/* Catch-all */}
           <Route path="*" element={<NotFound />} />

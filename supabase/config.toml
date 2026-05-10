@@ -71,3 +71,6 @@ verify_jwt = false
 
 [functions.voice-context-tool]
 verify_jwt = false
+
+[functions.voiceops-webhook]
+verify_jwt = false
