@@ -77,6 +77,9 @@ export default function VoiceOps() {
   const [command, setCommand] = useState("");
   const [injectionToast, setInjectionToast] = useState<string | null>(null);
 
+  // Mobile tab
+  const [mobileTab, setMobileTab] = useState<"calls" | "live" | "state">("live");
+
   // Live ticking
   const [now, setNow] = useState(Date.now());
   const [vizBars, setVizBars] = useState<number[]>(Array(40).fill(8));
@@ -304,8 +307,15 @@ export default function VoiceOps() {
         </div>
       </div>
 
+      {/* MOBILE TABS */}
+      <div className="mobile-tabs">
+        <button className={`mtab ${mobileTab === "calls" ? "on" : ""}`} onClick={() => setMobileTab("calls")}>📋 Calls{calls.length ? ` · ${calls.length}` : ""}</button>
+        <button className={`mtab ${mobileTab === "live" ? "on" : ""}`} onClick={() => setMobileTab("live")}>🎙 Live{liveCount ? ` · ${liveCount}` : ""}</button>
+        <button className={`mtab ${mobileTab === "state" ? "on" : ""}`} onClick={() => setMobileTab("state")}>📊 State</button>
+      </div>
+
       {/* MAIN */}
-      <div className="main">
+      <div className={`main mtab-${mobileTab}`}>
         {/* LEFT: call list */}
         <div className="sidebar-left">
           <div className="panel-header">

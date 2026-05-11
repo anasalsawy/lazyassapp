@@ -809,3 +809,141 @@
         @media (max-width: 1200px) {
             .main { grid-template-columns: 240px 1fr 320px; }
         }
+
+        /* Mobile tabs hidden by default */
+        .mobile-tabs { display: none; }
+
+        @media (max-width: 1024px) {
+            .main { grid-template-columns: 220px 1fr; }
+            .sidebar-right { display: none; }
+            .voiceops-shell .main.mtab-state .sidebar-right {
+                display: flex; flex-direction: column;
+                position: fixed; inset: 56px 0 0 0; z-index: 90;
+                background: var(--bg-secondary); overflow-y: auto;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .voiceops-shell { height: 100dvh; }
+            .top-bar {
+                padding: 8px 12px; gap: 8px;
+                height: auto; min-height: 56px; flex-wrap: wrap;
+            }
+            .top-bar .logo { font-size: 15px; flex: 1; }
+            .top-bar .logo-icon { width: 28px; height: 28px; font-size: 14px; }
+            .status-pill {
+                order: 3; width: 100%; justify-content: center;
+                font-size: 11px; padding: 4px 10px;
+            }
+            .top-actions { display: flex; gap: 6px; }
+            .top-actions .btn { padding: 6px 10px; font-size: 12px; }
+
+            .config-panel.open { padding: 12px; }
+            .config-grid { grid-template-columns: 1fr 1fr !important; gap: 8px; }
+
+            .mobile-tabs {
+                display: flex;
+                background: var(--bg-secondary);
+                border-bottom: 1px solid var(--border);
+                padding: 6px;
+                gap: 4px;
+            }
+            .mtab {
+                flex: 1; padding: 9px 6px;
+                background: transparent; border: 1px solid transparent;
+                color: var(--text-secondary);
+                border-radius: 8px;
+                font-size: 12px; font-weight: 600;
+                cursor: pointer;
+                transition: all 0.15s;
+                font-family: inherit;
+            }
+            .mtab.on {
+                background: var(--bg-tertiary);
+                color: var(--accent);
+                border-color: var(--accent);
+                box-shadow: 0 0 0 1px var(--accent-glow);
+            }
+
+            .main {
+                grid-template-columns: 1fr !important;
+                grid-template-rows: 1fr;
+                position: relative;
+            }
+            .sidebar-left, .center-panel, .sidebar-right {
+                display: none !important;
+                border-right: none;
+                border-left: none;
+                width: 100%;
+            }
+            .main.mtab-calls .sidebar-left { display: flex !important; }
+            .main.mtab-live .center-panel { display: flex !important; }
+            .main.mtab-state .sidebar-right { display: flex !important; flex-direction: column; }
+
+            .call-info-bar {
+                padding: 10px 12px;
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            .call-info-left { gap: 10px; width: 100%; }
+            .avatar { width: 36px; height: 36px; font-size: 15px; }
+            .call-details h2 { font-size: 14px; }
+            .call-details p { font-size: 12px; }
+            .call-metrics { width: 100%; justify-content: space-between; gap: 8px; }
+            .metric-value { font-size: 16px; }
+            .metric-label { font-size: 10px; }
+
+            .transcript-container { padding: 12px !important; }
+            .message-bubble { max-width: 78vw !important; font-size: 13px; }
+
+            .audio-viz { padding: 8px 12px !important; }
+
+            .command-bar { padding: 10px !important; }
+            .command-bar > div:first-child {
+                flex-direction: column !important;
+                align-items: stretch !important;
+                gap: 8px;
+            }
+            .command-bar > div:first-child > div:last-child {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr;
+                width: 100%;
+            }
+            .command-bar .quick-cmd { font-size: 11px; padding: 8px 6px; }
+            .command-input { font-size: 14px; }
+            .quick-commands {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr;
+                gap: 6px;
+            }
+
+            .sidebar-right { padding: 0; overflow-y: auto; }
+            .agent-state, .latency-monitor, .task-tracker, .context-panel {
+                padding: 14px 16px !important;
+            }
+            .state-circle { width: 80px !important; height: 80px !important; font-size: 32px !important; }
+
+            .modal {
+                width: 100% !important;
+                max-width: 100% !important;
+                max-height: 100dvh;
+                height: 100dvh;
+                border-radius: 0 !important;
+                overflow-y: auto;
+                padding: 16px !important;
+            }
+            .modal-overlay { padding: 0 !important; }
+            .strategy-tags { flex-wrap: wrap; }
+
+            .injection-toast {
+                left: 12px !important; right: 12px !important;
+                bottom: 12px !important;
+                font-size: 13px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .top-bar .logo span { display: none; }
+            .config-grid { grid-template-columns: 1fr !important; }
+        }
