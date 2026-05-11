@@ -569,6 +569,22 @@ const AGENT_TOOLS = [
   {
     type: "function",
     function: {
+      name: "voiceops_call_inject",
+      description: "Act as Director during a live VoiceOps call. mode='context' (strategic steer, default), 'say-now' (Alex speaks verbatim), or 'end-call' (hang up).",
+      parameters: {
+        type: "object",
+        properties: {
+          call_id: { type: "string" },
+          text: { type: "string" },
+          mode: { type: "string", enum: ["context", "say-now", "end-call"] },
+        },
+        required: ["call_id", "text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "send_sms",
       description: "Send an SMS or WhatsApp message to a phone number.",
       parameters: {
@@ -1922,6 +1938,51 @@ async function executeTool(
           return JSON.stringify({ call, turns: turns ?? [], turn_count: (turns ?? []).length });
         } catch (e) {
           return JSON.stringify({ error: e instanceof Error ? e.message : "transcript fetch failed" });
+        }
+      }
+
+      case "voiceops_call_inject": {
+        try {
+          const SUPA = Deno.env.get("SUPABASE_URL")!;
+          const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+          const admin = createClient(SUPA, SR);
+          const mode = ["context", "say-now", "end-call"].includes(args.mode) ? args.mode : "context";
+          const text = String(args.text || "");
+          const { data: call } = await admin.from("voiceops_calls")
+            .select("id, control_url, user_id").eq("id", args.call_id).maybeSingle();
+          if (!call) return JSON.stringify({ error: "call not found" });
+          if (call.user_id !== userId) return JSON.stringify({ error: "forbidden" });
+          if (!call.control_url) return JSON.stringify({ error: "no control_url (call may not be live yet)" });
+
+          const { data: inj } = await admin.from("voiceops_injections").insert({
+            call_id: call.id, user_id: userId, text, mode, status: "pending",
+          }).select().single();
+
+          let body: Record<string, unknown>;
+          if (mode === "say-now") body = { type: "say", message: text, endCallAfterSpoken: false };
+          else if (mode === "end-call") body = { type: "end-call" };
+          else body = { type: "add-message", message: { role: "system", content: `OPERATOR DIRECTIVE: ${text}` } };
+
+          const r = await fetch(call.control_url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) {
+            const errText = await r.text();
+            if (inj) await admin.from("voiceops_injections").update({ status: "failed", error: errText }).eq("id", inj.id);
+            return JSON.stringify({ error: "vapi_control_failed", detail: errText });
+          }
+          if (inj) await admin.from("voiceops_injections").update({ status: "delivered", delivered_at: new Date().toISOString() }).eq("id", inj.id);
+
+          return JSON.stringify({
+            success: true, mode,
+            message: mode === "say-now" ? `🎙️ Alex will say: "${text}"`
+              : mode === "end-call" ? `📴 Ending call.`
+              : `🎯 Director directive sent: "${text}"`,
+          });
+        } catch (e) {
+          return JSON.stringify({ error: e instanceof Error ? e.message : "inject failed" });
         }
       }
 

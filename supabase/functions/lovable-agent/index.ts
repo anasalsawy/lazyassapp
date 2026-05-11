@@ -539,6 +539,22 @@ The user can also monitor calls in real-time at /call-center, where they can inj
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "voiceops_call_inject",
+      description: "Act as Director during a live VoiceOps call. Inject a strategic directive (mode='context', default — Alex incorporates it naturally), force Alex to speak verbatim (mode='say-now'), or end the call (mode='end-call'). Use this to steer a call you started with voiceops_call.",
+      parameters: {
+        type: "object",
+        properties: {
+          call_id: { type: "string", description: "The voiceops call_id returned by voiceops_call" },
+          text: { type: "string", description: "Directive text, or verbatim line if mode=say-now. Use 'end' for end-call." },
+          mode: { type: "string", enum: ["context", "say-now", "end-call"], description: "context=strategic steer (default), say-now=speak verbatim, end-call=hang up" },
+        },
+        required: ["call_id", "text"],
+      },
+    },
+  },
 
   // ========== ALL 16 TOOLS FROM AgentTools-2.json (verbatim) ==========
   {
@@ -1173,6 +1189,37 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         });
       } catch (e) {
         return JSON.stringify({ error: e instanceof Error ? e.message : "transcript fetch failed" });
+      }
+    }
+
+    case "voiceops_call_inject": {
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "apikey": Deno.env.get("SUPABASE_ANON_KEY") || serviceRoleKey,
+          "Authorization": _currentUserToken ? `Bearer ${_currentUserToken}` : `Bearer ${serviceRoleKey}`,
+        };
+        const mode = ["context", "say-now", "end-call"].includes(args.mode) ? args.mode : "context";
+        const resp = await fetch(`${supabaseUrl}/functions/v1/voiceops-inject`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ call_id: args.call_id, text: args.text, mode }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data?.error) {
+          return JSON.stringify({ success: false, error: data?.error || data?.detail || `inject_failed (${resp.status})` });
+        }
+        return JSON.stringify({
+          success: true,
+          mode,
+          message: mode === "say-now"
+            ? `🎙️ Alex will say: "${args.text}"`
+            : mode === "end-call"
+            ? `📴 Ending call ${args.call_id}.`
+            : `🎯 Director directive sent to Alex: "${args.text}"`,
+        });
+      } catch (e) {
+        return JSON.stringify({ success: false, error: e instanceof Error ? e.message : "inject failed" });
       }
     }
 
