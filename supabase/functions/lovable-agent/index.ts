@@ -539,6 +539,22 @@ The user can also monitor calls in real-time at /call-center, where they can inj
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "voiceops_call_inject",
+      description: "Act as Director during a live VoiceOps call. Inject a strategic directive (mode='context', default — Alex incorporates it naturally), force Alex to speak verbatim (mode='say-now'), or end the call (mode='end-call'). Use this to steer a call you started with voiceops_call.",
+      parameters: {
+        type: "object",
+        properties: {
+          call_id: { type: "string", description: "The voiceops call_id returned by voiceops_call" },
+          text: { type: "string", description: "Directive text, or verbatim line if mode=say-now. Use 'end' for end-call." },
+          mode: { type: "string", enum: ["context", "say-now", "end-call"], description: "context=strategic steer (default), say-now=speak verbatim, end-call=hang up" },
+        },
+        required: ["call_id", "text"],
+      },
+    },
+  },
 
   // ========== ALL 16 TOOLS FROM AgentTools-2.json (verbatim) ==========
   {
