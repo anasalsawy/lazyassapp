@@ -77,6 +77,9 @@ export default function VoiceOps() {
   const [command, setCommand] = useState("");
   const [injectionToast, setInjectionToast] = useState<string | null>(null);
 
+  // Mobile tab
+  const [mobileTab, setMobileTab] = useState<"calls" | "live" | "state">("live");
+
   // Live ticking
   const [now, setNow] = useState(Date.now());
   const [vizBars, setVizBars] = useState<number[]>(Array(40).fill(8));
