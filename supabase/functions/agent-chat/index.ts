@@ -534,7 +534,38 @@ const AGENT_TOOLS = [
   {
     type: "function",
     function: {
-      name: "send_sms",
+      name: "voiceops_call",
+      description: "Start an outbound phone call via VoiceOps (Vapi-powered Alex agent). Faster, lower-latency than Maya. Live transcript visible at /voiceops.",
+      parameters: {
+        type: "object",
+        properties: {
+          phone_number: { type: "string", description: "E.164 phone, e.g. +15551234567" },
+          objective: { type: "string", description: "Specific call objective" },
+          first_name: { type: "string" },
+          last_name: { type: "string" },
+          company: { type: "string" },
+          strategy: { type: "string", description: "persistent | consultative | urgent | friendly" },
+          max_duration_seconds: { type: "number" },
+        },
+        required: ["phone_number", "objective"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "voiceops_call_transcript",
+      description: "Fetch live transcript and status of a VoiceOps call by call_id. Poll while the call is active.",
+      parameters: {
+        type: "object",
+        properties: {
+          call_id: { type: "string" },
+          limit: { type: "number" },
+        },
+        required: ["call_id"],
+      },
+    },
+  },
       description: "Send an SMS or WhatsApp message to a phone number.",
       parameters: {
         type: "object",
