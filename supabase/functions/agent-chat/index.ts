@@ -569,6 +569,22 @@ const AGENT_TOOLS = [
   {
     type: "function",
     function: {
+      name: "voiceops_call_inject",
+      description: "Act as Director during a live VoiceOps call. mode='context' (strategic steer, default), 'say-now' (Alex speaks verbatim), or 'end-call' (hang up).",
+      parameters: {
+        type: "object",
+        properties: {
+          call_id: { type: "string" },
+          text: { type: "string" },
+          mode: { type: "string", enum: ["context", "say-now", "end-call"] },
+        },
+        required: ["call_id", "text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "send_sms",
       description: "Send an SMS or WhatsApp message to a phone number.",
       parameters: {
