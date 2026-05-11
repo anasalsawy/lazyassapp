@@ -947,3 +947,279 @@
             .top-bar .logo span { display: none; }
             .config-grid { grid-template-columns: 1fr !important; }
         }
+
+/* ════════════════════════════════════════════════════════════════
+   DESIGN REFRESH v2 — mission-control polish
+   Appended overrides; preserves all original layout/logic.
+   ════════════════════════════════════════════════════════════════ */
+.voiceops-shell {
+    --bg-primary: #07091a;
+    --bg-secondary: #0d1124;
+    --bg-tertiary: #161c38;
+    --bg-card: #131836;
+    --border: rgba(148, 163, 184, 0.10);
+    --border-hover: rgba(148, 163, 184, 0.25);
+    --accent: #6366f1;
+    --accent-2: #ec4899;
+    --accent-glow: rgba(99, 102, 241, 0.45);
+    --agent: #a855f7;
+    --human: #06b6d4;
+    --system: #f59e0b;
+    background:
+      radial-gradient(1200px 600px at 0% 0%, rgba(99,102,241,0.10), transparent 60%),
+      radial-gradient(900px 500px at 100% 100%, rgba(236,72,153,0.08), transparent 60%),
+      var(--bg-primary);
+}
+.voiceops-shell .top-bar {
+    background: linear-gradient(180deg, rgba(13,17,36,0.95), rgba(13,17,36,0.75));
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+    height: 60px;
+    padding: 0 20px;
+}
+.voiceops-shell .logo { font-family: 'Space Grotesk', 'SF Pro Display', sans-serif; letter-spacing: -0.5px; font-size: 17px; }
+.voiceops-shell .logo-icon {
+    background: linear-gradient(135deg, #6366f1 0%, #ec4899 100%);
+    box-shadow: 0 4px 14px rgba(99,102,241,0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+    border-radius: 10px;
+}
+.voiceops-shell .status-pill {
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    color: #34d399;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.2px;
+}
+.voiceops-shell .btn {
+    border-radius: 10px;
+    font-weight: 600;
+    transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.voiceops-shell .btn:hover { transform: translateY(-1px); }
+.voiceops-shell .btn-primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    border: none;
+    box-shadow: 0 4px 14px rgba(99,102,241,0.4);
+}
+.voiceops-shell .btn-primary:hover { background: linear-gradient(135deg, #4f46e5, #7c3aed); box-shadow: 0 6px 20px rgba(99,102,241,0.55); }
+.voiceops-shell .btn-ghost { background: rgba(148,163,184,0.06); border: 1px solid var(--border); }
+
+.voiceops-shell .sidebar-left,
+.voiceops-shell .sidebar-right {
+    background: linear-gradient(180deg, rgba(13,17,36,0.6), rgba(7,9,26,0.4));
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-color: var(--border);
+}
+.voiceops-shell .panel-header {
+    color: rgba(148,163,184,0.7);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    border-bottom: 1px solid var(--border);
+    padding: 18px 20px 12px;
+}
+.voiceops-shell .call-item {
+    background: rgba(22, 28, 56, 0.4);
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 14px;
+    transition: all 0.2s ease;
+}
+.voiceops-shell .call-item:hover {
+    background: rgba(22, 28, 56, 0.8);
+    border-color: var(--border-hover);
+    transform: translateX(2px);
+}
+.voiceops-shell .call-item.active {
+    background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(236,72,153,0.08));
+    border-color: rgba(99,102,241,0.4);
+    box-shadow: 0 0 0 1px rgba(99,102,241,0.2), 0 8px 24px rgba(99,102,241,0.15);
+}
+.voiceops-shell .call-name { font-weight: 700; letter-spacing: -0.2px; }
+.voiceops-shell .badge-live {
+    background: rgba(16, 185, 129, 0.18);
+    color: #34d399;
+    box-shadow: 0 0 12px rgba(16,185,129,0.35);
+    animation: livePulse 1.6s ease-in-out infinite;
+}
+@keyframes livePulse { 0%,100% { box-shadow: 0 0 12px rgba(16,185,129,0.35);} 50% { box-shadow: 0 0 20px rgba(16,185,129,0.6);} }
+.voiceops-shell .badge-queued { background: rgba(245,158,11,0.18); color: #fbbf24; }
+.voiceops-shell .badge-ended  { background: rgba(148,163,184,0.12); color: #94a3b8; }
+
+.voiceops-shell .call-info-bar {
+    background: linear-gradient(180deg, rgba(13,17,36,0.75), transparent);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+    padding: 18px 24px;
+}
+.voiceops-shell .avatar {
+    width: 48px; height: 48px;
+    background: linear-gradient(135deg, #a855f7, #6366f1);
+    box-shadow: 0 6px 18px rgba(168,85,247,0.35), inset 0 1px 0 rgba(255,255,255,0.2);
+    border: 2px solid rgba(255,255,255,0.06);
+}
+.voiceops-shell .call-details h2 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 18px;
+    letter-spacing: -0.4px;
+}
+.voiceops-shell .metric-value {
+    background: linear-gradient(135deg, #818cf8, #ec4899);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-size: 22px;
+    letter-spacing: -0.5px;
+}
+.voiceops-shell .metric-label {
+    color: rgba(148,163,184,0.7);
+    font-size: 9px;
+    letter-spacing: 1.2px;
+}
+.voiceops-shell .transcript-container { padding: 24px 28px; gap: 14px; }
+.voiceops-shell .message-bubble {
+    border-radius: 18px;
+    font-size: 14px;
+    line-height: 1.55;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    padding: 12px 16px;
+}
+.voiceops-shell .message.agent .message-bubble {
+    background: linear-gradient(135deg, rgba(168,85,247,0.12), rgba(99,102,241,0.08));
+    border: 1px solid rgba(168,85,247,0.22);
+    border-bottom-left-radius: 6px;
+    color: #e2e8f0;
+}
+.voiceops-shell .message.human .message-bubble {
+    background: linear-gradient(135deg, #06b6d4, #0891b2);
+    color: #fff;
+    border-bottom-right-radius: 6px;
+    box-shadow: 0 4px 14px rgba(6,182,212,0.35);
+}
+.voiceops-shell .message.system .message-bubble {
+    background: rgba(245,158,11,0.10);
+    border: 1px dashed rgba(245,158,11,0.35);
+    color: #fcd34d;
+    border-radius: 10px;
+}
+.voiceops-shell .message-avatar {
+    width: 30px; height: 30px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
+}
+
+.voiceops-shell .audio-viz { padding: 0 28px 14px; gap: 4px; height: 28px; }
+.voiceops-shell .viz-bar {
+    background: linear-gradient(180deg, #ec4899, #6366f1);
+    border-radius: 3px;
+    width: 3px;
+    box-shadow: 0 0 6px rgba(99,102,241,0.4);
+}
+
+.voiceops-shell .command-bar {
+    background: linear-gradient(180deg, rgba(13,17,36,0.5), rgba(7,9,26,0.85));
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+}
+.voiceops-shell .command-input {
+    background: rgba(7, 9, 26, 0.7);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    transition: all 0.2s ease;
+}
+.voiceops-shell .command-input:focus {
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 3px rgba(245,158,11,0.15), 0 0 24px rgba(245,158,11,0.25);
+}
+.voiceops-shell .quick-cmd {
+    background: rgba(22,28,56,0.6);
+    border-radius: 10px;
+    transition: all 0.18s ease;
+    font-weight: 600;
+    font-size: 11.5px;
+}
+.voiceops-shell .quick-cmd:hover:not(:disabled) {
+    transform: translateY(-1px);
+    background: rgba(99,102,241,0.18);
+    border-color: rgba(99,102,241,0.5);
+    color: #c7d2fe;
+    box-shadow: 0 4px 12px rgba(99,102,241,0.25);
+}
+
+.voiceops-shell .state-circle {
+    background: radial-gradient(circle at 30% 30%, rgba(99,102,241,0.2), rgba(13,17,36,0.8));
+    border: 2px solid rgba(99,102,241,0.25);
+}
+.voiceops-shell .state-circle.active {
+    border-color: #6366f1;
+    box-shadow: 0 0 30px rgba(99,102,241,0.5), inset 0 0 20px rgba(99,102,241,0.15);
+    animation: stateGlow 2.4s ease-in-out infinite;
+}
+@keyframes stateGlow {
+    0%,100% { box-shadow: 0 0 30px rgba(99,102,241,0.5), inset 0 0 20px rgba(99,102,241,0.15); transform: scale(1); }
+    50%     { box-shadow: 0 0 45px rgba(236,72,153,0.55), inset 0 0 25px rgba(236,72,153,0.2);  transform: scale(1.04); }
+}
+.voiceops-shell .state-label {
+    background: linear-gradient(135deg, #818cf8, #ec4899);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-size: 13px;
+    letter-spacing: 1.5px;
+    font-weight: 700;
+}
+
+.voiceops-shell .latency-chart {
+    background: rgba(7,9,26,0.6);
+    border-color: var(--border);
+}
+.voiceops-shell .latency-bar { background: linear-gradient(180deg, #ec4899, #6366f1); width: 3px; }
+.voiceops-shell .latency-value { color: #818cf8; }
+
+.voiceops-shell .context-item {
+    background: rgba(22,28,56,0.45);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    transition: border-color 0.2s ease;
+}
+.voiceops-shell .context-item:hover { border-color: var(--border-hover); }
+.voiceops-shell .task-progress-fill { background: linear-gradient(90deg, #6366f1, #ec4899); box-shadow: 0 0 12px rgba(99,102,241,0.4); }
+.voiceops-shell .task-checkbox.done { background: linear-gradient(135deg, #10b981, #059669); border-color: transparent; box-shadow: 0 0 8px rgba(16,185,129,0.4); }
+
+.voiceops-shell .mobile-tabs { background: rgba(13,17,36,0.85); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+.voiceops-shell .mtab.on {
+    background: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(236,72,153,0.1));
+    border-color: rgba(99,102,241,0.4);
+    color: #c7d2fe;
+}
+
+.voiceops-shell .injection-toast {
+    background: linear-gradient(135deg, rgba(99,102,241,0.95), rgba(168,85,247,0.95));
+    border: none;
+    color: #fff;
+    box-shadow: 0 12px 40px rgba(99,102,241,0.5);
+    backdrop-filter: blur(10px);
+}
+
+/* Modal portal — match same theme */
+.voiceops-modal-portal {
+    --bg-secondary: #0d1124;
+    --bg-tertiary: #161c38;
+    --border: rgba(148,163,184,0.12);
+    --accent: #6366f1;
+}
+.voiceops-modal-portal .modal {
+    background: linear-gradient(180deg, #131836, #0d1124);
+    border: 1px solid rgba(99,102,241,0.25);
+    box-shadow: 0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(99,102,241,0.1);
+    border-radius: 20px;
+}
+.voiceops-modal-portal .modal-title {
+    background: linear-gradient(135deg, #818cf8, #ec4899);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-family: 'Space Grotesk', sans-serif;
+}
