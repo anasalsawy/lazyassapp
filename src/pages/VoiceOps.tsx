@@ -307,8 +307,15 @@ export default function VoiceOps() {
         </div>
       </div>
 
+      {/* MOBILE TABS */}
+      <div className="mobile-tabs">
+        <button className={`mtab ${mobileTab === "calls" ? "on" : ""}`} onClick={() => setMobileTab("calls")}>📋 Calls{calls.length ? ` · ${calls.length}` : ""}</button>
+        <button className={`mtab ${mobileTab === "live" ? "on" : ""}`} onClick={() => setMobileTab("live")}>🎙 Live{liveCount ? ` · ${liveCount}` : ""}</button>
+        <button className={`mtab ${mobileTab === "state" ? "on" : ""}`} onClick={() => setMobileTab("state")}>📊 State</button>
+      </div>
+
       {/* MAIN */}
-      <div className="main">
+      <div className={`main mtab-${mobileTab}`}>
         {/* LEFT: call list */}
         <div className="sidebar-left">
           <div className="panel-header">
