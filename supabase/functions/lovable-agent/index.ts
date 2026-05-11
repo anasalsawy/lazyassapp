@@ -503,6 +503,43 @@ The user can also monitor calls in real-time at /call-center, where they can inj
     },
   },
 
+  // VoiceOps (Vapi) — separate from Maya/multi-agent. Uses Alex assistant on Vapi.
+  {
+    type: "function",
+    function: {
+      name: "voiceops_call",
+      description: "Start an outbound phone call via VoiceOps (Vapi-powered Alex agent). Use when the user wants a fast, low-latency Vapi call with live transcript visible at /voiceops. Returns a call_id you can poll with voiceops_call_transcript.",
+      parameters: {
+        type: "object",
+        properties: {
+          phone_number: { type: "string", description: "E.164 phone number, e.g. +15551234567" },
+          objective: { type: "string", description: "What the call should accomplish — be specific" },
+          first_name: { type: "string", description: "Lead first name (optional)" },
+          last_name: { type: "string", description: "Lead last name (optional)" },
+          company: { type: "string", description: "Lead company (optional)" },
+          strategy: { type: "string", description: "persistent | consultative | urgent | friendly" },
+          max_duration_seconds: { type: "number", description: "Cap call length, default 900" },
+        },
+        required: ["phone_number", "objective"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "voiceops_call_transcript",
+      description: "Fetch the live transcript and current status of a VoiceOps call by call_id. Returns recent turns + status. Poll every few seconds while the call is active.",
+      parameters: {
+        type: "object",
+        properties: {
+          call_id: { type: "string", description: "The voiceops call_id returned by voiceops_call" },
+          limit: { type: "number", description: "Max turns to return (default 50)" },
+        },
+        required: ["call_id"],
+      },
+    },
+  },
+
   // ========== ALL 16 TOOLS FROM AgentTools-2.json (verbatim) ==========
   {
     type: "function",
