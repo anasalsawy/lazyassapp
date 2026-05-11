@@ -1829,6 +1829,102 @@ async function executeTool(
         });
       }
 
+      case "voiceops_call": {
+        try {
+          const SUPA = Deno.env.get("SUPABASE_URL")!;
+          const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+          // voiceops-start-call uses auth user, so insert call directly via service role to bypass
+          const admin = createClient(SUPA, SR);
+          // Normalize phone
+          let phone = String(args.phone_number).trim().replace(/[^\d+]/g, "");
+          if (!phone.startsWith("+")) {
+            if (/^\d{10}$/.test(phone)) phone = `+1${phone}`;
+            else phone = `+${phone}`;
+          }
+          const { data: call, error: cErr } = await admin.from("voiceops_calls").insert({
+            user_id: userId,
+            phone_number: phone,
+            objective: args.objective as string,
+            customer_info: {
+              firstName: args.first_name || "",
+              lastName: args.last_name || "",
+              company: args.company || "",
+              strategy: args.strategy || "persistent",
+            },
+            status: "starting",
+          }).select().single();
+          if (cErr || !call) return JSON.stringify({ error: cErr?.message || "failed to create call row" });
+
+          // Fire Vapi via the edge function (uses service role auth path is unsupported; call Vapi here)
+          const VAPI_KEY = Deno.env.get("VAPI_API_KEY")?.trim();
+          const VAPI_PHONE = Deno.env.get("VAPI_PHONE_NUMBER_ID")?.trim();
+          const VAPI_ASSISTANT = Deno.env.get("VAPI_ASSISTANT_ID")?.trim();
+          if (!VAPI_KEY || !VAPI_PHONE) return JSON.stringify({ error: "VoiceOps not configured (missing VAPI keys)" });
+
+          const vapiBody: Record<string, unknown> = {
+            phoneNumberId: VAPI_PHONE,
+            customer: { number: phone },
+            maxDurationSeconds: Math.min(Math.max(Number(args.max_duration_seconds) || 900, 60), 1800),
+            metadata: { voiceops_call_id: call.id, user_id: userId },
+            assistantOverrides: {
+              variableValues: {
+                firstName: String(args.first_name || ""),
+                lastName: String(args.last_name || ""),
+                company: String(args.company || ""),
+                taskObjective: String(args.objective || ""),
+                injection: "",
+              },
+              firstMessage: `Hi${args.first_name ? " " + args.first_name : ""}, this is Alex. This call may be recorded for quality. Do you have a quick minute?`,
+            },
+          };
+          if (VAPI_ASSISTANT) vapiBody.assistantId = VAPI_ASSISTANT;
+
+          const vRes = await fetch("https://api.vapi.ai/call", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${VAPI_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify(vapiBody),
+          });
+          const vJson = await vRes.json();
+          if (!vRes.ok) {
+            await admin.from("voiceops_calls").update({ status: "failed", ended_reason: JSON.stringify(vJson) }).eq("id", call.id);
+            return JSON.stringify({ error: "vapi_failed", detail: vJson });
+          }
+          await admin.from("voiceops_calls").update({
+            vapi_call_id: vJson.id,
+            control_url: vJson.monitor?.controlUrl ?? vJson.controlUrl ?? null,
+            status: "ringing",
+          }).eq("id", call.id);
+
+          return JSON.stringify({
+            success: true,
+            call_id: call.id,
+            vapi_call_id: vJson.id,
+            monitor_url: "/voiceops",
+            message: `📞 VoiceOps dialing ${phone}. Watch live at /voiceops or poll voiceops_call_transcript with call_id="${call.id}".`,
+          });
+        } catch (e) {
+          return JSON.stringify({ error: e instanceof Error ? e.message : "voiceops_call failed" });
+        }
+      }
+
+      case "voiceops_call_transcript": {
+        try {
+          const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+          const { data: call } = await admin.from("voiceops_calls")
+            .select("id, status, phone_number, objective, outcome, ended_reason, duration_seconds, recording_url")
+            .eq("id", args.call_id).maybeSingle();
+          if (!call) return JSON.stringify({ error: "call not found" });
+          const { data: turns } = await admin.from("voiceops_transcripts")
+            .select("role, text, is_final, created_at")
+            .eq("call_id", args.call_id)
+            .order("created_at", { ascending: true })
+            .limit(Math.min(Number(args.limit) || 50, 200));
+          return JSON.stringify({ call, turns: turns ?? [], turn_count: (turns ?? []).length });
+        } catch (e) {
+          return JSON.stringify({ error: e instanceof Error ? e.message : "transcript fetch failed" });
+        }
+      }
+
       case "send_sms": {
         const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
         const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
