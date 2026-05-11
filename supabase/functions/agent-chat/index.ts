@@ -566,6 +566,10 @@ const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "send_sms",
       description: "Send an SMS or WhatsApp message to a phone number.",
       parameters: {
         type: "object",
