@@ -503,6 +503,43 @@ The user can also monitor calls in real-time at /call-center, where they can inj
     },
   },
 
+  // VoiceOps (Vapi) — separate from Maya/multi-agent. Uses Alex assistant on Vapi.
+  {
+    type: "function",
+    function: {
+      name: "voiceops_call",
+      description: "Start an outbound phone call via VoiceOps (Vapi-powered Alex agent). Use when the user wants a fast, low-latency Vapi call with live transcript visible at /voiceops. Returns a call_id you can poll with voiceops_call_transcript.",
+      parameters: {
+        type: "object",
+        properties: {
+          phone_number: { type: "string", description: "E.164 phone number, e.g. +15551234567" },
+          objective: { type: "string", description: "What the call should accomplish — be specific" },
+          first_name: { type: "string", description: "Lead first name (optional)" },
+          last_name: { type: "string", description: "Lead last name (optional)" },
+          company: { type: "string", description: "Lead company (optional)" },
+          strategy: { type: "string", description: "persistent | consultative | urgent | friendly" },
+          max_duration_seconds: { type: "number", description: "Cap call length, default 900" },
+        },
+        required: ["phone_number", "objective"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "voiceops_call_transcript",
+      description: "Fetch the live transcript and current status of a VoiceOps call by call_id. Returns recent turns + status. Poll every few seconds while the call is active.",
+      parameters: {
+        type: "object",
+        properties: {
+          call_id: { type: "string", description: "The voiceops call_id returned by voiceops_call" },
+          limit: { type: "number", description: "Max turns to return (default 50)" },
+        },
+        required: ["call_id"],
+      },
+    },
+  },
+
   // ========== ALL 16 TOOLS FROM AgentTools-2.json (verbatim) ==========
   {
     type: "function",
@@ -1076,6 +1113,66 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
         });
       } catch (err) {
         return JSON.stringify({ success: false, error: err instanceof Error ? err.message : "Phone call failed" });
+      }
+    }
+
+    case "voiceops_call": {
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "apikey": Deno.env.get("SUPABASE_ANON_KEY") || serviceRoleKey,
+          "Authorization": _currentUserToken ? `Bearer ${_currentUserToken}` : `Bearer ${serviceRoleKey}`,
+        };
+        const resp = await fetch(`${supabaseUrl}/functions/v1/voiceops-start-call`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            phone_number: args.phone_number,
+            objective: args.objective,
+            customer_info: {
+              firstName: args.first_name || "",
+              lastName: args.last_name || "",
+              company: args.company || "",
+              strategy: args.strategy || "persistent",
+            },
+            max_duration_seconds: args.max_duration_seconds || 900,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data?.error) {
+          return JSON.stringify({ success: false, error: data?.error || data?.detail || `voiceops_start_failed (${resp.status})` });
+        }
+        return JSON.stringify({
+          success: true,
+          call_id: data.call_id,
+          vapi_call_id: data.vapi_call_id,
+          monitor_url: "/voiceops",
+          message: `📞 VoiceOps call dialing ${args.phone_number}. call_id=${data.call_id}. Watch live at /voiceops or poll voiceops_call_transcript.`,
+        });
+      } catch (e) {
+        return JSON.stringify({ success: false, error: e instanceof Error ? e.message : "voiceops call failed" });
+      }
+    }
+
+    case "voiceops_call_transcript": {
+      try {
+        const admin = createClient(supabaseUrl, serviceRoleKey);
+        const { data: call } = await admin.from("voiceops_calls")
+          .select("id, status, phone_number, objective, outcome, ended_reason, duration_seconds, recording_url")
+          .eq("id", args.call_id).maybeSingle();
+        if (!call) return JSON.stringify({ error: "call not found" });
+        const { data: turns } = await admin.from("voiceops_transcripts")
+          .select("role, text, is_final, created_at")
+          .eq("call_id", args.call_id)
+          .order("created_at", { ascending: true })
+          .limit(Math.min(Number(args.limit) || 50, 200));
+        return JSON.stringify({
+          call,
+          turns: turns ?? [],
+          turn_count: (turns ?? []).length,
+        });
+      } catch (e) {
+        return JSON.stringify({ error: e instanceof Error ? e.message : "transcript fetch failed" });
       }
     }
 
