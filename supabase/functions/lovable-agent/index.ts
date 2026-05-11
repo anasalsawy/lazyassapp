@@ -1116,6 +1116,66 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
       }
     }
 
+    case "voiceops_call": {
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "apikey": Deno.env.get("SUPABASE_ANON_KEY") || serviceRoleKey,
+          "Authorization": _currentUserToken ? `Bearer ${_currentUserToken}` : `Bearer ${serviceRoleKey}`,
+        };
+        const resp = await fetch(`${supabaseUrl}/functions/v1/voiceops-start-call`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            phone_number: args.phone_number,
+            objective: args.objective,
+            customer_info: {
+              firstName: args.first_name || "",
+              lastName: args.last_name || "",
+              company: args.company || "",
+              strategy: args.strategy || "persistent",
+            },
+            max_duration_seconds: args.max_duration_seconds || 900,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data?.error) {
+          return JSON.stringify({ success: false, error: data?.error || data?.detail || `voiceops_start_failed (${resp.status})` });
+        }
+        return JSON.stringify({
+          success: true,
+          call_id: data.call_id,
+          vapi_call_id: data.vapi_call_id,
+          monitor_url: "/voiceops",
+          message: `📞 VoiceOps call dialing ${args.phone_number}. call_id=${data.call_id}. Watch live at /voiceops or poll voiceops_call_transcript.`,
+        });
+      } catch (e) {
+        return JSON.stringify({ success: false, error: e instanceof Error ? e.message : "voiceops call failed" });
+      }
+    }
+
+    case "voiceops_call_transcript": {
+      try {
+        const admin = createClient(supabaseUrl, serviceRoleKey);
+        const { data: call } = await admin.from("voiceops_calls")
+          .select("id, status, phone_number, objective, outcome, ended_reason, duration_seconds, recording_url")
+          .eq("id", args.call_id).maybeSingle();
+        if (!call) return JSON.stringify({ error: "call not found" });
+        const { data: turns } = await admin.from("voiceops_transcripts")
+          .select("role, text, is_final, created_at")
+          .eq("call_id", args.call_id)
+          .order("created_at", { ascending: true })
+          .limit(Math.min(Number(args.limit) || 50, 200));
+        return JSON.stringify({
+          call,
+          turns: turns ?? [],
+          turn_count: (turns ?? []).length,
+        });
+      } catch (e) {
+        return JSON.stringify({ error: e instanceof Error ? e.message : "transcript fetch failed" });
+      }
+    }
+
     case "request_secret": {
       const secretName = args.secret_name as string;
       const displayLabel = args.display_label as string;
