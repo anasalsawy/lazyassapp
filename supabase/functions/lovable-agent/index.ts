@@ -1192,6 +1192,37 @@ async function executeTool(toolName: string, args: Record<string, unknown>): Pro
       }
     }
 
+    case "voiceops_call_inject": {
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "apikey": Deno.env.get("SUPABASE_ANON_KEY") || serviceRoleKey,
+          "Authorization": _currentUserToken ? `Bearer ${_currentUserToken}` : `Bearer ${serviceRoleKey}`,
+        };
+        const mode = ["context", "say-now", "end-call"].includes(args.mode) ? args.mode : "context";
+        const resp = await fetch(`${supabaseUrl}/functions/v1/voiceops-inject`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ call_id: args.call_id, text: args.text, mode }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data?.error) {
+          return JSON.stringify({ success: false, error: data?.error || data?.detail || `inject_failed (${resp.status})` });
+        }
+        return JSON.stringify({
+          success: true,
+          mode,
+          message: mode === "say-now"
+            ? `🎙️ Alex will say: "${args.text}"`
+            : mode === "end-call"
+            ? `📴 Ending call ${args.call_id}.`
+            : `🎯 Director directive sent to Alex: "${args.text}"`,
+        });
+      } catch (e) {
+        return JSON.stringify({ success: false, error: e instanceof Error ? e.message : "inject failed" });
+      }
+    }
+
     case "request_secret": {
       const secretName = args.secret_name as string;
       const displayLabel = args.display_label as string;
