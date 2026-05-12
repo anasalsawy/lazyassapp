@@ -81,6 +81,19 @@ function parseVMStream(content: string): { cleanContent: string; vmInfo: VMStrea
   }
 }
 
+function parseVoiceOpsCallId(content: string): string | null {
+  const patterns = [
+    /call_id=["']([0-9a-f-]{36})["']/i,
+    /call_id["'`:\s=]+([0-9a-f-]{36})/i,
+    /"call_id"\s*:\s*"([0-9a-f-]{36})"/i,
+  ];
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
 // Parse VM command output blocks from content
 function parseVMCommands(content: string): Array<{ type: "text"; value: string } | { type: "vm_cmd"; command: string; output: string; exitCode?: number; vmName: string; durationMs?: number }> {
   // Look for patterns like ```powershell\nPS> command\n```  followed by output
