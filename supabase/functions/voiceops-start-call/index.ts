@@ -73,8 +73,79 @@ Deno.serve(async (req) => {
       .single();
     if (insertErr) return json({ error: insertErr.message }, 500);
 
-    // Build assistant overrides
-    const systemPrompt = transformPromptForVapi(VOICEOPS_SYSTEM_PROMPT);
+    // Generate a custom system prompt via OpenAI Assistants API (asst_aG8wdr2PnItqiNay5MTn8DSj)
+    // The assistant takes the objective + customer context and returns a tailored Alex prompt.
+    const OPENAI_API_KEY = (Deno.env.get("OPENAI_API_KEY") || "").trim();
+    const OPENAI_PROMPT_ASSISTANT_ID = (Deno.env.get("OPENAI_PROMPT_ASSISTANT_ID") || "asst_aG8wdr2PnItqiNay5MTn8DSj").trim();
+    if (!OPENAI_API_KEY) {
+      await admin.from("voiceops_calls").update({ status: "failed", ended_reason: "missing OPENAI_API_KEY" }).eq("id", call.id);
+      return json({ error: "openai_not_configured", detail: "OPENAI_API_KEY required for prompt generation" }, 500);
+    }
+
+    let systemPrompt = "";
+    try {
+      const briefPayload = {
+        objective,
+        customer_info: customer_info ?? {},
+        constraints: body.constraints ?? null,
+        offer: body.offer ?? null,
+        phone_number,
+      };
+      const briefText = `Generate the call agent system prompt for this outbound mission.\n\n${JSON.stringify(briefPayload, null, 2)}`;
+
+      const oaHeaders = {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+        "OpenAI-Beta": "assistants=v2",
+      };
+
+      // 1) Create thread with the brief
+      const threadRes = await fetch("https://api.openai.com/v1/threads", {
+        method: "POST",
+        headers: oaHeaders,
+        body: JSON.stringify({ messages: [{ role: "user", content: briefText }] }),
+      });
+      const thread = await threadRes.json();
+      if (!threadRes.ok) throw new Error(`thread_create_failed: ${JSON.stringify(thread)}`);
+
+      // 2) Create run
+      const runRes = await fetch(`https://api.openai.com/v1/threads/${thread.id}/runs`, {
+        method: "POST",
+        headers: oaHeaders,
+        body: JSON.stringify({ assistant_id: OPENAI_PROMPT_ASSISTANT_ID }),
+      });
+      let run = await runRes.json();
+      if (!runRes.ok) throw new Error(`run_create_failed: ${JSON.stringify(run)}`);
+
+      // 3) Poll until complete (max ~30s)
+      const start = Date.now();
+      while (["queued", "in_progress", "cancelling"].includes(run.status)) {
+        if (Date.now() - start > 45_000) throw new Error("run_timeout");
+        await new Promise((r) => setTimeout(r, 1200));
+        const pollRes = await fetch(`https://api.openai.com/v1/threads/${thread.id}/runs/${run.id}`, { headers: oaHeaders });
+        run = await pollRes.json();
+      }
+      if (run.status !== "completed") throw new Error(`run_status=${run.status}: ${JSON.stringify(run.last_error || run)}`);
+
+      // 4) Read assistant reply
+      const msgRes = await fetch(`https://api.openai.com/v1/threads/${thread.id}/messages?order=desc&limit=10`, { headers: oaHeaders });
+      const msgs = await msgRes.json();
+      const firstAssistant = (msgs.data || []).find((m: { role: string }) => m.role === "assistant");
+      const generated = firstAssistant?.content
+        ?.filter((c: { type: string }) => c.type === "text")
+        ?.map((c: { text: { value: string } }) => c.text.value)
+        ?.join("\n\n")
+        ?.trim();
+      if (!generated || generated.length < 50) throw new Error("empty_assistant_output");
+
+      systemPrompt = generated;
+      console.log(`[voiceops-start-call] Generated prompt via OpenAI assistant (${systemPrompt.length} chars)`);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      console.error("[voiceops-start-call] prompt generation failed:", detail);
+      await admin.from("voiceops_calls").update({ status: "failed", ended_reason: `prompt_generation_failed: ${detail}` }).eq("id", call.id);
+      return json({ error: "prompt_generation_failed", detail }, 502);
+    }
 
     // Flat variable set (Vapi templating doesn't truly nest — flat keys are reliable)
     const ci = (customer_info ?? {}) as Record<string, unknown>;
@@ -108,32 +179,23 @@ Deno.serve(async (req) => {
     };
 
 
-    if (VAPI_ASSISTANT_ID) {
-      vapiBody.assistantId = VAPI_ASSISTANT_ID;
-    } else {
-      // Inline assistant if no preconfigured assistant in Vapi dashboard
-      vapiBody.assistant = {
-        name: "VoiceOps Alex",
-        firstMessage,
-        model: {
-          provider: "openai",
-          model: "gpt-4o",
-          temperature: 0.6,
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-          ],
-        },
-        voice: { provider: "11labs", voiceId: "burt" },
-        transcriber: { provider: "deepgram", model: "nova-2", language: "en" },
-        recordingEnabled: true,
-        endCallFunctionEnabled: true,
-        serverUrl: `${SUPABASE_URL}/functions/v1/voiceops-webhook`,
-        serverUrlSecret: Deno.env.get("VAPI_WEBHOOK_SECRET") || undefined,
-      };
-    }
+    // Always use inline assistant so the OpenAI-generated prompt is applied per-call.
+    vapiBody.assistant = {
+      name: "VoiceOps Alex",
+      firstMessage,
+      model: {
+        provider: "openai",
+        model: "gpt-4o",
+        temperature: 0.6,
+        messages: [{ role: "system", content: systemPrompt }],
+      },
+      voice: { provider: "11labs", voiceId: "burt" },
+      transcriber: { provider: "deepgram", model: "nova-2", language: "en" },
+      recordingEnabled: true,
+      endCallFunctionEnabled: true,
+      serverUrl: `${SUPABASE_URL}/functions/v1/voiceops-webhook`,
+      serverUrlSecret: Deno.env.get("VAPI_WEBHOOK_SECRET") || undefined,
+    };
 
     const vapiRes = await fetch("https://api.vapi.ai/call", {
       method: "POST",
