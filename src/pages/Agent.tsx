@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { VMViewer } from "@/components/agent/VMViewer";
 import { VMCommandOutput } from "@/components/agent/VMCommandOutput";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import {
   Bot,
   Send,
@@ -20,10 +21,36 @@ import {
   User,
   Zap,
   Monitor,
+  PhoneCall,
+  MessageSquare,
+  Mic,
+  PhoneOff,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 type Msg = { role: "user" | "assistant"; content: string };
+
+type VoiceOpsCall = {
+  id: string;
+  phone_number: string;
+  objective: string;
+  status: string;
+  outcome: string | null;
+  ended_reason: string | null;
+  recording_url: string | null;
+  duration_seconds: number | null;
+  created_at: string;
+};
+
+type VoiceOpsTurn = {
+  id: string;
+  role: string;
+  text: string;
+  is_final: boolean;
+  created_at: string;
+};
+
+const ACTIVE_CALL_STATUSES = new Set(["queued", "starting", "ringing", "in-progress", "active"]);
 
 interface VMStreamInfo {
   vm_id: string;
