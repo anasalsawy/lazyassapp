@@ -202,29 +202,43 @@ Deno.serve(async (req) => {
       serverUrlSecret: Deno.env.get("VAPI_WEBHOOK_SECRET") || undefined,
     };
 
-    const vapiRes = await fetch("https://api.vapi.ai/call", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${VAPI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(vapiBody),
-    });
+    // Try each configured Vapi phone number until one succeeds (skip rate-limit / daily-cap errors)
+    let vapiRes: Response | null = null;
+    let vapiJson: Record<string, unknown> = {};
+    let usedNumberId = "";
+    const attempts: Array<{ id: string; status: number; body: unknown }> = [];
 
-    const vapiJson = await vapiRes.json();
-    if (!vapiRes.ok) {
-      const isInvalidKey = vapiRes.status === 401 || /invalid key|unauthorized/i.test(JSON.stringify(vapiJson));
+    for (const numId of VAPI_PHONE_NUMBER_IDS) {
+      vapiBody.phoneNumberId = numId;
+      const r = await fetch("https://api.vapi.ai/call", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${VAPI_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify(vapiBody),
+      });
+      const j = await r.json();
+      attempts.push({ id: numId, status: r.status, body: j });
+      if (r.ok) { vapiRes = r; vapiJson = j; usedNumberId = numId; break; }
+      const msg = JSON.stringify(j).toLowerCase();
+      const rateLimited = /daily.*limit|outbound call limit|rate.?limit|too many/i.test(msg);
+      console.warn(`[voiceops-start-call] number ${numId} failed (status ${r.status}, rateLimited=${rateLimited})`);
+      if (!rateLimited) { vapiRes = r; vapiJson = j; break; } // hard error, don't retry other numbers
+    }
+
+    if (!vapiRes || !vapiRes.ok) {
+      const status = vapiRes?.status ?? 502;
+      const isInvalidKey = status === 401 || /invalid key|unauthorized/i.test(JSON.stringify(vapiJson));
       await admin
         .from("voiceops_calls")
-        .update({ status: "failed", ended_reason: JSON.stringify(vapiJson) })
+        .update({ status: "failed", ended_reason: JSON.stringify({ attempts }) })
         .eq("id", call.id);
       return json({
         error: isInvalidKey ? "vapi_api_key_invalid" : "vapi_failed",
         detail: isInvalidKey
-          ? "Vapi rejected the stored server API key. VAPI_API_KEY must be a Vapi private/server key, not the public browser key."
-          : vapiJson,
+          ? "Vapi rejected the stored server API key."
+          : { message: "All configured Vapi numbers failed", attempts },
       }, isInvalidKey ? 401 : 502);
     }
+    console.log(`[voiceops-start-call] call placed via number ${usedNumberId}`);
 
     await admin
       .from("voiceops_calls")
