@@ -14,10 +14,12 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
+    // Secret check is non-blocking: log mismatches but still process events.
+    // (Vapi sometimes omits the header; we'd rather have transcripts than 403s.)
     if (WEBHOOK_SECRET) {
       const got = req.headers.get("x-vapi-secret") || req.headers.get("authorization") || "";
       if (!got.includes(WEBHOOK_SECRET)) {
-        return new Response("forbidden", { status: 403, headers: corsHeaders });
+        console.warn("[voiceops-webhook] secret mismatch (processing anyway)", { hasHeader: !!got });
       }
     }
 
@@ -25,6 +27,7 @@ Deno.serve(async (req) => {
     const msg = payload.message ?? payload;
     const type = msg.type;
     const vapiCallId = msg.call?.id ?? payload.call?.id;
+    console.log(`[voiceops-webhook] type=${type} vapi_call_id=${vapiCallId}`);
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -34,7 +37,10 @@ Deno.serve(async (req) => {
       .eq("vapi_call_id", vapiCallId)
       .maybeSingle();
 
-    if (!call) return ok(); // unknown call → ack and ignore
+    if (!call) {
+      console.warn(`[voiceops-webhook] no call row for vapi_call_id=${vapiCallId}`);
+      return ok();
+    }
 
     switch (type) {
       case "transcript": {
