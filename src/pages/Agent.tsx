@@ -82,6 +82,14 @@ function parseVMStream(content: string): { cleanContent: string; vmInfo: VMStrea
 }
 
 function parseVoiceOpsCallId(content: string): string | null {
+  const marker = content.match(/__VOICEOPS_CALL__(\{[\s\S]*?\})__END_VOICEOPS_CALL__/);
+  if (marker?.[1]) {
+    try {
+      const parsed = JSON.parse(marker[1]);
+      if (parsed?.call_id) return parsed.call_id;
+    } catch { /* ignore malformed marker */ }
+  }
+
   const patterns = [
     /call_id=["']([0-9a-f-]{36})["']/i,
     /call_id["'`:\s=]+([0-9a-f-]{36})/i,
@@ -92,6 +100,16 @@ function parseVoiceOpsCallId(content: string): string | null {
     if (match?.[1]) return match[1];
   }
   return null;
+}
+
+function cleanAssistantContent(content: string) {
+  return parseVMStream(content).cleanContent
+    .replace(/__VOICEOPS_CALL__\{[\s\S]*?\}__END_VOICEOPS_CALL__/g, "")
+    .trim();
+}
+
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 // Parse VM command output blocks from content
