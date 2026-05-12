@@ -7,6 +7,24 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function prependVoiceOpsMarker(
+  body: ReadableStream<Uint8Array>,
+  call: { call_id: string; phone_number?: string; objective?: string; status?: string },
+) {
+  const encoder = new TextEncoder();
+  const marker = `data: ${JSON.stringify({ choices: [{ delta: { content: `\n\n__VOICEOPS_CALL__${JSON.stringify(call)}__END_VOICEOPS_CALL__\n\n` } }] })}\n\n`;
+  let sent = false;
+  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      if (!sent) {
+        controller.enqueue(encoder.encode(marker));
+        sent = true;
+      }
+      controller.enqueue(chunk);
+    },
+  }));
+}
+
 // ── Tool Definitions — every tool from the Manus source + platform-native ───
 const AGENT_TOOLS = [
   // ═══ MANUS CORE TOOLS (from source tools.txt) ════════════════════════════
