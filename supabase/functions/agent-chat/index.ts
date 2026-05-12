@@ -2477,6 +2477,7 @@ serve(async (req) => {
     if (stream) {
       let currentMessages = [...fullMessages];
       let maxLoops = 12;
+      let activeVoiceOpsCall: { call_id: string; phone_number?: string; objective?: string; status?: string } | null = null;
 
       while (maxLoops-- > 0) {
         const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -2504,6 +2505,19 @@ serve(async (req) => {
             const toolArgs = JSON.parse(tc.function.arguments || "{}");
             console.log(`[Manus] Tool: ${tc.function.name}`, JSON.stringify(toolArgs).substring(0, 200));
             const result = await executeTool(tc.function.name, toolArgs, supabase, user.id);
+            if (tc.function.name === "voiceops_call") {
+              try {
+                const parsed = JSON.parse(result);
+                if (parsed?.success && parsed?.call_id) {
+                  activeVoiceOpsCall = {
+                    call_id: parsed.call_id,
+                    phone_number: toolArgs.phone_number,
+                    objective: toolArgs.objective,
+                    status: "ringing",
+                  };
+                }
+              } catch { /* ignore marker parsing */ }
+            }
             currentMessages.push({ role: "tool", tool_call_id: tc.id, content: result });
           }
           continue;
@@ -2517,6 +2531,9 @@ serve(async (req) => {
         });
 
         if (!streamRes.ok) throw new Error("Stream failed");
+        const responseBody = activeVoiceOpsCall && streamRes.body
+          ? prependVoiceOpsMarker(streamRes.body, activeVoiceOpsCall)
+          : streamRes.body;
         return new Response(streamRes.body, {
           headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
         });
