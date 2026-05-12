@@ -379,6 +379,82 @@ export default function Agent() {
     );
   };
 
+  const renderCallMonitor = () => {
+    if (!activeCallId) return null;
+    const isLive = !!activeCall && ACTIVE_CALL_STATUSES.has(activeCall.status);
+
+    return (
+      <div className="ml-11 rounded-xl border border-border/60 bg-card/70 shadow-lg shadow-background/20 overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-border/50 bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <PhoneCall className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Live call</span>
+              <Badge variant={isLive ? "default" : "outline"} className="text-[11px] capitalize">
+                {activeCall?.status ?? "connecting"}
+              </Badge>
+            </div>
+            <p className="truncate text-xs text-muted-foreground">
+              {activeCall?.phone_number ?? "Dialing..."} · {activeCall?.objective ?? "Waiting for call details"}
+            </p>
+          </div>
+          {activeCall?.recording_url && (
+            <a className="text-xs text-primary hover:underline" href={activeCall.recording_url} target="_blank" rel="noreferrer">
+              Recording
+            </a>
+          )}
+        </div>
+
+        <div ref={transcriptRef} className="max-h-72 space-y-3 overflow-y-auto p-3">
+          {callTurns.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Waiting for transcript...
+            </div>
+          ) : (
+            callTurns.map((turn) => (
+              <div key={turn.id} className="rounded-lg border border-border/40 bg-background/50 p-3">
+                <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <MessageSquare className="h-3 w-3" />
+                    {turn.role === "assistant" ? "Alex" : turn.role}
+                  </span>
+                  <span>{fmtTime(turn.created_at)}</span>
+                </div>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{turn.text}</p>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="border-t border-border/50 bg-muted/20 p-3">
+          <Textarea
+            value={injectionText}
+            onChange={(e) => setInjectionText(e.target.value)}
+            placeholder={isLive ? "Director instruction for this call..." : "Injection unlocks when the call is live"}
+            disabled={!isLive || isInjecting}
+            className="min-h-[72px] resize-none bg-background/70 text-sm"
+          />
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" disabled={!isLive || isInjecting || !injectionText.trim()} onClick={() => injectIntoCall("context")}>
+              <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+              Steer
+            </Button>
+            <Button size="sm" variant="outline" disabled={!isLive || isInjecting || !injectionText.trim()} onClick={() => injectIntoCall("say-now")}>
+              <Mic className="mr-1.5 h-3.5 w-3.5" />
+              Say now
+            </Button>
+            <Button size="sm" variant="destructive" disabled={!isLive || isInjecting} onClick={() => injectIntoCall("end-call")}>
+              <PhoneOff className="mr-1.5 h-3.5 w-3.5" />
+              End
+            </Button>
+          </div>
+          {activeCall?.ended_reason && <p className="mt-2 text-xs text-muted-foreground">Ended: {activeCall.ended_reason}</p>}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <AppLayout>
       <div className="flex flex-col h-[calc(100vh-3.5rem)]">
