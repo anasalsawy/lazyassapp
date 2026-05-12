@@ -131,14 +131,85 @@ export default function Agent() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeVM, setActiveVM] = useState<VMStreamInfo | null>(null);
+  const [activeCallId, setActiveCallId] = useState<string | null>(null);
+  const [activeCall, setActiveCall] = useState<VoiceOpsCall | null>(null);
+  const [callTurns, setCallTurns] = useState<VoiceOpsTurn[]>([]);
+  const [injectionText, setInjectionText] = useState("");
+  const [isInjecting, setIsInjecting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, activeVM]);
+  }, [messages, activeVM, activeCallId, callTurns]);
+
+  useEffect(() => {
+    if (transcriptRef.current) {
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+    }
+  }, [callTurns]);
+
+  useEffect(() => {
+    if (!activeCallId) {
+      setActiveCall(null);
+      setCallTurns([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadCall = async () => {
+      const { data: call } = await supabase
+        .from("voiceops_calls")
+        .select("id, phone_number, objective, status, outcome, ended_reason, recording_url, duration_seconds, created_at")
+        .eq("id", activeCallId)
+        .maybeSingle();
+      if (!cancelled) setActiveCall(call as VoiceOpsCall | null);
+    };
+    const loadTurns = async () => {
+      const { data } = await supabase
+        .from("voiceops_transcripts")
+        .select("id, role, text, is_final, created_at")
+        .eq("call_id", activeCallId)
+        .order("created_at", { ascending: true });
+      if (!cancelled) setCallTurns((data ?? []) as VoiceOpsTurn[]);
+    };
+
+    loadCall();
+    loadTurns();
+
+    const callChannel = supabase
+      .channel(`manus-voiceops-call-${activeCallId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "voiceops_calls", filter: `id=eq.${activeCallId}` },
+        (payload) => setActiveCall(payload.new as VoiceOpsCall),
+      )
+      .subscribe();
+
+    const turnsChannel = supabase
+      .channel(`manus-voiceops-turns-${activeCallId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "voiceops_transcripts", filter: `call_id=eq.${activeCallId}` },
+        (payload) => setCallTurns((prev) => [...prev, payload.new as VoiceOpsTurn]),
+      )
+      .subscribe();
+
+    const poll = setInterval(() => {
+      loadCall();
+      loadTurns();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(callChannel);
+      supabase.removeChannel(turnsChannel);
+      clearInterval(poll);
+    };
+  }, [activeCallId]);
 
   const sendMessage = async (text?: string) => {
     const msg = text || input.trim();
