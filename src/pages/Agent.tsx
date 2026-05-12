@@ -349,8 +349,29 @@ export default function Agent() {
     }
   };
 
+  const injectIntoCall = async (mode: "context" | "say-now" | "end-call") => {
+    if (!activeCallId || isInjecting) return;
+    const text = mode === "end-call" ? "end" : injectionText.trim();
+    if (mode !== "end-call" && !text) return;
+
+    setIsInjecting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("voiceops-inject", {
+        body: { call_id: activeCallId, text, mode },
+      });
+      if (error || (data as any)?.error) {
+        throw new Error(error?.message || (data as any)?.error || "Injection failed");
+      }
+      setInjectionText("");
+    } catch (e: any) {
+      setMessages((prev) => [...prev, { role: "assistant", content: `⚠️ Injection failed: ${e.message || "try again"}` }]);
+    } finally {
+      setIsInjecting(false);
+    }
+  };
+
   const renderMessageContent = (content: string) => {
-    const { cleanContent } = parseVMStream(content);
+    const cleanContent = cleanAssistantContent(content);
     return (
       <div className="text-sm leading-relaxed prose prose-sm prose-invert max-w-none">
         <ReactMarkdown>{cleanContent}</ReactMarkdown>
