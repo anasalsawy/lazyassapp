@@ -37,7 +37,10 @@ Deno.serve(async (req) => {
       .eq("vapi_call_id", vapiCallId)
       .maybeSingle();
 
-    if (!call) return ok(); // unknown call → ack and ignore
+    if (!call) {
+      console.warn(`[voiceops-webhook] no call row for vapi_call_id=${vapiCallId}`);
+      return ok();
+    }
 
     switch (type) {
       case "transcript": {
