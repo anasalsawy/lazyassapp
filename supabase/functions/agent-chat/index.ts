@@ -7,6 +7,24 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function prependVoiceOpsMarker(
+  body: ReadableStream<Uint8Array>,
+  call: { call_id: string; phone_number?: string; objective?: string; status?: string },
+) {
+  const encoder = new TextEncoder();
+  const marker = `data: ${JSON.stringify({ choices: [{ delta: { content: `\n\n__VOICEOPS_CALL__${JSON.stringify(call)}__END_VOICEOPS_CALL__\n\n` } }] })}\n\n`;
+  let sent = false;
+  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      if (!sent) {
+        controller.enqueue(encoder.encode(marker));
+        sent = true;
+      }
+      controller.enqueue(chunk);
+    },
+  }));
+}
+
 // ── Tool Definitions — every tool from the Manus source + platform-native ───
 const AGENT_TOOLS = [
   // ═══ MANUS CORE TOOLS (from source tools.txt) ════════════════════════════
@@ -921,7 +939,7 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **send_sms** — sends an SMS or WhatsApp message via Twilio.
 
 ### VoiceOps (Vapi + auto-generated prompts) — PREFERRED for most outbound calls
-- **voiceops_call** — dials via Vapi's Alex agent. The per-call system prompt is generated automatically by a dedicated OpenAI Assistant from your `objective` + caller context (first_name, last_name, company, strategy). You do NOT write or pass the prompt. Lower latency than Maya. Live UI at /voiceops.
+- **voiceops_call** — dials via Vapi's Alex agent. The per-call system prompt is generated automatically by a dedicated OpenAI Assistant from your \`objective\` + caller context (first_name, last_name, company, strategy). You do NOT write or pass the prompt. Lower latency than Maya. Live UI at /voiceops.
 - **voiceops_call_transcript** — poll live transcript/status by call_id every 4-6s while the call is active.
 - **voiceops_call_inject** — act as Director during the live call: mode='context' (strategic steer), 'say-now' (Alex speaks verbatim), 'end-call' (hang up). Use this freely to course-correct, feed new info, or close the call.
 
@@ -2477,6 +2495,7 @@ serve(async (req) => {
     if (stream) {
       let currentMessages = [...fullMessages];
       let maxLoops = 12;
+      let activeVoiceOpsCall: { call_id: string; phone_number?: string; objective?: string; status?: string } | null = null;
 
       while (maxLoops-- > 0) {
         const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -2504,6 +2523,19 @@ serve(async (req) => {
             const toolArgs = JSON.parse(tc.function.arguments || "{}");
             console.log(`[Manus] Tool: ${tc.function.name}`, JSON.stringify(toolArgs).substring(0, 200));
             const result = await executeTool(tc.function.name, toolArgs, supabase, user.id);
+            if (tc.function.name === "voiceops_call") {
+              try {
+                const parsed = JSON.parse(result);
+                if (parsed?.success && parsed?.call_id) {
+                  activeVoiceOpsCall = {
+                    call_id: parsed.call_id,
+                    phone_number: toolArgs.phone_number,
+                    objective: toolArgs.objective,
+                    status: "ringing",
+                  };
+                }
+              } catch { /* ignore marker parsing */ }
+            }
             currentMessages.push({ role: "tool", tool_call_id: tc.id, content: result });
           }
           continue;
@@ -2517,7 +2549,10 @@ serve(async (req) => {
         });
 
         if (!streamRes.ok) throw new Error("Stream failed");
-        return new Response(streamRes.body, {
+        const responseBody = activeVoiceOpsCall && streamRes.body
+          ? prependVoiceOpsMarker(streamRes.body, activeVoiceOpsCall)
+          : streamRes.body;
+        return new Response(responseBody, {
           headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
         });
       }

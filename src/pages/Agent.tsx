@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { VMViewer } from "@/components/agent/VMViewer";
 import { VMCommandOutput } from "@/components/agent/VMCommandOutput";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import {
   Bot,
   Send,
@@ -20,10 +21,36 @@ import {
   User,
   Zap,
   Monitor,
+  PhoneCall,
+  MessageSquare,
+  Mic,
+  PhoneOff,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 type Msg = { role: "user" | "assistant"; content: string };
+
+type VoiceOpsCall = {
+  id: string;
+  phone_number: string;
+  objective: string;
+  status: string;
+  outcome: string | null;
+  ended_reason: string | null;
+  recording_url: string | null;
+  duration_seconds: number | null;
+  created_at: string;
+};
+
+type VoiceOpsTurn = {
+  id: string;
+  role: string;
+  text: string;
+  is_final: boolean;
+  created_at: string;
+};
+
+const ACTIVE_CALL_STATUSES = new Set(["queued", "starting", "ringing", "in-progress", "active"]);
 
 interface VMStreamInfo {
   vm_id: string;
@@ -52,6 +79,37 @@ function parseVMStream(content: string): { cleanContent: string; vmInfo: VMStrea
   } catch {
     return { cleanContent: content, vmInfo: null };
   }
+}
+
+function parseVoiceOpsCallId(content: string): string | null {
+  const marker = content.match(/__VOICEOPS_CALL__(\{[\s\S]*?\})__END_VOICEOPS_CALL__/);
+  if (marker?.[1]) {
+    try {
+      const parsed = JSON.parse(marker[1]);
+      if (parsed?.call_id) return parsed.call_id;
+    } catch { /* ignore malformed marker */ }
+  }
+
+  const patterns = [
+    /call_id=["']([0-9a-f-]{36})["']/i,
+    /call_id["'`:\s=]+([0-9a-f-]{36})/i,
+    /"call_id"\s*:\s*"([0-9a-f-]{36})"/i,
+  ];
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function cleanAssistantContent(content: string) {
+  return parseVMStream(content).cleanContent
+    .replace(/__VOICEOPS_CALL__\{[\s\S]*?\}__END_VOICEOPS_CALL__/g, "")
+    .trim();
+}
+
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 // Parse VM command output blocks from content
@@ -91,14 +149,85 @@ export default function Agent() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeVM, setActiveVM] = useState<VMStreamInfo | null>(null);
+  const [activeCallId, setActiveCallId] = useState<string | null>(null);
+  const [activeCall, setActiveCall] = useState<VoiceOpsCall | null>(null);
+  const [callTurns, setCallTurns] = useState<VoiceOpsTurn[]>([]);
+  const [injectionText, setInjectionText] = useState("");
+  const [isInjecting, setIsInjecting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, activeVM]);
+  }, [messages, activeVM, activeCallId, callTurns]);
+
+  useEffect(() => {
+    if (transcriptRef.current) {
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+    }
+  }, [callTurns]);
+
+  useEffect(() => {
+    if (!activeCallId) {
+      setActiveCall(null);
+      setCallTurns([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadCall = async () => {
+      const { data: call } = await supabase
+        .from("voiceops_calls")
+        .select("id, phone_number, objective, status, outcome, ended_reason, recording_url, duration_seconds, created_at")
+        .eq("id", activeCallId)
+        .maybeSingle();
+      if (!cancelled) setActiveCall(call as VoiceOpsCall | null);
+    };
+    const loadTurns = async () => {
+      const { data } = await supabase
+        .from("voiceops_transcripts")
+        .select("id, role, text, is_final, created_at")
+        .eq("call_id", activeCallId)
+        .order("created_at", { ascending: true });
+      if (!cancelled) setCallTurns((data ?? []) as VoiceOpsTurn[]);
+    };
+
+    loadCall();
+    loadTurns();
+
+    const callChannel = supabase
+      .channel(`manus-voiceops-call-${activeCallId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "voiceops_calls", filter: `id=eq.${activeCallId}` },
+        (payload) => setActiveCall(payload.new as VoiceOpsCall),
+      )
+      .subscribe();
+
+    const turnsChannel = supabase
+      .channel(`manus-voiceops-turns-${activeCallId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "voiceops_transcripts", filter: `call_id=eq.${activeCallId}` },
+        (payload) => setCallTurns((prev) => [...prev, payload.new as VoiceOpsTurn]),
+      )
+      .subscribe();
+
+    const poll = setInterval(() => {
+      loadCall();
+      loadTurns();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(callChannel);
+      supabase.removeChannel(turnsChannel);
+      clearInterval(poll);
+    };
+  }, [activeCallId]);
 
   const sendMessage = async (text?: string) => {
     const msg = text || input.trim();
@@ -118,6 +247,11 @@ export default function Agent() {
       const { vmInfo } = parseVMStream(assistantSoFar);
       if (vmInfo && vmInfo.noVNC_url) {
         setActiveVM(vmInfo);
+      }
+
+      const callId = parseVoiceOpsCallId(assistantSoFar);
+      if (callId) {
+        setActiveCallId(callId);
       }
 
       setMessages((prev) => {
@@ -215,11 +349,108 @@ export default function Agent() {
     }
   };
 
+  const injectIntoCall = async (mode: "context" | "say-now" | "end-call") => {
+    if (!activeCallId || isInjecting) return;
+    const text = mode === "end-call" ? "end" : injectionText.trim();
+    if (mode !== "end-call" && !text) return;
+
+    setIsInjecting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("voiceops-inject", {
+        body: { call_id: activeCallId, text, mode },
+      });
+      if (error || (data as any)?.error) {
+        throw new Error(error?.message || (data as any)?.error || "Injection failed");
+      }
+      setInjectionText("");
+    } catch (e: any) {
+      setMessages((prev) => [...prev, { role: "assistant", content: `⚠️ Injection failed: ${e.message || "try again"}` }]);
+    } finally {
+      setIsInjecting(false);
+    }
+  };
+
   const renderMessageContent = (content: string) => {
-    const { cleanContent } = parseVMStream(content);
+    const cleanContent = cleanAssistantContent(content);
     return (
       <div className="text-sm leading-relaxed prose prose-sm prose-invert max-w-none">
         <ReactMarkdown>{cleanContent}</ReactMarkdown>
+      </div>
+    );
+  };
+
+  const renderCallMonitor = () => {
+    if (!activeCallId) return null;
+    const isLive = !!activeCall && ACTIVE_CALL_STATUSES.has(activeCall.status);
+
+    return (
+      <div className="ml-11 rounded-xl border border-border/60 bg-card/70 shadow-lg shadow-background/20 overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-border/50 bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <PhoneCall className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Live call</span>
+              <Badge variant={isLive ? "default" : "outline"} className="text-[11px] capitalize">
+                {activeCall?.status ?? "connecting"}
+              </Badge>
+            </div>
+            <p className="truncate text-xs text-muted-foreground">
+              {activeCall?.phone_number ?? "Dialing..."} · {activeCall?.objective ?? "Waiting for call details"}
+            </p>
+          </div>
+          {activeCall?.recording_url && (
+            <a className="text-xs text-primary hover:underline" href={activeCall.recording_url} target="_blank" rel="noreferrer">
+              Recording
+            </a>
+          )}
+        </div>
+
+        <div ref={transcriptRef} className="max-h-72 space-y-3 overflow-y-auto p-3">
+          {callTurns.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Waiting for transcript...
+            </div>
+          ) : (
+            callTurns.map((turn) => (
+              <div key={turn.id} className="rounded-lg border border-border/40 bg-background/50 p-3">
+                <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <MessageSquare className="h-3 w-3" />
+                    {turn.role === "assistant" ? "Alex" : turn.role}
+                  </span>
+                  <span>{fmtTime(turn.created_at)}</span>
+                </div>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{turn.text}</p>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="border-t border-border/50 bg-muted/20 p-3">
+          <Textarea
+            value={injectionText}
+            onChange={(e) => setInjectionText(e.target.value)}
+            placeholder={isLive ? "Director instruction for this call..." : "Injection unlocks when the call is live"}
+            disabled={!isLive || isInjecting}
+            className="min-h-[72px] resize-none bg-background/70 text-sm"
+          />
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" disabled={!isLive || isInjecting || !injectionText.trim()} onClick={() => injectIntoCall("context")}>
+              <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+              Steer
+            </Button>
+            <Button size="sm" variant="outline" disabled={!isLive || isInjecting || !injectionText.trim()} onClick={() => injectIntoCall("say-now")}>
+              <Mic className="mr-1.5 h-3.5 w-3.5" />
+              Say now
+            </Button>
+            <Button size="sm" variant="destructive" disabled={!isLive || isInjecting} onClick={() => injectIntoCall("end-call")}>
+              <PhoneOff className="mr-1.5 h-3.5 w-3.5" />
+              End
+            </Button>
+          </div>
+          {activeCall?.ended_reason && <p className="mt-2 text-xs text-muted-foreground">Ended: {activeCall.ended_reason}</p>}
+        </div>
       </div>
     );
   };
@@ -289,6 +520,8 @@ export default function Agent() {
                     )}
                   </div>
                 ))}
+
+                {renderCallMonitor()}
 
                 {/* Inline VM Viewer */}
                 {activeVM && (
