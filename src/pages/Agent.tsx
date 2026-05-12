@@ -521,6 +521,8 @@ export default function Agent() {
                   </div>
                 ))}
 
+                {renderCallMonitor()}
+
                 {/* Inline VM Viewer */}
                 {activeVM && (
                   <div className="my-4">
