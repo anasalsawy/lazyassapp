@@ -2552,7 +2552,7 @@ serve(async (req) => {
         const responseBody = activeVoiceOpsCall && streamRes.body
           ? prependVoiceOpsMarker(streamRes.body, activeVoiceOpsCall)
           : streamRes.body;
-        return new Response(streamRes.body, {
+        return new Response(responseBody, {
           headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
         });
       }
