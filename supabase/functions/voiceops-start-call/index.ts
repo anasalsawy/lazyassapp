@@ -9,7 +9,12 @@ const corsHeaders = {
 };
 
 const VAPI_API_KEY = (Deno.env.get("VAPI_API_KEY") || "").trim().replace(/^['"]|['"]$/g, "");
-const VAPI_PHONE_NUMBER_ID = (Deno.env.get("VAPI_PHONE_NUMBER_ID") || "").trim();
+// Supports comma-separated list in VAPI_PHONE_NUMBER_ID for auto-fallback when one number is rate-limited
+const VAPI_PHONE_NUMBER_IDS = (Deno.env.get("VAPI_PHONE_NUMBER_ID") || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const VAPI_PHONE_NUMBER_ID = VAPI_PHONE_NUMBER_IDS[0] || "";
 const VAPI_ASSISTANT_ID = (Deno.env.get("VAPI_ASSISTANT_ID") || "").trim();
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
