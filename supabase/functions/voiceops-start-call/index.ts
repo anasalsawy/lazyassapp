@@ -120,8 +120,8 @@ Deno.serve(async (req) => {
       // 3) Poll until complete (max ~30s)
       const start = Date.now();
       while (["queued", "in_progress", "cancelling"].includes(run.status)) {
-        if (Date.now() - start > 45_000) throw new Error("run_timeout");
-        await new Promise((r) => setTimeout(r, 1200));
+        if (Date.now() - start > 90_000) throw new Error("run_timeout");
+        await new Promise((r) => setTimeout(r, 1500));
         const pollRes = await fetch(`https://api.openai.com/v1/threads/${thread.id}/runs/${run.id}`, { headers: oaHeaders });
         run = await pollRes.json();
       }
