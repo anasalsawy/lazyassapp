@@ -1871,12 +1871,50 @@ async function executeTool(
           }).select().single();
           if (cErr || !call) return JSON.stringify({ error: cErr?.message || "failed to create call row" });
 
-          // Fire Vapi via the edge function (uses service role auth path is unsupported; call Vapi here)
           const VAPI_KEY = Deno.env.get("VAPI_API_KEY")?.trim();
           const VAPI_PHONE = Deno.env.get("VAPI_PHONE_NUMBER_ID")?.trim();
-          const VAPI_ASSISTANT = Deno.env.get("VAPI_ASSISTANT_ID")?.trim();
           if (!VAPI_KEY || !VAPI_PHONE) return JSON.stringify({ error: "VoiceOps not configured (missing VAPI keys)" });
 
+          // 1) Generate per-call system prompt via OpenAI Assistants API
+          const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY")?.trim();
+          const PROMPT_ASSISTANT = (Deno.env.get("OPENAI_PROMPT_ASSISTANT_ID") || "asst_aG8wdr2PnItqiNay5MTn8DSj").trim();
+          if (!OPENAI_KEY) {
+            await admin.from("voiceops_calls").update({ status: "failed", ended_reason: "missing OPENAI_API_KEY" }).eq("id", call.id);
+            return JSON.stringify({ error: "openai_not_configured" });
+          }
+          let generatedPrompt = "";
+          try {
+            const oaH = { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json", "OpenAI-Beta": "assistants=v2" };
+            const brief = `Generate the call agent system prompt for this outbound mission.\n\n${JSON.stringify({
+              objective: args.objective,
+              first_name: args.first_name, last_name: args.last_name, company: args.company,
+              strategy: args.strategy, phone_number: phone,
+            }, null, 2)}`;
+            const tRes = await fetch("https://api.openai.com/v1/threads", { method: "POST", headers: oaH, body: JSON.stringify({ messages: [{ role: "user", content: brief }] }) });
+            const thread = await tRes.json();
+            if (!tRes.ok) throw new Error(`thread: ${JSON.stringify(thread)}`);
+            const rRes = await fetch(`https://api.openai.com/v1/threads/${thread.id}/runs`, { method: "POST", headers: oaH, body: JSON.stringify({ assistant_id: PROMPT_ASSISTANT }) });
+            let run = await rRes.json();
+            if (!rRes.ok) throw new Error(`run: ${JSON.stringify(run)}`);
+            const start = Date.now();
+            while (["queued", "in_progress", "cancelling"].includes(run.status)) {
+              if (Date.now() - start > 45_000) throw new Error("run_timeout");
+              await new Promise((r) => setTimeout(r, 1200));
+              run = await (await fetch(`https://api.openai.com/v1/threads/${thread.id}/runs/${run.id}`, { headers: oaH })).json();
+            }
+            if (run.status !== "completed") throw new Error(`run_status=${run.status}`);
+            const mRes = await fetch(`https://api.openai.com/v1/threads/${thread.id}/messages?order=desc&limit=10`, { headers: oaH });
+            const msgs = await mRes.json();
+            const a = (msgs.data || []).find((m: { role: string }) => m.role === "assistant");
+            generatedPrompt = (a?.content || []).filter((c: { type: string }) => c.type === "text").map((c: { text: { value: string } }) => c.text.value).join("\n\n").trim();
+            if (!generatedPrompt || generatedPrompt.length < 50) throw new Error("empty_assistant_output");
+          } catch (e) {
+            const detail = e instanceof Error ? e.message : String(e);
+            await admin.from("voiceops_calls").update({ status: "failed", ended_reason: `prompt_generation_failed: ${detail}` }).eq("id", call.id);
+            return JSON.stringify({ error: "prompt_generation_failed", detail });
+          }
+
+          const firstMsg = `Hi${args.first_name ? " " + args.first_name : ""}, this is Alex. This call may be recorded for quality. Do you have a quick minute?`;
           const vapiBody: Record<string, unknown> = {
             phoneNumberId: VAPI_PHONE,
             customer: { number: phone },
@@ -1890,10 +1928,20 @@ async function executeTool(
                 taskObjective: String(args.objective || ""),
                 injection: "",
               },
-              firstMessage: `Hi${args.first_name ? " " + args.first_name : ""}, this is Alex. This call may be recorded for quality. Do you have a quick minute?`,
+              firstMessage: firstMsg,
+            },
+            assistant: {
+              name: "VoiceOps Alex",
+              firstMessage: firstMsg,
+              model: { provider: "openai", model: "gpt-4o", temperature: 0.6, messages: [{ role: "system", content: generatedPrompt }] },
+              voice: { provider: "11labs", voiceId: "burt" },
+              transcriber: { provider: "deepgram", model: "nova-2", language: "en" },
+              recordingEnabled: true,
+              endCallFunctionEnabled: true,
+              serverUrl: `${SUPA}/functions/v1/voiceops-webhook`,
+              serverUrlSecret: Deno.env.get("VAPI_WEBHOOK_SECRET") || undefined,
             },
           };
-          if (VAPI_ASSISTANT) vapiBody.assistantId = VAPI_ASSISTANT;
 
           const vRes = await fetch("https://api.vapi.ai/call", {
             method: "POST",
