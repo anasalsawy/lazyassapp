@@ -920,6 +920,11 @@ Current date: ${new Date().toISOString().split("T")[0]}
 - **phone_call_inject** — injects a live instruction into a Maya call.
 - **send_sms** — sends an SMS or WhatsApp message via Twilio.
 
+### VoiceOps (Vapi + auto-generated prompts) — PREFERRED for most outbound calls
+- **voiceops_call** — dials via Vapi's Alex agent. The per-call system prompt is generated automatically by a dedicated OpenAI Assistant from your `objective` + caller context (first_name, last_name, company, strategy). You do NOT write or pass the prompt. Lower latency than Maya. Live UI at /voiceops.
+- **voiceops_call_transcript** — poll live transcript/status by call_id every 4-6s while the call is active.
+- **voiceops_call_inject** — act as Director during the live call: mode='context' (strategic steer), 'say-now' (Alex speaks verbatim), 'end-call' (hang up). Use this freely to course-correct, feed new info, or close the call.
+
 ### ElevenLabs Direct API (MAXIMUM FLEXIBILITY — full control)
 Use these instead of phone_call when you need a custom agent (different persona, voice, prompt, language). Typical autonomous flow:
 1. **el_create_agent** → build a tailored agent with a mission-specific system_prompt + first_message.
