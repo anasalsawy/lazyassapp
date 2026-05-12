@@ -179,32 +179,23 @@ Deno.serve(async (req) => {
     };
 
 
-    if (VAPI_ASSISTANT_ID) {
-      vapiBody.assistantId = VAPI_ASSISTANT_ID;
-    } else {
-      // Inline assistant if no preconfigured assistant in Vapi dashboard
-      vapiBody.assistant = {
-        name: "VoiceOps Alex",
-        firstMessage,
-        model: {
-          provider: "openai",
-          model: "gpt-4o",
-          temperature: 0.6,
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-          ],
-        },
-        voice: { provider: "11labs", voiceId: "burt" },
-        transcriber: { provider: "deepgram", model: "nova-2", language: "en" },
-        recordingEnabled: true,
-        endCallFunctionEnabled: true,
-        serverUrl: `${SUPABASE_URL}/functions/v1/voiceops-webhook`,
-        serverUrlSecret: Deno.env.get("VAPI_WEBHOOK_SECRET") || undefined,
-      };
-    }
+    // Always use inline assistant so the OpenAI-generated prompt is applied per-call.
+    vapiBody.assistant = {
+      name: "VoiceOps Alex",
+      firstMessage,
+      model: {
+        provider: "openai",
+        model: "gpt-4o",
+        temperature: 0.6,
+        messages: [{ role: "system", content: systemPrompt }],
+      },
+      voice: { provider: "11labs", voiceId: "burt" },
+      transcriber: { provider: "deepgram", model: "nova-2", language: "en" },
+      recordingEnabled: true,
+      endCallFunctionEnabled: true,
+      serverUrl: `${SUPABASE_URL}/functions/v1/voiceops-webhook`,
+      serverUrlSecret: Deno.env.get("VAPI_WEBHOOK_SECRET") || undefined,
+    };
 
     const vapiRes = await fetch("https://api.vapi.ai/call", {
       method: "POST",
