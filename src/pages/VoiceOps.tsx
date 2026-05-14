@@ -125,6 +125,10 @@ export default function VoiceOps() {
         .order("created_at", { ascending: true });
       if (!cancelled) setTurns((data ?? []) as Turn[]);
     };
+    const sync = async () => {
+      await supabase.functions.invoke("voiceops-sync-call", { body: { call_id: activeId } });
+      await load();
+    };
     load();
     const ch = supabase
       .channel(`voiceops-turns-${activeId}`)
@@ -134,8 +138,10 @@ export default function VoiceOps() {
         (payload) => setTurns((prev) => [...prev, payload.new as Turn]),
       )
       .subscribe();
-    const poll = setInterval(load, 3000);
-    return () => { cancelled = true; supabase.removeChannel(ch); clearInterval(poll); };
+    const syncTimer = setTimeout(sync, 1500);
+    const poll = setInterval(sync, 5000);
+    const fastPoll = setInterval(load, 3000);
+    return () => { cancelled = true; supabase.removeChannel(ch); clearTimeout(syncTimer); clearInterval(poll); clearInterval(fastPoll); };
   }, [activeId]);
 
   // Tick clock & viz bars
