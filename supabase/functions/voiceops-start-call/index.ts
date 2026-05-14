@@ -172,6 +172,8 @@ Deno.serve(async (req) => {
     const greetingName = flatVars.firstName ? ` ${flatVars.firstName}` : "";
     const firstMessage = `Hi${greetingName}, this is Alex calling from VoiceOps. This call may be recorded for quality. Do you have a quick minute?`;
 
+    const webhookUrl = `${SUPABASE_URL}/functions/v1/voiceops-webhook`;
+
     const vapiBody: Record<string, unknown> = {
       phoneNumberId: VAPI_PHONE_NUMBER_ID,
       customer: { number: phone_number },
@@ -198,8 +200,8 @@ Deno.serve(async (req) => {
       transcriber: { provider: "deepgram", model: "nova-2", language: "en" },
       recordingEnabled: true,
       endCallFunctionEnabled: true,
-      serverUrl: `${SUPABASE_URL}/functions/v1/voiceops-webhook`,
-      serverUrlSecret: Deno.env.get("VAPI_WEBHOOK_SECRET") || undefined,
+      server: { url: webhookUrl },
+      serverMessages: ["status-update", "transcript", "end-of-call-report", "conversation-update"],
     };
 
     // Try each configured Vapi phone number until one succeeds (skip rate-limit / daily-cap errors)
