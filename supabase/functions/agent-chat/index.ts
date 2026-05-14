@@ -1938,6 +1938,8 @@ async function executeTool(
           }
 
           const firstMsg = `Hi${args.first_name ? " " + args.first_name : ""}, this is Alex. This call may be recorded for quality. Do you have a quick minute?`;
+          const voiceopsWebhookUrl = `${SUPA}/functions/v1/voiceops-webhook`;
+
           const vapiBody: Record<string, unknown> = {
             phoneNumberId: VAPI_PHONE,
             customer: { number: phone },
@@ -1961,8 +1963,8 @@ async function executeTool(
               transcriber: { provider: "deepgram", model: "nova-2", language: "en" },
               recordingEnabled: true,
               endCallFunctionEnabled: true,
-              serverUrl: `${SUPA}/functions/v1/voiceops-webhook`,
-              serverUrlSecret: Deno.env.get("VAPI_WEBHOOK_SECRET") || undefined,
+              server: { url: voiceopsWebhookUrl },
+              serverMessages: ["status-update", "transcript", "end-of-call-report", "conversation-update"],
             },
           };
 
