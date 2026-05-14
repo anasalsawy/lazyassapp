@@ -42,7 +42,9 @@ Deno.serve(async (req) => {
       return ok();
     }
 
-    switch (type) {
+    const normalizedType = String(type || "").startsWith("transcript") ? "transcript" : type;
+
+    switch (normalizedType) {
       case "transcript": {
         const role = msg.role; // "assistant" | "user"
         const text = msg.transcript ?? "";
@@ -54,6 +56,40 @@ Deno.serve(async (req) => {
             text,
             is_final: isFinal,
           });
+        }
+        break;
+      }
+      case "conversation-update": {
+        const messages = Array.isArray(msg.messages)
+          ? msg.messages
+          : Array.isArray(msg.artifact?.messages)
+            ? msg.artifact.messages
+            : [];
+        const normalized = messages
+          .map((m: { role?: string; message?: string; content?: string; text?: string; transcript?: string }) => ({
+            role: normalizeRole(m.role),
+            text: String(m.message ?? m.content ?? m.text ?? m.transcript ?? "").trim(),
+          }))
+          .filter((m: { role: string; text: string }) => m.text && m.role !== "system");
+
+        if (normalized.length) {
+          const { data: existing } = await admin
+            .from("voiceops_transcripts")
+            .select("seq")
+            .eq("call_id", call.id)
+            .order("seq", { ascending: false })
+            .limit(1);
+          const maxSeq = existing?.[0]?.seq ?? -1;
+          const next = normalized.filter((_: unknown, i: number) => i > maxSeq);
+          if (next.length) {
+            await admin.from("voiceops_transcripts").insert(next.map((m: { role: string; text: string }, offset: number) => ({
+              call_id: call.id,
+              role: m.role,
+              text: m.text,
+              is_final: true,
+              seq: maxSeq + offset + 1,
+            })));
+          }
         }
         break;
       }
@@ -88,4 +124,11 @@ function ok() {
   return new Response(JSON.stringify({ ok: true }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+function normalizeRole(role?: string) {
+  const r = String(role || "").toLowerCase();
+  if (["assistant", "ai", "bot", "alex"].includes(r)) return "assistant";
+  if (["user", "human", "customer", "lead"].includes(r)) return "user";
+  return "system";
 }
