@@ -1902,6 +1902,107 @@ export type Database = {
         }
         Relationships: []
       }
+      voiceops_bookings: {
+        Row: {
+          booking_type: string
+          caller_id: string | null
+          created_at: string
+          customer_name: string | null
+          details: Json | null
+          id: string
+          notes: string | null
+          phone_number: string
+          scheduled_at: string | null
+          status: string
+          updated_at: string
+          user_id: string | null
+          vapi_call_id: string | null
+        }
+        Insert: {
+          booking_type: string
+          caller_id?: string | null
+          created_at?: string
+          customer_name?: string | null
+          details?: Json | null
+          id?: string
+          notes?: string | null
+          phone_number: string
+          scheduled_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          vapi_call_id?: string | null
+        }
+        Update: {
+          booking_type?: string
+          caller_id?: string | null
+          created_at?: string
+          customer_name?: string | null
+          details?: Json | null
+          id?: string
+          notes?: string | null
+          phone_number?: string
+          scheduled_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          vapi_call_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voiceops_bookings_caller_id_fkey"
+            columns: ["caller_id"]
+            isOneToOne: false
+            referencedRelation: "voiceops_callers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      voiceops_callers: {
+        Row: {
+          call_count: number
+          created_at: string
+          email: string | null
+          id: string
+          last_call_at: string | null
+          metadata: Json | null
+          name: string | null
+          notes: string | null
+          phone_number: string
+          tags: string[] | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          call_count?: number
+          created_at?: string
+          email?: string | null
+          id?: string
+          last_call_at?: string | null
+          metadata?: Json | null
+          name?: string | null
+          notes?: string | null
+          phone_number: string
+          tags?: string[] | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          call_count?: number
+          created_at?: string
+          email?: string | null
+          id?: string
+          last_call_at?: string | null
+          metadata?: Json | null
+          name?: string | null
+          notes?: string | null
+          phone_number?: string
+          tags?: string[] | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       voiceops_calls: {
         Row: {
           control_url: string | null
@@ -1999,6 +2100,62 @@ export type Database = {
             columns: ["call_id"]
             isOneToOne: false
             referencedRelation: "voiceops_calls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      voiceops_reservations: {
+        Row: {
+          caller_id: string | null
+          created_at: string
+          customer_name: string | null
+          id: string
+          metadata: Json | null
+          notes: string | null
+          party_size: number | null
+          phone_number: string
+          reservation_at: string | null
+          status: string
+          updated_at: string
+          user_id: string | null
+          vapi_call_id: string | null
+        }
+        Insert: {
+          caller_id?: string | null
+          created_at?: string
+          customer_name?: string | null
+          id?: string
+          metadata?: Json | null
+          notes?: string | null
+          party_size?: number | null
+          phone_number: string
+          reservation_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          vapi_call_id?: string | null
+        }
+        Update: {
+          caller_id?: string | null
+          created_at?: string
+          customer_name?: string | null
+          id?: string
+          metadata?: Json | null
+          notes?: string | null
+          party_size?: number | null
+          phone_number?: string
+          reservation_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          vapi_call_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voiceops_reservations_caller_id_fkey"
+            columns: ["caller_id"]
+            isOneToOne: false
+            referencedRelation: "voiceops_callers"
             referencedColumns: ["id"]
           },
         ]
