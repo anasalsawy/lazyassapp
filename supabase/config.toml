@@ -74,3 +74,6 @@ verify_jwt = false
 
 [functions.voiceops-webhook]
 verify_jwt = false
+
+[functions.voiceops-memory]
+verify_jwt = false
