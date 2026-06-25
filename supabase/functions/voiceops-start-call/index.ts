@@ -346,6 +346,7 @@ Deno.serve(async (req) => {
         vapi_call_id: vapiJson.id,
         control_url: vapiJson.monitor?.controlUrl ?? vapiJson.controlUrl ?? null,
         status: "ringing",
+        system_prompt_snapshot: systemPrompt,
       })
       .eq("id", call.id);
 
