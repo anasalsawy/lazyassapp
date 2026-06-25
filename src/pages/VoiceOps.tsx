@@ -656,11 +656,9 @@ export default function VoiceOps() {
                   style={{ minHeight: 140, fontFamily: "ui-monospace, monospace", fontSize: 12 }}
                 />
                 <div className="task-preview">
-                  {newPrompt.trim().length >= 50
+                  {newPrompt.trim().length > 0
                     ? `✓ Using your custom prompt (${newPrompt.trim().length} chars) — OpenAI skipped.`
-                    : newPrompt.trim().length > 0
-                      ? `⚠ Too short (${newPrompt.trim().length}/50). Will fall back to auto-generation.`
-                      : "Empty — auto-generated via OpenAI assistant."}
+                    : "Empty — will auto-generate via OpenAI assistant (requires quota)."}
                 </div>
               </div>
 
