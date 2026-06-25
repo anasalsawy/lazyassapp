@@ -189,6 +189,35 @@ Deno.serve(async (req) => {
     };
 
 
+    // Call-control toolbox — Vapi-native predefined tools + dynamic transfer destinations.
+    const transferDestinations = Array.isArray(body.transfer_destinations) ? body.transfer_destinations : [];
+    const callTools: Array<Record<string, unknown>> = [
+      // Hang up
+      { type: "endCall" },
+      // DTMF keypad — press digits for IVR navigation, menu selection, etc.
+      { type: "dtmf" },
+      // Transfer the call. If destinations were provided, scope them; otherwise let the model pass a number.
+      transferDestinations.length > 0
+        ? { type: "transferCall", destinations: transferDestinations }
+        : {
+            type: "transferCall",
+            // No fixed list — model supplies the E.164 number via tool args
+            destinations: [],
+            function: {
+              name: "transferCall",
+              description: "Transfer the live call to another phone number (warm or cold). Use for escalation, connecting to a human, or routing to a specialist.",
+              parameters: {
+                type: "object",
+                properties: {
+                  destination: { type: "string", description: "E.164 phone number to transfer to, e.g. +15551234567" },
+                  message: { type: "string", description: "Optional message to say to the callee before connecting (warm transfer)" },
+                },
+                required: ["destination"],
+              },
+            },
+          },
+    ];
+
     // Always use inline assistant so the OpenAI-generated prompt is applied per-call.
     vapiBody.assistant = {
       name: "VoiceOps Alex",
@@ -198,13 +227,14 @@ Deno.serve(async (req) => {
         model: "gpt-4o",
         temperature: 0.6,
         messages: [{ role: "system", content: systemPrompt }],
+        tools: callTools,
       },
       voice: { provider: "11labs", voiceId: "burt" },
       transcriber: { provider: "deepgram", model: "nova-2", language: "en" },
       recordingEnabled: true,
       endCallFunctionEnabled: true,
       server: { url: webhookUrl },
-      serverMessages: ["status-update", "transcript", "end-of-call-report", "conversation-update"],
+      serverMessages: ["status-update", "transcript", "end-of-call-report", "conversation-update", "tool-calls"],
     };
 
     // Try each configured Vapi phone number until one succeeds (skip rate-limit / daily-cap errors)
