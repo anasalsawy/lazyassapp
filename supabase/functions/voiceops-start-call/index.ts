@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
     // Generate a custom system prompt — either use caller-supplied prompt, or fall back to OpenAI Assistants API.
     const OPENAI_API_KEY = (Deno.env.get("OPENAI_API_KEY") || "").trim();
     const OPENAI_PROMPT_ASSISTANT_ID = (Deno.env.get("OPENAI_PROMPT_ASSISTANT_ID") || "asst_aG8wdr2PnItqiNay5MTn8DSj").trim();
-    const hasCustomPrompt = typeof customPrompt === "string" && customPrompt.trim().length >= 50;
+    const hasCustomPrompt = typeof customPrompt === "string" && customPrompt.trim().length > 0;
     if (!hasCustomPrompt && !OPENAI_API_KEY) {
       await admin.from("voiceops_calls").update({ status: "failed", ended_reason: "missing OPENAI_API_KEY" }).eq("id", call.id);
       return json({ error: "openai_not_configured", detail: "OPENAI_API_KEY required for prompt generation" }, 500);
