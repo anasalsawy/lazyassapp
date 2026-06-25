@@ -16,6 +16,9 @@ type Call = {
   duration_seconds: number | null;
   ended_reason: string | null;
   customer_info: any;
+  operator_request: string | null;
+  operator_reply: string | null;
+  operator_reply_at: string | null;
   created_at: string;
   updated_at: string;
 };
