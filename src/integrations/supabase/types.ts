@@ -2014,6 +2014,9 @@ export type Database = {
           id: string
           metadata: Json | null
           objective: string
+          operator_reply: string | null
+          operator_reply_at: string | null
+          operator_request: string | null
           outcome: string | null
           phone_number: string
           recording_url: string | null
@@ -2032,6 +2035,9 @@ export type Database = {
           id?: string
           metadata?: Json | null
           objective: string
+          operator_reply?: string | null
+          operator_reply_at?: string | null
+          operator_request?: string | null
           outcome?: string | null
           phone_number: string
           recording_url?: string | null
@@ -2050,6 +2056,9 @@ export type Database = {
           id?: string
           metadata?: Json | null
           objective?: string
+          operator_reply?: string | null
+          operator_reply_at?: string | null
+          operator_request?: string | null
           outcome?: string | null
           phone_number?: string
           recording_url?: string | null
