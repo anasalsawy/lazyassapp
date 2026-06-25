@@ -689,6 +689,46 @@ export default function VoiceOps() {
                 </select>
               </div>
 
+              <div className="form-group" style={{ marginTop: 12, padding: 12, border: "1px solid hsl(var(--border))", borderRadius: 8 }}>
+                <label className="form-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={retryEnabled}
+                    onChange={(e) => setRetryEnabled(e.target.checked)}
+                  />
+                  🔁 Auto-redial on no-answer / voicemail / failure
+                </label>
+                {retryEnabled && (
+                  <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <label className="form-label" style={{ fontSize: 12 }}>Every (minutes)</label>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min={1}
+                        max={1440}
+                        value={retryInterval}
+                        onChange={(e) => setRetryInterval(Number(e.target.value) || 15)}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label className="form-label" style={{ fontSize: 12 }}>Max attempts</label>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={maxRetries}
+                        onChange={(e) => setMaxRetries(Number(e.target.value) || 6)}
+                      />
+                    </div>
+                  </div>
+                )}
+                <div style={{ fontSize: 11, opacity: 0.6, marginTop: 6 }}>
+                  Stops automatically when the call connects and the objective succeeds.
+                </div>
+              </div>
+
               <div className="modal-actions">
                 <button className="btn btn-ghost" onClick={() => setModalOpen(false)}>Cancel</button>
                 <button className="btn btn-primary" onClick={startCall} disabled={busy}>
