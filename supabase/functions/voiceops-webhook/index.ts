@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
 
     const { data: call } = await admin
       .from("voiceops_calls")
-      .select("id")
+      .select("id, retry_enabled, retry_interval_minutes, retry_attempt, max_retry_attempts, parent_call_id, phone_number, objective, customer_info, system_prompt_snapshot, retry_brief, user_id")
       .eq("vapi_call_id", vapiCallId)
       .maybeSingle();
 
