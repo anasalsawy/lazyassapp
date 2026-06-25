@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: "unauthorized" }, 401);
 
     const body = await req.json();
-    const { phone_number: rawPhone, objective, customer_info, max_duration_seconds } = body;
+    const { phone_number: rawPhone, objective, customer_info, max_duration_seconds, system_prompt: customPrompt } = body;
     if (!rawPhone || !objective) return json({ error: "phone_number and objective required" }, 400);
 
     // Normalize to E.164. Strip everything except digits and a leading +.
