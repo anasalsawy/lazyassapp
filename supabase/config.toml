@@ -77,3 +77,9 @@ verify_jwt = false
 
 [functions.voiceops-memory]
 verify_jwt = false
+
+[functions.voiceops-notify-operator]
+verify_jwt = false
+
+[functions.voiceops-get-operator-reply]
+verify_jwt = false
