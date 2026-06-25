@@ -397,7 +397,22 @@ export default function VoiceOps() {
             </div>
           </div>
 
+          {activeCall?.operator_request && (
+            <OperatorRequestBanner
+              call={activeCall}
+              onReply={async (reply) => {
+                await supabase.functions.invoke("voiceops-inject", {
+                  body: { call_id: activeCall.id, text: reply, mode: "operator-reply" },
+                });
+                showToast(`Replied to Alex: "${reply}"`);
+              }}
+              onDismiss={async () => {
+                await supabase.from("voiceops_calls").update({ operator_request: null }).eq("id", activeCall.id);
+              }}
+            />
+          )}
           <div className="transcript-container" ref={transcriptRef}>
+
             {turns.length === 0 && (
               <div className="message system">
                 <div className="message-avatar">🔔</div>
