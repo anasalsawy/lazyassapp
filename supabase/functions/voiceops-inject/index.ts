@@ -24,7 +24,11 @@ Deno.serve(async (req) => {
     const { call_id, text, mode } = await req.json();
     if (!call_id || !text) return json({ error: "call_id and text required" }, 400);
 
-    const m = mode === "say-now" ? "say-now" : mode === "end-call" ? "end-call" : "context";
+    const m =
+      mode === "say-now" ? "say-now"
+      : mode === "end-call" ? "end-call"
+      : mode === "operator-reply" ? "operator-reply"
+      : "context";
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
     const { data: call, error: cErr } = await admin
@@ -44,11 +48,21 @@ Deno.serve(async (req) => {
     }).select().single();
     if (iErr) return json({ error: iErr.message }, 500);
 
+    // For operator-reply, also persist on the call row so Alex's get_operator_reply tool returns it.
+    if (m === "operator-reply") {
+      await admin
+        .from("voiceops_calls")
+        .update({ operator_reply: text, operator_reply_at: new Date().toISOString() })
+        .eq("id", call.id);
+    }
+
     let vapiBody: Record<string, unknown>;
     if (m === "say-now") {
       vapiBody = { type: "say", message: text, endCallAfterSpoken: false };
     } else if (m === "end-call") {
       vapiBody = { type: "end-call" };
+    } else if (m === "operator-reply") {
+      vapiBody = { type: "add-message", message: { role: "system", content: `OPERATOR REPLY: ${text}` } };
     } else {
       vapiBody = { type: "add-message", message: { role: "system", content: `OPERATOR DIRECTIVE: ${text}` } };
     }
