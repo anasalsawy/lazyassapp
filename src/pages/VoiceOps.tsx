@@ -262,6 +262,9 @@ export default function VoiceOps() {
           voice: newVoice,
         },
         max_duration_seconds: 900,
+        retry_enabled: retryEnabled,
+        retry_interval_minutes: retryInterval,
+        max_retry_attempts: maxRetries,
       },
     });
     setBusy(false);
