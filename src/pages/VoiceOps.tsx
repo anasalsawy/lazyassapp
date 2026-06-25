@@ -75,6 +75,9 @@ export default function VoiceOps() {
   const [newStrategy, setNewStrategy] = useState("persistent");
   const [newVoice, setNewVoice] = useState("alloy");
   const [newPrompt, setNewPrompt] = useState("");
+  const [retryEnabled, setRetryEnabled] = useState(true);
+  const [retryInterval, setRetryInterval] = useState(15);
+  const [maxRetries, setMaxRetries] = useState(6);
   const [busy, setBusy] = useState(false);
 
   // Command bar
