@@ -71,6 +71,7 @@ export default function VoiceOps() {
   const [newTask, setNewTask] = useState("");
   const [newStrategy, setNewStrategy] = useState("persistent");
   const [newVoice, setNewVoice] = useState("alloy");
+  const [newPrompt, setNewPrompt] = useState("");
   const [busy, setBusy] = useState(false);
 
   // Command bar
