@@ -214,7 +214,7 @@ Deno.serve(async (req) => {
       phoneNumberId: VAPI_PHONE_NUMBER_ID,
       customer: { number: phone_number },
       maxDurationSeconds: Math.min(Math.max(max_duration_seconds ?? 900, 60), 1800),
-      metadata: { voiceops_call_id: call.id, user_id: user.id },
+      metadata: { voiceops_call_id: call.id, user_id: userId },
       assistantOverrides: {
         variableValues: flatVars,
         firstMessage,
