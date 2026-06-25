@@ -40,14 +40,36 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return json({ error: "unauthorized" }, 401);
 
-    const userClient = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const { data: { user } } = await userClient.auth.getUser();
-    if (!user) return json({ error: "unauthorized" }, 401);
-
     const body = await req.json();
-    const { phone_number: rawPhone, objective, customer_info, max_duration_seconds, system_prompt: customPrompt } = body;
+    const {
+      phone_number: rawPhone,
+      objective,
+      customer_info,
+      max_duration_seconds,
+      system_prompt: customPrompt,
+      // Retry orchestration (set by user on first call, propagated by retry-runner)
+      retry_enabled,
+      retry_interval_minutes,
+      retry_attempt,
+      max_retry_attempts,
+      parent_call_id,
+      user_id_override, // only honored when called with service role (retry runner)
+    } = body;
+
+    // Service-role bypass for the retry runner; otherwise resolve user from JWT.
+    let userId: string | null = null;
+    const isServiceRole = authHeader.includes(SERVICE_ROLE);
+    if (isServiceRole && user_id_override) {
+      userId = String(user_id_override);
+    } else {
+      const userClient = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: { user } } = await userClient.auth.getUser();
+      if (!user) return json({ error: "unauthorized" }, 401);
+      userId = user.id;
+    }
+
     if (!rawPhone || !objective) return json({ error: "phone_number and objective required" }, 400);
 
     // Normalize to E.164. Strip everything except digits and a leading +.
@@ -68,15 +90,26 @@ Deno.serve(async (req) => {
     const { data: call, error: insertErr } = await admin
       .from("voiceops_calls")
       .insert({
-        user_id: user.id,
+        user_id: userId,
         phone_number,
         objective,
         customer_info: customer_info ?? {},
         status: "starting",
+        retry_enabled: !!retry_enabled,
+        retry_interval_minutes: Math.min(Math.max(Number(retry_interval_minutes ?? 15), 1), 1440),
+        retry_attempt: Number(retry_attempt ?? 0),
+        max_retry_attempts: Math.min(Math.max(Number(max_retry_attempts ?? 6), 1), 50),
+        parent_call_id: parent_call_id ?? null,
+        retry_brief: {
+          constraints: body.constraints ?? null,
+          offer: body.offer ?? null,
+          max_duration_seconds: max_duration_seconds ?? null,
+        },
       })
       .select()
       .single();
     if (insertErr) return json({ error: insertErr.message }, 500);
+
 
     // Generate a custom system prompt — either use caller-supplied prompt, or fall back to OpenAI Assistants API.
     const OPENAI_API_KEY = (Deno.env.get("OPENAI_API_KEY") || "").trim();
