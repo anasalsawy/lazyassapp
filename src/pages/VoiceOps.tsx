@@ -71,6 +71,7 @@ export default function VoiceOps() {
   const [newTask, setNewTask] = useState("");
   const [newStrategy, setNewStrategy] = useState("persistent");
   const [newVoice, setNewVoice] = useState("alloy");
+  const [newPrompt, setNewPrompt] = useState("");
   const [busy, setBusy] = useState(false);
 
   // Command bar
@@ -247,6 +248,7 @@ export default function VoiceOps() {
       body: {
         phone_number: newPhone,
         objective: newTask,
+        system_prompt: newPrompt.trim() ? newPrompt.trim() : undefined,
         customer_info: {
           firstName: newName.split(" ")[0] || "",
           lastName: newName.split(" ").slice(1).join(" ") || "",
@@ -264,7 +266,7 @@ export default function VoiceOps() {
     toast.success("Dialing...");
     setActiveId((data as any).call_id);
     setModalOpen(false);
-    setNewName(""); setNewPhone(""); setNewTask("");
+    setNewName(""); setNewPhone(""); setNewTask(""); setNewPrompt("");
   };
 
   const detectedSteps = parseSteps(newTask);
@@ -615,6 +617,26 @@ export default function VoiceOps() {
                       {detectedSteps.map((s, i) => <li key={i}>{s}</li>)}
                     </ul>
                   )}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  Custom System Prompt <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(optional — leave empty to auto-generate)</span>
+                </label>
+                <textarea
+                  className="form-textarea task-input"
+                  placeholder="Paste your full Alex system prompt here. If provided (≥50 chars), it overrides OpenAI prompt generation and goes straight to Vapi."
+                  value={newPrompt}
+                  onChange={(e) => setNewPrompt(e.target.value)}
+                  style={{ minHeight: 140, fontFamily: "ui-monospace, monospace", fontSize: 12 }}
+                />
+                <div className="task-preview">
+                  {newPrompt.trim().length >= 50
+                    ? `✓ Using your custom prompt (${newPrompt.trim().length} chars) — OpenAI skipped.`
+                    : newPrompt.trim().length > 0
+                      ? `⚠ Too short (${newPrompt.trim().length}/50). Will fall back to auto-generation.`
+                      : "Empty — auto-generated via OpenAI assistant."}
                 </div>
               </div>
 
