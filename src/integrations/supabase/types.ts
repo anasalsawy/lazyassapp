@@ -2012,15 +2012,23 @@ export type Database = {
           duration_seconds: number | null
           ended_reason: string | null
           id: string
+          max_retry_attempts: number
           metadata: Json | null
+          next_retry_at: string | null
           objective: string
           operator_reply: string | null
           operator_reply_at: string | null
           operator_request: string | null
           outcome: string | null
+          parent_call_id: string | null
           phone_number: string
           recording_url: string | null
+          retry_attempt: number
+          retry_brief: Json | null
+          retry_enabled: boolean
+          retry_interval_minutes: number
           status: string
+          system_prompt_snapshot: string | null
           updated_at: string
           user_id: string
           vapi_call_id: string | null
@@ -2033,15 +2041,23 @@ export type Database = {
           duration_seconds?: number | null
           ended_reason?: string | null
           id?: string
+          max_retry_attempts?: number
           metadata?: Json | null
+          next_retry_at?: string | null
           objective: string
           operator_reply?: string | null
           operator_reply_at?: string | null
           operator_request?: string | null
           outcome?: string | null
+          parent_call_id?: string | null
           phone_number: string
           recording_url?: string | null
+          retry_attempt?: number
+          retry_brief?: Json | null
+          retry_enabled?: boolean
+          retry_interval_minutes?: number
           status?: string
+          system_prompt_snapshot?: string | null
           updated_at?: string
           user_id: string
           vapi_call_id?: string | null
@@ -2054,20 +2070,36 @@ export type Database = {
           duration_seconds?: number | null
           ended_reason?: string | null
           id?: string
+          max_retry_attempts?: number
           metadata?: Json | null
+          next_retry_at?: string | null
           objective?: string
           operator_reply?: string | null
           operator_reply_at?: string | null
           operator_request?: string | null
           outcome?: string | null
+          parent_call_id?: string | null
           phone_number?: string
           recording_url?: string | null
+          retry_attempt?: number
+          retry_brief?: Json | null
+          retry_enabled?: boolean
+          retry_interval_minutes?: number
           status?: string
+          system_prompt_snapshot?: string | null
           updated_at?: string
           user_id?: string
           vapi_call_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "voiceops_calls_parent_call_id_fkey"
+            columns: ["parent_call_id"]
+            isOneToOne: false
+            referencedRelation: "voiceops_calls"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       voiceops_injections: {
         Row: {

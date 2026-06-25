@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
 
     const { data: call } = await admin
       .from("voiceops_calls")
-      .select("id")
+      .select("id, retry_enabled, retry_interval_minutes, retry_attempt, max_retry_attempts, parent_call_id, phone_number, objective, customer_info, system_prompt_snapshot, retry_brief, user_id")
       .eq("vapi_call_id", vapiCallId)
       .maybeSingle();
 
@@ -100,15 +100,66 @@ Deno.serve(async (req) => {
         break;
       }
       case "end-of-call-report": {
+        const endedReason = msg.endedReason ?? null;
+        const duration = msg.durationSeconds ?? 0;
+        const summary = msg.analysis?.summary ?? null;
+        const success = msg.analysis?.successEvaluation;
+        const successBool = success === true || success === "true" || success === "success" || success === "pass";
+
         await admin.from("voiceops_calls").update({
           status: "completed",
-          ended_reason: msg.endedReason ?? null,
+          ended_reason: endedReason,
           recording_url: msg.recordingUrl ?? msg.artifact?.recordingUrl ?? null,
           cost_usd: msg.cost ?? null,
-          duration_seconds: msg.durationSeconds ?? null,
-          outcome: msg.analysis?.summary ?? null,
+          duration_seconds: duration,
+          outcome: summary,
           metadata: { analysis: msg.analysis ?? null },
         }).eq("id", call.id);
+
+        // === Auto-redial on failure ===
+        if (call.retry_enabled) {
+          const failureReasons = [
+            "customer-did-not-answer", "customer-busy", "voicemail", "no-answer",
+            "silence-timed-out", "assistant-error", "pipeline-error",
+            "twilio-failed-to-connect-call", "phone-call-provider-closed-websocket",
+            "exceeded-max-duration", "assistant-did-not-receive-customer-audio",
+          ];
+          const reasonStr = String(endedReason || "").toLowerCase();
+          const looksFailed = !successBool && (
+            duration < 20 ||
+            failureReasons.some((r) => reasonStr.includes(r))
+          );
+
+          const nextAttempt = (call.retry_attempt ?? 0) + 1;
+          const maxAttempts = call.max_retry_attempts ?? 6;
+
+          if (looksFailed && nextAttempt <= maxAttempts) {
+            const intervalMin = call.retry_interval_minutes ?? 15;
+            const nextAt = new Date(Date.now() + intervalMin * 60_000).toISOString();
+            const { data: scheduled, error: schedErr } = await admin.from("voiceops_calls").insert({
+              user_id: call.user_id,
+              phone_number: call.phone_number,
+              objective: call.objective,
+              customer_info: call.customer_info ?? {},
+              status: "scheduled",
+              retry_enabled: true,
+              retry_interval_minutes: intervalMin,
+              retry_attempt: nextAttempt,
+              max_retry_attempts: maxAttempts,
+              next_retry_at: nextAt,
+              parent_call_id: call.parent_call_id || call.id,
+              system_prompt_snapshot: call.system_prompt_snapshot,
+              retry_brief: call.retry_brief ?? {},
+              ended_reason: `awaiting_retry attempt=${nextAttempt}/${maxAttempts} prev=${endedReason}`,
+            }).select("id").single();
+            if (schedErr) console.error("[voiceops-webhook] schedule retry failed", schedErr);
+            else console.log(`[voiceops-webhook] scheduled retry ${scheduled?.id} at ${nextAt}`);
+          } else if (successBool) {
+            console.log(`[voiceops-webhook] call ${call.id} succeeded — retry chain stops`);
+          } else {
+            console.log(`[voiceops-webhook] retries exhausted for ${call.id} (${nextAttempt}/${maxAttempts})`);
+          }
+        }
         break;
       }
     }

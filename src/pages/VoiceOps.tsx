@@ -75,6 +75,9 @@ export default function VoiceOps() {
   const [newStrategy, setNewStrategy] = useState("persistent");
   const [newVoice, setNewVoice] = useState("alloy");
   const [newPrompt, setNewPrompt] = useState("");
+  const [retryEnabled, setRetryEnabled] = useState(true);
+  const [retryInterval, setRetryInterval] = useState(15);
+  const [maxRetries, setMaxRetries] = useState(6);
   const [busy, setBusy] = useState(false);
 
   // Command bar
@@ -259,6 +262,9 @@ export default function VoiceOps() {
           voice: newVoice,
         },
         max_duration_seconds: 900,
+        retry_enabled: retryEnabled,
+        retry_interval_minutes: retryInterval,
+        max_retry_attempts: maxRetries,
       },
     });
     setBusy(false);
@@ -681,6 +687,46 @@ export default function VoiceOps() {
                   <option value="nova">Nova — Professional, calm</option>
                   <option value="shimmer">Shimmer — Clear, optimistic</option>
                 </select>
+              </div>
+
+              <div className="form-group" style={{ marginTop: 12, padding: 12, border: "1px solid hsl(var(--border))", borderRadius: 8 }}>
+                <label className="form-label" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={retryEnabled}
+                    onChange={(e) => setRetryEnabled(e.target.checked)}
+                  />
+                  🔁 Auto-redial on no-answer / voicemail / failure
+                </label>
+                {retryEnabled && (
+                  <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <label className="form-label" style={{ fontSize: 12 }}>Every (minutes)</label>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min={1}
+                        max={1440}
+                        value={retryInterval}
+                        onChange={(e) => setRetryInterval(Number(e.target.value) || 15)}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label className="form-label" style={{ fontSize: 12 }}>Max attempts</label>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={maxRetries}
+                        onChange={(e) => setMaxRetries(Number(e.target.value) || 6)}
+                      />
+                    </div>
+                  </div>
+                )}
+                <div style={{ fontSize: 11, opacity: 0.6, marginTop: 6 }}>
+                  Stops automatically when the call connects and the objective succeeds.
+                </div>
               </div>
 
               <div className="modal-actions">
