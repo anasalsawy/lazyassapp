@@ -88,7 +88,10 @@ Deno.serve(async (req) => {
     }
 
     let systemPrompt = "";
-    try {
+    if (hasCustomPrompt) {
+      systemPrompt = customPrompt.trim();
+      console.log(`[voiceops-start-call] Using caller-supplied system prompt (${systemPrompt.length} chars)`);
+    } else try {
       const briefPayload = {
         objective,
         customer_info: customer_info ?? {},
