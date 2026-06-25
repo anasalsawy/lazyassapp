@@ -189,19 +189,51 @@ Deno.serve(async (req) => {
     };
 
 
-    // Call-control toolbox — Vapi-native predefined tools + dynamic transfer destinations.
+    // Call-control toolbox — Vapi-native predefined tools + dynamic transfer destinations + operator bridge.
+    const notifyOperatorUrl = `${SUPABASE_URL}/functions/v1/voiceops-notify-operator`;
+    const getOperatorReplyUrl = `${SUPABASE_URL}/functions/v1/voiceops-get-operator-reply`;
     const transferDestinations = Array.isArray(body.transfer_destinations) ? body.transfer_destinations : [];
     const callTools: Array<Record<string, unknown>> = [
       // Hang up
       { type: "endCall" },
       // DTMF keypad — press digits for IVR navigation, menu selection, etc.
       { type: "dtmf" },
+      // Notify the human operator (writes voiceops_calls.operator_request; UI shows it live)
+      {
+        type: "function",
+        async: false,
+        server: { url: notifyOperatorUrl },
+        function: {
+          name: "notify_operator",
+          description:
+            "Alert the human operator (your supervisor) on the live console while the caller is on the line. Use when you need a decision, missing info, or approval before continuing. Right after calling this, tell the caller to please hold for a brief moment.",
+          parameters: {
+            type: "object",
+            properties: {
+              message: { type: "string", description: "Concise question/message for the operator. Include enough context to answer without listening to the call." },
+              urgency: { type: "string", enum: ["low", "normal", "high"], description: "How urgent the request is" },
+            },
+            required: ["message"],
+          },
+        },
+      },
+      // Poll for the operator's reply
+      {
+        type: "function",
+        async: false,
+        server: { url: getOperatorReplyUrl },
+        function: {
+          name: "get_operator_reply",
+          description:
+            "Check whether the human operator has replied to your last notify_operator request. Call after a brief small-talk hold (5–15s). Returns the operator's typed reply or 'no reply yet'.",
+          parameters: { type: "object", properties: {} },
+        },
+      },
       // Transfer the call. If destinations were provided, scope them; otherwise let the model pass a number.
       transferDestinations.length > 0
         ? { type: "transferCall", destinations: transferDestinations }
         : {
             type: "transferCall",
-            // No fixed list — model supplies the E.164 number via tool args
             destinations: [],
             function: {
               name: "transferCall",

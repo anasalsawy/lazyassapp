@@ -16,6 +16,9 @@ type Call = {
   duration_seconds: number | null;
   ended_reason: string | null;
   customer_info: any;
+  operator_request: string | null;
+  operator_reply: string | null;
+  operator_reply_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -394,7 +397,22 @@ export default function VoiceOps() {
             </div>
           </div>
 
+          {activeCall?.operator_request && (
+            <OperatorRequestBanner
+              call={activeCall}
+              onReply={async (reply) => {
+                await supabase.functions.invoke("voiceops-inject", {
+                  body: { call_id: activeCall.id, text: reply, mode: "operator-reply" },
+                });
+                showToast(`Replied to Alex: "${reply}"`);
+              }}
+              onDismiss={async () => {
+                await supabase.from("voiceops_calls").update({ operator_request: null }).eq("id", activeCall.id);
+              }}
+            />
+          )}
           <div className="transcript-container" ref={transcriptRef}>
+
             {turns.length === 0 && (
               <div className="message system">
                 <div className="message-avatar">🔔</div>
@@ -675,6 +693,98 @@ export default function VoiceOps() {
           </div>
         </div>,
         document.body,
+      )}
+    </div>
+  );
+}
+
+function OperatorRequestBanner({
+  call,
+  onReply,
+  onDismiss,
+}: {
+  call: Call;
+  onReply: (reply: string) => Promise<void> | void;
+  onDismiss: () => Promise<void> | void;
+}) {
+  const [reply, setReply] = useState("");
+  const [sending, setSending] = useState(false);
+  const hasReply = !!call.operator_reply;
+
+  const send = async () => {
+    if (!reply.trim()) return;
+    setSending(true);
+    await onReply(reply.trim());
+    setSending(false);
+    setReply("");
+  };
+
+  return (
+    <div
+      style={{
+        margin: "12px 16px 0",
+        padding: 14,
+        borderRadius: 12,
+        background: "rgba(245, 158, 11, 0.12)",
+        border: "2px solid #f59e0b",
+        color: "#fde68a",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, color: "#f59e0b" }}>
+          🔔 ALEX NEEDS YOU — caller is on hold
+        </div>
+        <button
+          onClick={() => onDismiss()}
+          style={{ background: "transparent", border: "none", color: "#fde68a", cursor: "pointer", fontSize: 12 }}
+        >
+          dismiss
+        </button>
+      </div>
+      <div style={{ color: "#fff", fontSize: 14, lineHeight: 1.4 }}>{call.operator_request}</div>
+      {hasReply ? (
+        <div style={{ fontSize: 12, color: "#a7f3d0" }}>
+          ✓ Replied: "{call.operator_reply}"
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            value={reply}
+            onChange={(e) => setReply(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && send()}
+            placeholder="Type your answer for Alex…"
+            style={{
+              flex: 1,
+              padding: "8px 12px",
+              borderRadius: 8,
+              background: "rgba(0,0,0,0.4)",
+              border: "1px solid rgba(245,158,11,0.4)",
+              color: "#fff",
+              fontSize: 13,
+              outline: "none",
+            }}
+          />
+          <button
+            onClick={send}
+            disabled={!reply.trim() || sending}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              background: "#f59e0b",
+              border: "none",
+              color: "#1a1a1a",
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: reply.trim() ? "pointer" : "not-allowed",
+              opacity: reply.trim() ? 1 : 0.5,
+            }}
+          >
+            {sending ? "Sending…" : "Send to Alex"}
+          </button>
+        </div>
       )}
     </div>
   );
