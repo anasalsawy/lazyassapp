@@ -248,6 +248,7 @@ export default function VoiceOps() {
       body: {
         phone_number: newPhone,
         objective: newTask,
+        system_prompt: newPrompt.trim() ? newPrompt.trim() : undefined,
         customer_info: {
           firstName: newName.split(" ")[0] || "",
           lastName: newName.split(" ").slice(1).join(" ") || "",
@@ -265,7 +266,7 @@ export default function VoiceOps() {
     toast.success("Dialing...");
     setActiveId((data as any).call_id);
     setModalOpen(false);
-    setNewName(""); setNewPhone(""); setNewTask("");
+    setNewName(""); setNewPhone(""); setNewTask(""); setNewPrompt("");
   };
 
   const detectedSteps = parseSteps(newTask);
