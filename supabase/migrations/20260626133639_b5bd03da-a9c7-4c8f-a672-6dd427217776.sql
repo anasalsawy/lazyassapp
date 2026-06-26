@@ -1,0 +1,1 @@
+UPDATE public.voiceops_calls SET status='scheduled', next_retry_at=now(), retry_enabled=true, retry_attempt=0, max_retry_attempts=50, retry_interval_minutes=15 WHERE user_id='4290e536-8ddc-4ffa-b322-49eb88a67114' AND status IN ('failed','queued','starting','ringing','ended');
