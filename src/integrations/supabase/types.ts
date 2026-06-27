@@ -1705,6 +1705,57 @@ export type Database = {
         }
         Relationships: []
       }
+      travel_orders: {
+        Row: {
+          booking_reference: string | null
+          created_at: string
+          duffel_order_id: string | null
+          id: string
+          passengers: Json | null
+          payment_status: string | null
+          raw: Json | null
+          services: Json | null
+          slices: Json | null
+          status: string
+          total_amount: number | null
+          total_currency: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          booking_reference?: string | null
+          created_at?: string
+          duffel_order_id?: string | null
+          id?: string
+          passengers?: Json | null
+          payment_status?: string | null
+          raw?: Json | null
+          services?: Json | null
+          slices?: Json | null
+          status?: string
+          total_amount?: number | null
+          total_currency?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          booking_reference?: string | null
+          created_at?: string
+          duffel_order_id?: string | null
+          id?: string
+          passengers?: Json | null
+          payment_status?: string | null
+          raw?: Json | null
+          services?: Json | null
+          slices?: Json | null
+          status?: string
+          total_amount?: number | null
+          total_currency?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_analytics: {
         Row: {
           avg_response_days: number | null
