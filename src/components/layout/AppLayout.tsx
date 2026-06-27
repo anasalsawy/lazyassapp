@@ -22,12 +22,14 @@ import {
   User,
   Sparkles,
   Phone,
+  Plane,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/agent", label: "Manus", icon: Sparkles },
+  { path: "/travel", label: "Travel", icon: Plane },
   { path: "/jobs", label: "Job Agent", icon: Briefcase },
   { path: "/resume", label: "Resume", icon: FileText },
   { path: "/connections", label: "Connections", icon: Link2 },

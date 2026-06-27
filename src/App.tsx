@@ -24,6 +24,7 @@ import Agent from "./pages/Agent";
 import LovableAgent from "./pages/LovableAgent";
 import VMs from "./pages/VMs";
 import VoiceOps from "./pages/VoiceOps";
+import Travel from "./pages/Travel";
 
 const queryClient = new QueryClient();
 
@@ -145,6 +146,7 @@ const App = () => (
           <Route path="/operator" element={<Navigate to="/voiceops" replace />} />
 
           <Route path="/vms" element={<ProtectedRoute><VMs /></ProtectedRoute>} />
+          <Route path="/travel" element={<ProtectedRoute><Travel /></ProtectedRoute>} />
 
           {/* Catch-all */}
           <Route path="*" element={<NotFound />} />
