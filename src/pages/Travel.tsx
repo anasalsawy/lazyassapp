@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Plane, ArrowRight, Loader2, Users, Calendar, MapPin, Luggage, CheckCircle2, X } from "lucide-react";
-import AppLayout from "@/components/layout/AppLayout";
+import { AppLayout } from "@/components/layout/AppLayout";
 
 type Slice = { origin: string; destination: string; departure_date: string };
 type PaxType = "adult" | "child" | "infant_without_seat";
