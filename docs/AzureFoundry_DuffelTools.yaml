@@ -1,0 +1,179 @@
+openapi: 3.1.0
+info:
+  title: Duffel Travel Tools (Lovable Edge Functions)
+  description: |
+    Tools for an Azure AI Foundry agent to search, price, book, manage, and cancel
+    flights through Duffel. All endpoints are Supabase Edge Functions that proxy
+    Duffel using the server-side DUFFEL_API_KEY (live mode).
+  version: 1.0.0
+servers:
+  - url: https://zbbfcxsqfeqnthducdxs.supabase.co/functions/v1
+    description: Lovable Cloud (Supabase Edge Functions)
+
+# Foundry must send these on EVERY call (configure once under Tool > Auth > Custom headers)
+# Authorization: Bearer <SUPABASE_PUBLISHABLE_KEY>
+# apikey: <SUPABASE_PUBLISHABLE_KEY>
+# Content-Type: application/json
+components:
+  securitySchemes:
+    SupabaseAnon:
+      type: http
+      scheme: bearer
+security:
+  - SupabaseAnon: []
+
+paths:
+  /duffel-places:
+    post:
+      operationId: searchPlaces
+      summary: Autocomplete airports & cities (IATA codes)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, description: "City or airport name, e.g. 'Cairo' or 'IAH'" }
+      responses: { "200": { description: OK } }
+
+  /duffel-search:
+    post:
+      operationId: searchFlights
+      summary: Search flight offers (one-way, return, or multi-city)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slices, passengers]
+              properties:
+                slices:
+                  type: array
+                  items:
+                    type: object
+                    required: [origin, destination, departure_date]
+                    properties:
+                      origin: { type: string, example: "IAH" }
+                      destination: { type: string, example: "CAI" }
+                      departure_date: { type: string, format: date, example: "2026-07-29" }
+                passengers:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type: { type: string, enum: [adult, child, infant_without_seat] }
+                cabin_class:
+                  type: string
+                  enum: [economy, premium_economy, business, first]
+      responses: { "200": { description: OK } }
+
+  /duffel-offer:
+    post:
+      operationId: getOfferDetails
+      summary: Fetch full offer details including available services (bags, seats)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offer_id]
+              properties:
+                offer_id: { type: string, example: "off_0000A..." }
+      responses: { "200": { description: OK } }
+
+  /duffel-seat-maps:
+    post:
+      operationId: getSeatMaps
+      summary: Get seat maps for an offer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offer_id]
+              properties:
+                offer_id: { type: string }
+      responses: { "200": { description: OK } }
+
+  /duffel-create-order:
+    post:
+      operationId: createOrder
+      summary: Book the offer (creates Duffel order, pays via balance, persists locally)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offer_id, passengers]
+              properties:
+                offer_id: { type: string }
+                passengers:
+                  type: array
+                  items:
+                    type: object
+                    required: [given_name, family_name, born_on, gender, email, phone_number]
+                    properties:
+                      given_name: { type: string }
+                      family_name: { type: string }
+                      title: { type: string, enum: [mr, mrs, ms, miss, dr] }
+                      gender: { type: string, enum: [m, f] }
+                      born_on: { type: string, format: date }
+                      email: { type: string, format: email }
+                      phone_number: { type: string, example: "+17134698336" }
+                selected_services:
+                  type: array
+                  description: Ancillaries (bags, seats) selected from getOfferDetails
+                  items:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      quantity: { type: integer }
+      responses: { "200": { description: Booking confirmation with PNR } }
+
+  /duffel-list-orders:
+    post:
+      operationId: listOrders
+      summary: List all bookings for the current user
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses: { "200": { description: OK } }
+
+  /duffel-get-order:
+    post:
+      operationId: getOrder
+      summary: Get full details for one order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id: { type: string, example: "ord_0000A..." }
+      responses: { "200": { description: OK } }
+
+  /duffel-cancel-order:
+    post:
+      operationId: cancelOrder
+      summary: Cancel an order (two-step; first call quotes refund, second confirms)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id: { type: string }
+                confirm: { type: boolean, default: false, description: "false = quote refund; true = execute cancellation" }
+      responses: { "200": { description: OK } }
