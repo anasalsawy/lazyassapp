@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: voiceops-supervisor-bridge
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
