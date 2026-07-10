@@ -287,17 +287,32 @@ Deno.serve(async (req) => {
     }
     console.log(`[voiceops-start-call] call placed via number ${usedNumberId}`);
 
+    const listenUrl = (vapiJson as any).monitor?.listenUrl ?? null;
     await admin
       .from("voiceops_calls")
       .update({
         vapi_call_id: vapiJson.id,
-        control_url: vapiJson.monitor?.controlUrl ?? vapiJson.controlUrl ?? null,
+        control_url: (vapiJson as any).monitor?.controlUrl ?? (vapiJson as any).controlUrl ?? null,
         status: "ringing",
         system_prompt_snapshot: systemPrompt,
       })
       .eq("id", call.id);
 
+    // Fire-and-forget supervisor coach leg (monitor-only). Never blocks the main call.
+    const supervisorPhone = (Deno.env.get("SUPERVISOR_PHONE") || "").trim();
+    if (supervisorPhone && listenUrl) {
+      fetch(`${SUPABASE_URL}/functions/v1/voiceops-supervisor-dial`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${SERVICE_ROLE}`,
+        },
+        body: JSON.stringify({ call_id: call.id, listen_url: listenUrl }),
+      }).catch((e) => console.warn("[voiceops-start-call] supervisor-dial trigger failed", e));
+    }
+
     return json({ ok: true, call_id: call.id, vapi_call_id: vapiJson.id });
+
   } catch (e) {
     return json({ error: String(e) }, 500);
   }
