@@ -2079,6 +2079,9 @@ export type Database = {
           retry_enabled: boolean
           retry_interval_minutes: number
           status: string
+          supervisor_call_sid: string | null
+          supervisor_phone: string | null
+          supervisor_status: string | null
           system_prompt_snapshot: string | null
           updated_at: string
           user_id: string
@@ -2108,6 +2111,9 @@ export type Database = {
           retry_enabled?: boolean
           retry_interval_minutes?: number
           status?: string
+          supervisor_call_sid?: string | null
+          supervisor_phone?: string | null
+          supervisor_status?: string | null
           system_prompt_snapshot?: string | null
           updated_at?: string
           user_id: string
@@ -2137,6 +2143,9 @@ export type Database = {
           retry_enabled?: boolean
           retry_interval_minutes?: number
           status?: string
+          supervisor_call_sid?: string | null
+          supervisor_phone?: string | null
+          supervisor_status?: string | null
           system_prompt_snapshot?: string | null
           updated_at?: string
           user_id?: string
